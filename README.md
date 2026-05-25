@@ -26,6 +26,7 @@ That installs dependencies and links `devloop` into `~/.local/bin`. Set `DEVLOOP
 - TTY runs use the collapsed OpenTUI view
 - non-TTY runs use plain output
 - accepted runs create a local branch and local commit
+- no-arg `devloop` shows the logo and common commands
 
 Use `--plain` for CI. Use `--tui` to force the TUI. Use `--no-strict` only when you explicitly want weaker gates.
 

@@ -1,8 +1,13 @@
 #!/usr/bin/env bun
-import { parseArgs, runDevloop, type Event, type Sink } from "./devloop.ts";
+import { parseArgs, runDevloop, welcome, type Event, type Sink } from "./devloop.ts";
 import { createTuiSink } from "./tui.ts";
 
 const argv = process.argv.slice(2);
+if (argv.length === 0 || argv.includes("-h") || argv.includes("--help")) {
+  console.log(welcome());
+  process.exit(0);
+}
+
 const parsed = parseArgs(argv);
 
 if (typeof parsed === "string") {

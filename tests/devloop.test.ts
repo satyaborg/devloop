@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs, parseCriteria, parseVerdict, runDevloop, type Event, type Options } from "../src/devloop.ts";
+import { parseArgs, parseCriteria, parseVerdict, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
 
 const root = await mkdtemp(path.join(tmpdir(), "devloop-test."));
 let oldPath = process.env.PATH ?? "";
@@ -39,6 +39,13 @@ describe("parsing", () => {
     expect(parseCriteria("# Spec\n\n## Acceptance criteria\n1. One\n- Two\n\n## Notes\nNope")).toEqual(["One", "Two"]);
     expect(parseCriteria("# Spec")).toEqual([]);
     expect(parseVerdict("Verdict: ACCEPT\n")).toBe("ACCEPT");
+  });
+
+  test("renders a useful default screen", () => {
+    expect(welcome()).toContain("▐▌▗▞▀▚▖");
+    expect(welcome()).toContain("Common commands:");
+    expect(welcome()).toContain("devloop .specs/change.md");
+    expect(welcome()).toContain("bun scripts/install.ts");
   });
 });
 

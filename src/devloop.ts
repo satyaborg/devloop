@@ -48,6 +48,37 @@ export type Sink = { event(event: Event): void | Promise<void>; close?(): void |
 type RunResult = { code: number; output: string };
 type Runner = (cmd: string, args: string[], input?: string, log?: string, id?: string) => Promise<RunResult>;
 
+export const LOGO = [
+  "   ▐▌▗▞▀▚▖▄   ▄ █  ▄▄▄   ▄▄▄  ▄▄▄▄  ",
+  "   ▐▌▐▛▀▀▘█   █ █ █   █ █   █ █   █ ",
+  "▗▞▀▜▌▝▚▄▄▖ ▀▄▀  █ ▀▄▄▄▀ ▀▄▄▄▀ █▄▄▄▀ ",
+  "▝▚▄▟▌           █             █     ",
+  "                              ▀",
+].join("\n");
+
+export function welcome() {
+  return `${LOGO}
+
+devloop runs a strict Codex implement -> Claude review loop.
+
+Usage:
+  devloop [options] <spec.md> [max=5]
+
+Common commands:
+  devloop .specs/change.md
+  devloop --tui .specs/change.md
+  devloop --plain .specs/change.md
+  devloop --report-format markdown .specs/change.md 3
+  bun scripts/install.ts
+
+Options:
+  --tui                         force the collapsed TUI
+  --plain                       force plain output
+  --report-format html|markdown choose report format
+  --no-strict                   weaken acceptance gates
+  -h, --help                    show this screen`;
+}
+
 export function parseArgs(argv: string[], cwd = process.cwd()): Options | string {
   let reportFormat: ReportFormat = "html";
   let strict = true;

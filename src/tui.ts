@@ -1,14 +1,6 @@
-import type { Event, Result, Sink } from "./devloop.ts";
+import { LOGO, type Event, type Result, type Sink } from "./devloop.ts";
 
 type Row = { id: string; title: string; status: "run" | "ok" | "fail"; detail: string; lines: string[]; open: boolean };
-
-const LOGO = [
-  "   ▐▌▗▞▀▚▖▄   ▄ █  ▄▄▄   ▄▄▄  ▄▄▄▄  ",
-  "   ▐▌▐▛▀▀▘█   █ █ █   █ █   █ █   █ ",
-  "▗▞▀▜▌▝▚▄▄▖ ▀▄▀  █ ▀▄▄▄▀ ▀▄▄▄▀ █▄▄▄▀ ",
-  "▝▚▄▟▌           █             █     ",
-  "                              ▀",
-];
 
 export async function createTuiSink(): Promise<Sink> {
   const { TextRenderable, createCliRenderer } = await import("@opentui/core");
@@ -56,7 +48,7 @@ export function view(rows: Row[], selected: number, result?: Result) {
     return item.open ? [head, ...item.lines.slice(-80).map((line) => `      ${line}`)] : [head];
   });
   const tail = result ? ["", `result:  ${result.status}`, `passes:  ${result.passes} / ${result.max}`, `branch:  ${result.branch}`, `commit:  ${result.commit || "none"}`, `report:  ${result.report}`, `track:   ${result.track}`] : ["", "enter toggles logs, j/k moves"];
-  return [...LOGO, "", ...body, ...tail].join("\n");
+  return [LOGO, "", ...body, ...tail].join("\n");
 }
 
 function row(rows: Row[], id: string) {
