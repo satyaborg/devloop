@@ -8,6 +8,16 @@ devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] spec.md [m
 
 Run from the target git worktree. The spec may live anywhere.
 
+## Install
+
+From this checkout:
+
+```sh
+bun scripts/install.ts
+```
+
+That installs dependencies and links `devloop` into `~/.local/bin`. Set `DEVLOOP_BIN_DIR` to choose another bin directory.
+
 ## Defaults
 
 - strict mode is on
@@ -82,7 +92,7 @@ devloop does not push or open a PR.
 Prereqs: `bun`, `codex`, `claude`, `git`.
 
 ```sh
-bun install
+bun scripts/install.ts
 bun run typecheck
 bun test
 ```

@@ -6,6 +6,7 @@
     "devloop": "./src/cli.ts"
   },
   "scripts": {
+    "install:local": "bun scripts/install.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
