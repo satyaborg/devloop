@@ -1,35 +1,36 @@
 # devloop
 
-Spec in, accepted code out. Codex implements, Claude reviews, loop until ACCEPT, stall, unclear, error, or max turns.
+Codex implements. Claude reviews. devloop runs the loop until the work is accepted, stalls, becomes unclear, hits max turns, or an agent fails.
 
 ```sh
-devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] path/to/spec.md [max=5]
-bun src/cli.ts [--plain|--tui] [--no-strict] [--report-format html|markdown] path/to/spec.md [max=5]
+devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] spec.md [max=5]
 ```
+
+Run from the target git worktree. The spec may live anywhere.
 
 ## Defaults
 
 - strict mode is on
-- HTML report output is on
-- max turns defaults to 5 and is clamped to 1-10
-- interactive terminals use the OpenTUI view
+- HTML reports are on
+- max turns default to 5 and clamp to 1-10
+- TTY runs use the collapsed OpenTUI view
 - non-TTY runs use plain output
-- accepted runs create a local `devloop/<slug>` branch and a local Conventional Commit
+- accepted runs create a local branch and local commit
 
-Use `--plain` for CI or debugging. Use `--tui` to force the collapsed terminal UI. Use `--no-strict` only when you deliberately want to bypass strict acceptance-gate behavior.
+Use `--plain` for CI. Use `--tui` to force the TUI. Use `--no-strict` only when you explicitly want weaker gates.
 
-## Strict Mode
+## Strict Acceptance
 
-Strict mode requires the spec to contain:
+Strict mode requires:
 
 ```md
 ## Acceptance criteria
 1. ...
 ```
 
-Codex is prompted to follow a regression-first lifecycle: tests first, red phase when behavior changes, smallest implementation, targeted tests, full tests, lint/typecheck, and 100% coverage when the target project exposes coverage tooling.
+Codex is prompted to work regression-first: add or update tests, observe the red phase when behavior changes, implement the smallest fix, then run targeted tests, full tests, lint/typecheck, and coverage.
 
-Claude must write an acceptance matrix:
+Claude must write:
 
 ```md
 ## Acceptance matrix
@@ -37,25 +38,9 @@ Claude must write an acceptance matrix:
 - AC1: PASS - evidence
 ```
 
-`Verdict: ACCEPT` is only honored in strict mode when every parsed acceptance criterion has a passing matrix row. Missing evidence becomes `unclear`.
+In strict mode, `Verdict: ACCEPT` only counts when every parsed criterion has a `PASS` matrix row. Missing evidence exits as `unclear`.
 
-## Local Commit
-
-On `accepted`, devloop creates or reuses a local branch:
-
-```text
-devloop/<spec-slug>
-```
-
-It commits only files that were not already dirty when the run started, and it excludes `.codex/` artifacts from the commit. The generated commit message uses a Conventional Commit type:
-
-```text
-feat: <spec-slug>
-```
-
-No push or PR is performed.
-
-## Artifacts
+## Output
 
 ```text
 .codex/tracks/<slug>.md
@@ -66,7 +51,7 @@ No push or PR is performed.
 .codex/sessions/
 ```
 
-Report format stays deliberately narrow:
+Reports can be HTML or Markdown:
 
 ```sh
 devloop --report-format html .specs/change.md
@@ -74,18 +59,23 @@ devloop --report-format markdown .specs/change.md
 devloop --md .specs/change.md
 ```
 
-Reports include top-level metadata: result, passes, repository, spec, base branch, starting branch, final branch, local commit, commit message, Codex session ID, Claude session ID, track, and review files.
+Reports include result, passes, repo, spec, base branch, starting branch, final branch, local commit, commit message, Codex session ID, Claude session ID, track, and review files.
 
-## Sessions
+## Local Commit
 
-Each spec slug gets one Codex session and one Claude session:
+On `accepted`, devloop creates or reuses:
 
 ```text
-.codex/sessions/<slug>-codex.id
-.codex/sessions/<slug>-claude.id
+devloop/<spec-slug>
 ```
 
-Pass 1 starts the sessions. Later fix passes resume them.
+It commits only files that were clean when the run started and excludes `.codex/`. Commit messages are Conventional Commit style:
+
+```text
+feat: <spec-slug>
+```
+
+devloop does not push or open a PR.
 
 ## Development
 
