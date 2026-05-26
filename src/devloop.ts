@@ -184,6 +184,19 @@ export function findingsHash(review: string) {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
+export function isIsolatedWorktree(
+  result: Pick<Result, "sourceRepo" | "worktree">,
+) {
+  return result.worktree !== result.sourceRepo;
+}
+
+export function resultPath(
+  result: Pick<Result, "sourceRepo" | "worktree">,
+  file: string,
+) {
+  return isIsolatedWorktree(result) ? path.join(result.worktree, file) : file;
+}
+
 export async function runDevloop(
   options: Options,
   sink: Sink = { event: () => {} },

@@ -89,7 +89,7 @@ Each run writes files under `.codex/`:
 .codex/specs/<slug>.md
 ```
 
-With the default isolated worktree, these files are written inside the generated sibling worktree. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree.
+With the default isolated worktree, these files are written inside the generated sibling worktree. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
 
 On acceptance, `devloop` creates or reuses a branch like:
 
@@ -98,6 +98,16 @@ devloop/<spec-slug>
 ```
 
 It commits only files that were clean when the run started. It excludes `.codex/`.
+
+devloop intentionally keeps generated worktrees and branches for inspection after both successful and failed runs. To remove one when you are done:
+
+```sh
+git -C <source-repo> worktree remove <worktree-path>
+git -C <source-repo> branch -D devloop/<spec-slug>
+git -C <source-repo> worktree prune
+```
+
+If `worktree remove` reports local modifications, inspect the worktree first or rerun the command with `--force` to discard them.
 
 ## Development
 

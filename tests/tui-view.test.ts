@@ -48,6 +48,29 @@ describe("tui view", () => {
     expect(output).toContain("> !!     run tests - failed");
     expect(output).toContain("result:  commit-error");
     expect(output).toContain("commit:  none");
+    expect(output).toContain("worktree: /tmp/repo-devloop-change");
+    expect(output).toContain("report:  /tmp/repo-devloop-change/.codex/reports/change.html");
+    expect(output).toContain("track:   /tmp/repo-devloop-change/.codex/tracks/change.md");
+  });
+
+  test("suppresses worktree details for in-place results", () => {
+    const output = view([], 0, {
+      status: "accepted",
+      passes: 1,
+      max: 5,
+      report: ".codex/reports/change.html",
+      track: ".codex/tracks/change.md",
+      branch: "devloop/change",
+      commit: "abc123",
+      commitMessage: "feat: change",
+      worktree: "/tmp/repo",
+      sourceRepo: "/tmp/repo",
+      codexSessionId: "codex-session",
+      claudeSessionId: "claude-session",
+    });
+
+    expect(output).not.toContain("worktree:");
+    expect(output).toContain("report:  .codex/reports/change.html");
     expect(output).toContain("track:   .codex/tracks/change.md");
   });
 });
