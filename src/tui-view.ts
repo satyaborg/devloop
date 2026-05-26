@@ -1,4 +1,9 @@
-import { LOGO, type Result } from "./devloop.ts";
+import {
+  isIsolatedWorktree,
+  LOGO,
+  resultPath,
+  type Result,
+} from "./devloop.ts";
 
 export type Row = { id: string; title: string; status: "run" | "ok" | "fail"; detail: string; lines: string[]; open: boolean };
 
@@ -9,7 +14,18 @@ export function view(rows: Row[], selected: number, result?: Result) {
     const head = `${mark} ${icon(item.status)} ${fold} ${item.title} - ${item.detail}`;
     return item.open ? [head, ...item.lines.slice(-80).map((line) => `      ${line}`)] : [head];
   });
-  const tail = result ? ["", `result:  ${result.status}`, `passes:  ${result.passes} / ${result.max}`, `branch:  ${result.branch}`, `commit:  ${result.commit || "none"}`, `report:  ${result.report}`, `track:   ${result.track}`] : ["", "enter toggles logs, j/k moves"];
+  const tail = result
+    ? [
+        "",
+        `result:  ${result.status}`,
+        `passes:  ${result.passes} / ${result.max}`,
+        `branch:  ${result.branch}`,
+        `commit:  ${result.commit || "none"}`,
+        ...(isIsolatedWorktree(result) ? [`worktree: ${result.worktree}`] : []),
+        `report:  ${resultPath(result, result.report)}`,
+        `track:   ${resultPath(result, result.track)}`,
+      ]
+    : ["", "enter toggles logs, j/k moves"];
   return [LOGO, "", ...body, ...tail].join("\n");
 }
 

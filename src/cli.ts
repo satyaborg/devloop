@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { parseArgs, runDevloop, welcome, type Event, type Sink } from "./devloop.ts";
+import {
+  isIsolatedWorktree,
+  parseArgs,
+  resultPath,
+  runDevloop,
+  welcome,
+  type Event,
+  type Sink,
+} from "./devloop.ts";
 import { createTuiSink } from "./tui.ts";
 
 const argv = process.argv.slice(2);
@@ -40,12 +48,36 @@ function plainSink(): Sink {
   };
 }
 
-function printResult(result: { status: string; passes: number; max: number; report: string; track: string }) {
+function printResult(result: {
+  status: string;
+  passes: number;
+  max: number;
+  report: string;
+  track: string;
+  worktree?: string;
+  sourceRepo?: string;
+}) {
   console.log("");
   console.log(`result:  ${result.status}`);
   console.log(`passes:  ${result.passes} / ${result.max}`);
   if ("branch" in result) console.log(`branch:  ${result.branch}`);
   if ("commit" in result) console.log(`commit:  ${result.commit || "none"}`);
-  console.log(`report:  ${result.report}`);
-  console.log(`track:   ${result.track}`);
+  if (hasWorktreeInfo(result) && isIsolatedWorktree(result))
+    console.log(`worktree: ${result.worktree}`);
+  console.log(`report:  ${displayPath(result, result.report)}`);
+  console.log(`track:   ${displayPath(result, result.track)}`);
+}
+
+function hasWorktreeInfo(result: {
+  worktree?: string;
+  sourceRepo?: string;
+}): result is { worktree: string; sourceRepo: string } {
+  return Boolean(result.worktree && result.sourceRepo);
+}
+
+function displayPath(
+  result: { worktree?: string; sourceRepo?: string },
+  file: string,
+) {
+  return hasWorktreeInfo(result) ? resultPath(result, file) : file;
 }
