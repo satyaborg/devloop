@@ -97,14 +97,17 @@ On acceptance, `devloop` creates or reuses a branch like:
 devloop/<spec-slug>
 ```
 
-It commits only files that were clean when the run started. It excludes `.codex/`.
+It commits only files that were clean when the run started. It excludes `.codex/`. Commit messages use:
+
+```text
+feat: <spec-slug>
+```
 
 devloop intentionally keeps generated worktrees and branches for inspection after both successful and failed runs. To remove one when you are done:
 
 ```sh
 git -C <source-repo> worktree remove <worktree-path>
 git -C <source-repo> branch -D devloop/<spec-slug>
-git -C <source-repo> worktree prune
 ```
 
 If `worktree remove` reports local modifications, inspect the worktree first or rerun the command with `--force` to discard them.
