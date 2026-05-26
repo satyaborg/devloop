@@ -43,10 +43,19 @@ export type Event =
   | { type: "done"; id: string; ok: boolean; detail: string }
   | { type: "result"; result: Result };
 
-export type Sink = { event(event: Event): void | Promise<void>; close?(): void | Promise<void> };
+export type Sink = {
+  event(event: Event): void | Promise<void>;
+  close?(): void | Promise<void>;
+};
 
 type RunResult = { code: number; output: string };
-type Runner = (cmd: string, args: string[], input?: string, log?: string, id?: string) => Promise<RunResult>;
+type Runner = (
+  cmd: string,
+  args: string[],
+  input?: string,
+  log?: string,
+  id?: string,
+) => Promise<RunResult>;
 
 export const LOGO = [
   "       __          __                ",
@@ -80,7 +89,10 @@ Options:
   -h, --help                    show this screen`;
 }
 
-export function parseArgs(argv: string[], cwd = process.cwd()): Options | string {
+export function parseArgs(
+  argv: string[],
+  cwd = process.cwd(),
+): Options | string {
   let reportFormat: ReportFormat = "html";
   let strict = true;
   let spec = "";
@@ -91,7 +103,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): Options | string
     const arg = argv[i]!;
     if (arg === "--report-format") {
       const value = argv[++i];
-      if (value !== "html" && value !== "markdown" && value !== "md") return usage();
+      if (value !== "html" && value !== "markdown" && value !== "md")
+        return usage();
       reportFormat = value === "md" ? "markdown" : value;
     } else if (arg === "--html") reportFormat = "html";
     else if (arg === "--markdown" || arg === "--md") reportFormat = "markdown";
@@ -108,8 +121,15 @@ export function parseArgs(argv: string[], cwd = process.cwd()): Options | string
   }
 
   if (!spec) return usage();
-  if (!/^[+-]?\d+$/.test(maxRaw)) return "max must be an integer between 1 and 10";
-  return { spec, max: clamp(Number.parseInt(maxRaw, 10), 1, 10), reportFormat, strict, cwd };
+  if (!/^[+-]?\d+$/.test(maxRaw))
+    return "max must be an integer between 1 and 10";
+  return {
+    spec,
+    max: clamp(Number.parseInt(maxRaw, 10), 1, 10),
+    reportFormat,
+    strict,
+    cwd,
+  };
 }
 
 export function usage() {
@@ -118,7 +138,9 @@ export function usage() {
 
 export function parseCriteria(markdown: string): string[] {
   const lines = markdown.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^##\s+acceptance criteria\s*$/i.test(line.trim()));
+  const start = lines.findIndex((line) =>
+    /^##\s+acceptance criteria\s*$/i.test(line.trim()),
+  );
   if (start < 0) return [];
   const body = lines.slice(start + 1);
   const end = body.findIndex((line) => /^##\s+/.test(line));
@@ -129,18 +151,22 @@ export function parseCriteria(markdown: string): string[] {
 }
 
 export function parseVerdict(review: string): Verdict | "" {
-  return review.match(/^Verdict:\s+(ACCEPT|REJECT|UNCLEAR)/m)?.[1] as Verdict | "";
+  return review.match(/^Verdict:\s+(ACCEPT|REJECT|UNCLEAR)/m)?.[1] as
+    | Verdict
+    | "";
 }
 
 export function hasPassingMatrix(review: string, count: number) {
   if (!/^## Acceptance matrix\s*$/m.test(review)) return false;
-  return Array.from({ length: count }, (_, i) => new RegExp(`^-\\s*AC${i + 1}:\\s*PASS\\b`, "mi")).every((r) =>
-    r.test(review),
-  );
+  return Array.from(
+    { length: count },
+    (_, i) => new RegExp(`^-\\s*AC${i + 1}:\\s*PASS\\b`, "mi"),
+  ).every((r) => r.test(review));
 }
 
 export function findingsHash(review: string) {
-  const body = review.match(/^## Findings\s*\n([\s\S]*?)(?:\n##\s+|$)/m)?.[1] ?? "";
+  const body =
+    review.match(/^## Findings\s*\n([\s\S]*?)(?:\n##\s+|$)/m)?.[1] ?? "";
   const normalized = body
     .replace(/\d+/g, "")
     .replace(/[ \t\r\n]+/g, " ")
@@ -152,27 +178,56 @@ export function findingsHash(review: string) {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export async function runDevloop(options: Options, sink: Sink = { event: () => {} }): Promise<Result> {
+export async function runDevloop(
+  options: Options,
+  sink: Sink = { event: () => {} },
+): Promise<Result> {
   const spec = await absoluteFile(options.spec, options.cwd);
   const specText = await readFile(spec, "utf8");
   const criteria = parseCriteria(specText);
-  if (options.strict && criteria.length === 0) throw new Error("strict mode requires ## Acceptance criteria");
-  await sink.event({ type: "gate", name: "acceptance criteria", ok: criteria.length > 0, detail: `${criteria.length} found` });
+  if (options.strict && criteria.length === 0)
+    throw new Error("strict mode requires ## Acceptance criteria");
+  await sink.event({
+    type: "gate",
+    name: "acceptance criteria",
+    ok: criteria.length > 0,
+    detail: `${criteria.length} found`,
+  });
 
-  const repo = (await command("git", ["-C", options.cwd, "rev-parse", "--show-toplevel"])).trim();
-  const branch = (await command("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  const repo = (
+    await command("git", ["-C", options.cwd, "rev-parse", "--show-toplevel"])
+  ).trim();
+  const branch = (
+    await command("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])
+  ).trim();
   const base = await baseBranch(repo);
   const initialDirty = await statusPaths(repo);
   const slug = path.basename(spec, ".md");
-  const dirs = [".codex/tracks", ".codex/reviews", ".codex/reports", ".codex/logs", ".codex/sessions"];
-  await Promise.all(dirs.map((dir) => mkdir(path.join(repo, dir), { recursive: true })));
+  const dirs = [
+    ".codex/tracks",
+    ".codex/reviews",
+    ".codex/reports",
+    ".codex/logs",
+    ".codex/sessions",
+  ];
+  await Promise.all(
+    dirs.map((dir) => mkdir(path.join(repo, dir), { recursive: true })),
+  );
 
   const track = `.codex/tracks/${slug}.md`;
   const report = `.codex/reports/${slug}.${options.reportFormat === "html" ? "html" : "md"}`;
   const codexSession = `.codex/sessions/${slug}-codex.id`;
   const claudeSession = `.codex/sessions/${slug}-claude.id`;
   const runner = makeRunner(repo, sink);
-  await initTrack(path.join(repo, track), { spec, cwd: options.cwd, base, branch, max: options.max, reportFormat: options.reportFormat, strict: options.strict });
+  await initTrack(path.join(repo, track), {
+    spec,
+    cwd: options.cwd,
+    base,
+    branch,
+    max: options.max,
+    reportFormat: options.reportFormat,
+    strict: options.strict,
+  });
 
   let status: Status = "max-turns";
   let prior = "";
@@ -184,9 +239,31 @@ export async function runDevloop(options: Options, sink: Sink = { event: () => {
   for (pass = 1; pass <= options.max; pass++) {
     const codexLog = `.codex/logs/${slug}-r${pass}-codex.log`;
     const codexId = `codex-${pass}`;
-    await sink.event({ type: "step", id: codexId, title: `pass ${pass}/${options.max} codex` });
-    const codex = await runCodex(runner, repo, path.join(repo, codexSession), path.join(repo, codexLog), codexPrompt({ spec, track, pass, strict: options.strict, previous: `.codex/reviews/${slug}-r${pass - 1}.md`, criteria }));
-    await sink.event({ type: "done", id: codexId, ok: codex, detail: codex ? "completed" : "failed" });
+    await sink.event({
+      type: "step",
+      id: codexId,
+      title: `pass ${pass}/${options.max} codex`,
+    });
+    const codex = await runCodex(
+      runner,
+      repo,
+      path.join(repo, codexSession),
+      path.join(repo, codexLog),
+      codexPrompt({
+        spec,
+        track,
+        pass,
+        strict: options.strict,
+        previous: `.codex/reviews/${slug}-r${pass - 1}.md`,
+        criteria,
+      }),
+    );
+    await sink.event({
+      type: "done",
+      id: codexId,
+      ok: codex,
+      detail: codex ? "completed" : "failed",
+    });
     if (!codex) {
       status = "codex-error";
       break;
@@ -195,9 +272,33 @@ export async function runDevloop(options: Options, sink: Sink = { event: () => {
     const review = `.codex/reviews/${slug}-r${pass}.md`;
     const claudeLog = `.codex/logs/${slug}-r${pass}-claude.log`;
     const claudeId = `claude-${pass}`;
-    await sink.event({ type: "step", id: claudeId, title: `pass ${pass}/${options.max} claude review` });
-    const ok = await runClaude(runner, repo, path.join(repo, claudeSession), path.join(repo, claudeLog), reviewPrompt({ spec, track, base, pass, output: review, priors: listReviews(slug, pass, options.max), criteria, strict: options.strict }));
-    await sink.event({ type: "done", id: claudeId, ok, detail: ok ? "completed" : "failed" });
+    await sink.event({
+      type: "step",
+      id: claudeId,
+      title: `pass ${pass}/${options.max} claude review`,
+    });
+    const ok = await runClaude(
+      runner,
+      repo,
+      path.join(repo, claudeSession),
+      path.join(repo, claudeLog),
+      reviewPrompt({
+        spec,
+        track,
+        base,
+        pass,
+        output: review,
+        priors: listReviews(slug, pass, options.max),
+        criteria,
+        strict: options.strict,
+      }),
+    );
+    await sink.event({
+      type: "done",
+      id: claudeId,
+      ok,
+      detail: ok ? "completed" : "failed",
+    });
     if (!ok) {
       status = "claude-error";
       break;
@@ -211,9 +312,17 @@ export async function runDevloop(options: Options, sink: Sink = { event: () => {
       break;
     }
     const verdict = parseVerdict(reviewText);
-    await sink.event({ type: "gate", name: `pass ${pass} verdict`, ok: verdict === "ACCEPT", detail: verdict || "MISSING" });
+    await sink.event({
+      type: "gate",
+      name: `pass ${pass} verdict`,
+      ok: verdict === "ACCEPT",
+      detail: verdict || "MISSING",
+    });
     if (verdict === "ACCEPT") {
-      status = options.strict && !hasPassingMatrix(reviewText, criteria.length) ? "unclear" : "accepted";
+      status =
+        options.strict && !hasPassingMatrix(reviewText, criteria.length)
+          ? "unclear"
+          : "accepted";
       break;
     }
     if (verdict === "UNCLEAR") {
@@ -236,23 +345,69 @@ export async function runDevloop(options: Options, sink: Sink = { event: () => {
   if (pass > options.max) pass = options.max;
   if (status === "accepted") {
     const commitId = "commit";
-    await sink.event({ type: "step", id: commitId, title: "local branch and commit" });
-    const committed = await commitAccepted(repo, slug, initialDirty).catch(() => undefined);
+    await sink.event({
+      type: "step",
+      id: commitId,
+      title: "local branch and commit",
+    });
+    const committed = await commitAccepted(repo, slug, initialDirty).catch(
+      () => undefined,
+    );
     if (committed) {
       finalBranch = committed.branch;
       commit = committed.commit;
       commitMessage = committed.message;
-      await sink.event({ type: "done", id: commitId, ok: true, detail: commit ? `${finalBranch} ${commit}` : `${finalBranch} no changes` });
+      await sink.event({
+        type: "done",
+        id: commitId,
+        ok: true,
+        detail: commit
+          ? `${finalBranch} ${commit}`
+          : `${finalBranch} no changes`,
+      });
     } else {
       status = "commit-error";
-      await sink.event({ type: "done", id: commitId, ok: false, detail: "failed" });
+      await sink.event({
+        type: "done",
+        id: commitId,
+        ok: false,
+        detail: "failed",
+      });
     }
   }
 
   const codexSessionId = await readLine(path.join(repo, codexSession));
   const claudeSessionId = await readLine(path.join(repo, claudeSession));
-  await synthesizeReport(runner, repo, { slug, spec, track, report, status, pass, max: options.max, base, initialBranch: branch, branch: finalBranch, commit, commitMessage, codexSessionId, claudeSessionId, format: options.reportFormat, reviews: listReviews(slug, pass, options.max) });
-  const result = { status, passes: pass, max: options.max, report, track, branch: finalBranch, commit, commitMessage, codexSessionId, claudeSessionId };
+  await synthesizeReport(runner, repo, {
+    slug,
+    spec,
+    track,
+    report,
+    status,
+    pass,
+    max: options.max,
+    base,
+    initialBranch: branch,
+    branch: finalBranch,
+    commit,
+    commitMessage,
+    codexSessionId,
+    claudeSessionId,
+    format: options.reportFormat,
+    reviews: listReviews(slug, pass, options.max),
+  });
+  const result = {
+    status,
+    passes: pass,
+    max: options.max,
+    report,
+    track,
+    branch: finalBranch,
+    commit,
+    commitMessage,
+    codexSessionId,
+    claudeSessionId,
+  };
   await sink.event({ type: "result", result });
   return result;
 }
@@ -265,7 +420,11 @@ async function absoluteFile(file: string, cwd: string) {
 
 async function command(cmd: string, args: string[]) {
   const proc = Bun.spawn([cmd, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
   if (code !== 0) throw new Error(err.trim() || `${cmd} failed`);
   return out;
 }
@@ -276,9 +435,13 @@ async function baseBranch(repo: string) {
     ["-C", repo, "show-ref", "--verify", "-q", "refs/heads/main"],
     ["-C", repo, "show-ref", "--verify", "-q", "refs/heads/master"],
   ]) {
-    const proc = Bun.spawn(["git", ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["git", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     if ((await proc.exited) === 0) {
-      if (args[2] === "symbolic-ref") return (await new Response(proc.stdout).text()).trim().replace(/^origin\//, "");
+      if (args[2] === "symbolic-ref")
+        return (await new Response(proc.stdout).text()).trim().replace(/^origin\//, "");
       return args.at(-1)!.split("/").pop()!;
     }
   }
@@ -286,7 +449,14 @@ async function baseBranch(repo: string) {
 }
 
 async function statusPaths(repo: string) {
-  const out = await command("git", ["-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const out = await command("git", [
+    "-C",
+    repo,
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+  ]);
   const parts = out.split("\0").filter(Boolean);
   const paths = new Set<string>();
   for (let i = 0; i < parts.length; i++) {
@@ -302,21 +472,49 @@ async function statusPaths(repo: string) {
   return paths;
 }
 
-async function commitAccepted(repo: string, slug: string, initialDirty: Set<string>) {
-  const current = (await command("git", ["-C", repo, "branch", "--show-current"])).trim();
+async function commitAccepted(
+  repo: string,
+  slug: string,
+  initialDirty: Set<string>,
+) {
+  const current = (
+    await command("git", ["-C", repo, "branch", "--show-current"])
+  ).trim();
   const branch = await nextBranch(repo, slug, current);
   const message = `feat: ${slugify(slug)}`;
-  if (branch !== current) await command("git", ["-C", repo, "switch", "-c", branch]);
-  const changed = [...(await statusPaths(repo))].filter((file) => !initialDirty.has(file) && !file.startsWith(".codex/"));
+  if (branch !== current)
+    await command("git", ["-C", repo, "switch", "-c", branch]);
+  const changed = [...(await statusPaths(repo))].filter(
+    (file) => !initialDirty.has(file) && !file.startsWith(".codex/"),
+  );
   if (changed.length === 0) return { branch, commit: "", message };
   await command("git", ["-C", repo, "add", "--", ...changed]);
-  await command("git", ["-C", repo, "commit", "--only", "-m", message, "--", ...changed]);
-  return { branch, commit: (await command("git", ["-C", repo, "rev-parse", "--short", "HEAD"])).trim(), message };
+  await command("git", [
+    "-C",
+    repo,
+    "commit",
+    "--only",
+    "-m",
+    message,
+    "--",
+    ...changed,
+  ]);
+  return {
+    branch,
+    commit: (
+      await command("git", ["-C", repo, "rev-parse", "--short", "HEAD"])
+    ).trim(),
+    message,
+  };
 }
 
 async function nextBranch(repo: string, slug: string, current: string) {
   const base = `devloop/${slugify(slug)}`;
-  if (current === base || new RegExp(`^${escapeRegex(base)}-\\d+$`).test(current)) return current;
+  if (
+    current === base ||
+    new RegExp(`^${escapeRegex(base)}-\\d+$`).test(current)
+  )
+    return current;
   let suffix = 1;
   let branch = base;
   while (await branchExists(repo, branch)) {
@@ -327,7 +525,15 @@ async function nextBranch(repo: string, slug: string, current: string) {
 }
 
 async function branchExists(repo: string, branch: string) {
-  const proc = Bun.spawn(["git", "-C", repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const proc = Bun.spawn([
+    "git",
+    "-C",
+    repo,
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}`,
+  ]);
   return (await proc.exited) === 0;
 }
 
@@ -335,7 +541,13 @@ function makeRunner(cwd: string, sink: Sink): Runner {
   return async (cmd, args, input = "", log, id) => {
     let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
     try {
-      proc = Bun.spawn([cmd, ...args], { cwd, stdin: "pipe", stdout: "pipe", stderr: "pipe", env: Bun.env });
+      proc = Bun.spawn([cmd, ...args], {
+        cwd,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: Bun.env,
+      });
     } catch (error) {
       const output = error instanceof Error ? error.message : String(error);
       if (log) await writeFile(log, output);
@@ -356,17 +568,34 @@ function makeRunner(cwd: string, sink: Sink): Runner {
         pending += text;
         const lines = pending.split(/\r?\n/);
         pending = lines.pop() ?? "";
-        if (id) for (const line of lines.filter(Boolean)) await sink.event({ type: "log", id, line });
+        if (id)
+          for (const line of lines.filter(Boolean))
+            await sink.event({ type: "log", id, line });
       }
       if (id && pending) await sink.event({ type: "log", id, line: pending });
     };
-    const [, , code] = await Promise.all([pump(proc.stdout), pump(proc.stderr), proc.exited]);
+    const [, , code] = await Promise.all([
+      pump(proc.stdout),
+      pump(proc.stderr),
+      proc.exited,
+    ]);
     if (log) await writeFile(log, output);
     return { code, output };
   };
 }
 
-async function initTrack(file: string, data: { spec: string; cwd: string; base: string; branch: string; max: number; reportFormat: ReportFormat; strict: boolean }) {
+async function initTrack(
+  file: string,
+  data: {
+    spec: string;
+    cwd: string;
+    base: string;
+    branch: string;
+    max: number;
+    reportFormat: ReportFormat;
+    strict: boolean;
+  },
+) {
   if (await stat(file).catch(() => false)) return;
   await writeFile(
     file,
@@ -375,19 +604,39 @@ async function initTrack(file: string, data: { spec: string; cwd: string; base: 
 }
 
 async function readLine(file: string) {
-  return (await readFile(file, "utf8").catch(() => "")).split(/\r?\n/, 1)[0] ?? "";
+  return (
+    (await readFile(file, "utf8").catch(() => "")).split(/\r?\n/, 1)[0] ?? ""
+  );
 }
 
 async function writeLine(file: string, value: string) {
   await writeFile(file, `${value}\n`);
 }
 
-async function runCodex(runner: Runner, repo: string, sessionFile: string, log: string, prompt: string) {
+async function runCodex(
+  runner: Runner,
+  repo: string,
+  sessionFile: string,
+  log: string,
+  prompt: string,
+) {
   const session = await readLine(sessionFile);
   const args = session
-    ? ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", session, "-"]
+    ? [
+        "exec",
+        "resume",
+        "--dangerously-bypass-approvals-and-sandbox",
+        session,
+        "-",
+      ]
     : ["exec", "--dangerously-bypass-approvals-and-sandbox", "-C", repo, "-"];
-  const result = await runner("codex", args, prompt, log, log.match(/r(\d+)-codex/) ? `codex-${RegExp.$1}` : "codex");
+  const result = await runner(
+    "codex",
+    args,
+    prompt,
+    log,
+    log.match(/r(\d+)-codex/) ? `codex-${RegExp.$1}` : "codex",
+  );
   if (result.code !== 0) return false;
   if (!session) {
     const next = extractSessionId(result.output);
@@ -397,13 +646,39 @@ async function runCodex(runner: Runner, repo: string, sessionFile: string, log: 
   return true;
 }
 
-async function runClaude(runner: Runner, repo: string, sessionFile: string, log: string, prompt: string) {
+async function runClaude(
+  runner: Runner,
+  repo: string,
+  sessionFile: string,
+  log: string,
+  prompt: string,
+) {
   const session = await readLine(sessionFile);
   const next = session || randomUUID();
   const args = session
-    ? ["-p", "--resume", session, "--dangerously-skip-permissions", "--add-dir", repo]
-    : ["-p", "--session-id", next, "--dangerously-skip-permissions", "--add-dir", repo];
-  const result = await runner("claude", args, prompt, log, log.match(/r(\d+)-claude/) ? `claude-${RegExp.$1}` : "report");
+    ? [
+        "-p",
+        "--resume",
+        session,
+        "--dangerously-skip-permissions",
+        "--add-dir",
+        repo,
+      ]
+    : [
+        "-p",
+        "--session-id",
+        next,
+        "--dangerously-skip-permissions",
+        "--add-dir",
+        repo,
+      ];
+  const result = await runner(
+    "claude",
+    args,
+    prompt,
+    log,
+    log.match(/r(\d+)-claude/) ? `claude-${RegExp.$1}` : "report",
+  );
   if (result.code !== 0) return false;
   if (!session) await writeLine(sessionFile, next);
   return true;
@@ -412,21 +687,38 @@ async function runClaude(runner: Runner, repo: string, sessionFile: string, log:
 function extractSessionId(output: string) {
   return output
     .split(/\r?\n/)
-    .filter((line) => /(session.?id|thread_id|codex exec resume|codex resume|To continue this session)/i.test(line))
+    .filter((line) =>
+      /(session.?id|thread_id|codex exec resume|codex resume|To continue this session)/i.test(
+        line,
+      ),
+    )
     .join("\n")
     .match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
     .toLowerCase();
 }
 
 function listReviews(slug: string, upto: number, max: number) {
-  return Array.from({ length: Math.min(upto, max) }, (_, i) => `- .codex/reviews/${slug}-r${i + 1}.md`).join("\n");
+  return Array.from(
+    { length: Math.min(upto, max) },
+    (_, i) => `- .codex/reviews/${slug}-r${i + 1}.md`,
+  ).join("\n");
 }
 
 function criteriaBlock(criteria: string[]) {
-  return criteria.map((criterion, i) => `AC${i + 1}: ${criterion}`).join("\n") || "No parsed acceptance criteria.";
+  return (
+    criteria.map((criterion, i) => `AC${i + 1}: ${criterion}`).join("\n") ||
+    "No parsed acceptance criteria."
+  );
 }
 
-function codexPrompt(input: { spec: string; track: string; pass: number; strict: boolean; previous: string; criteria: string[] }) {
+function codexPrompt(input: {
+  spec: string;
+  track: string;
+  pass: number;
+  strict: boolean;
+  previous: string;
+  criteria: string[];
+}) {
   const strict = input.strict
     ? "\nStrict lifecycle:\n1. Add or update regression tests before implementation.\n2. Run the narrow test first and record the failing result, unless impossible; if impossible, say why.\n3. Implement the smallest change.\n4. Run targeted tests, full tests, lint/typecheck, and coverage. Coverage must be 100% when the project exposes coverage tooling.\n"
     : "";
@@ -435,11 +727,41 @@ function codexPrompt(input: { spec: string; track: string; pass: number; strict:
     : `Fix only the findings in the review. Do not refactor unrelated code.\n\nSpec: ${input.spec}\nTrack: ${input.track}\nReview: ${input.previous}\nPass: ${input.pass}\nAcceptance criteria:\n${criteriaBlock(input.criteria)}${strict}\nTasks:\n1. Read the review file.\n2. Fix each finding or explain why it is wrong in the track.\n3. Re-run relevant tests.\n4. Append "## Pass ${input.pass} - fix" to ${input.track} with per-finding outcomes.\n`;
 }
 
-function reviewPrompt(input: { spec: string; track: string; base: string; pass: number; output: string; priors: string; criteria: string[]; strict: boolean }) {
+function reviewPrompt(input: {
+  spec: string;
+  track: string;
+  base: string;
+  pass: number;
+  output: string;
+  priors: string;
+  criteria: string[];
+  strict: boolean;
+}) {
   return `You are reviewing a Codex implementation. Be a senior reviewer, not a linter.\n\nSpec: ${input.spec}\nTrack: ${input.track}\nBase: ${input.base}\nPass: ${input.pass}\nPrior reviews:\n${input.priors}\nAcceptance criteria:\n${criteriaBlock(input.criteria)}\nOutput path: ${input.output}\n\nSteps:\n1. Read the spec and track.\n2. Run: git diff ${input.base}...HEAD\n3. Read prior reviews so you do not repeat resolved findings.\n4. Write the review to ${input.output} using this exact format:\n\n# Claude review ${input.pass}\n\nVerdict: <ACCEPT | REJECT | UNCLEAR>\n\n## Acceptance matrix\n\n- AC1: <PASS | FAIL | UNCLEAR> - <evidence>\n\n## Findings\n\n1. [severity] <file:line> - <symptom>. Root cause: <why>. Principle: <principle>.\n\n## Missing tests\n\n- <gap, or None>\n\n## Fix instructions\n\n1. <standalone instruction>\n\n## Notes\n\n- <scope, disputes, lessons, or None>\n\nRules:\n- The verdict line must appear verbatim.\n- ACCEPT requires every acceptance criterion PASS with concrete evidence.${input.strict ? "\n- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, and 100% coverage when coverage tooling exists." : ""}\n- For ACCEPT: Findings and Fix instructions bodies are "None".\n- Findings must explain WHY, not just WHAT.\n`;
 }
 
-async function synthesizeReport(runner: Runner, repo: string, input: { slug: string; spec: string; track: string; report: string; status: Status; pass: number; max: number; base: string; initialBranch: string; branch: string; commit: string; commitMessage: string; codexSessionId: string; claudeSessionId: string; format: ReportFormat; reviews: string }) {
+async function synthesizeReport(
+  runner: Runner,
+  repo: string,
+  input: {
+    slug: string;
+    spec: string;
+    track: string;
+    report: string;
+    status: Status;
+    pass: number;
+    max: number;
+    base: string;
+    initialBranch: string;
+    branch: string;
+    commit: string;
+    commitMessage: string;
+    codexSessionId: string;
+    claudeSessionId: string;
+    format: ReportFormat;
+    reviews: string;
+  },
+) {
   const metadata = `Result: ${input.status}
 Passes: ${input.pass} / ${input.max}
 Repository: ${repo}
@@ -458,12 +780,31 @@ ${input.reviews}`;
     input.format === "html"
       ? `Write the report to ${input.report} as valid standalone HTML. Use a readable document layout with embedded CSS, a compact metadata table at the top, and substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`
       : `Write the report to ${input.report} in markdown with these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`;
-  const sessionFile = path.join(repo, `.codex/sessions/${input.slug}-claude.id`);
+  const sessionFile = path.join(
+    repo,
+    `.codex/sessions/${input.slug}-claude.id`,
+  );
   const session = await readLine(sessionFile);
   const next = session || randomUUID();
   await runner(
     "claude",
-    session ? ["-p", "--resume", session, "--dangerously-skip-permissions", "--add-dir", repo] : ["-p", "--session-id", next, "--dangerously-skip-permissions", "--add-dir", repo],
+    session
+      ? [
+          "-p",
+          "--resume",
+          session,
+          "--dangerously-skip-permissions",
+          "--add-dir",
+          repo,
+        ]
+      : [
+          "-p",
+          "--session-id",
+          next,
+          "--dangerously-skip-permissions",
+          "--add-dir",
+          repo,
+        ],
     `You are writing a learning-oriented post-mortem for a developer who just ran a Codex/Claude devloop.\n\nMetadata to render at the top exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
     path.join(repo, `.codex/logs/${input.slug}-report.log`),
     "report",
@@ -476,7 +817,12 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function slugify(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "change";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "change"
+  );
 }
 
 function escapeRegex(value: string) {
