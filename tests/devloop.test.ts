@@ -39,6 +39,7 @@ describe("parsing", () => {
     expect(parseCriteria("# Spec\n\n## Acceptance criteria\n1. One\n- Two\n\n## Notes\nNope")).toEqual(["One", "Two"]);
     expect(parseCriteria("# Spec")).toEqual([]);
     expect(parseVerdict("Verdict: ACCEPT\n")).toBe("ACCEPT");
+    expect(parseVerdict("No verdict here\n")).toBe("");
   });
 
   test("renders a useful default screen", () => {
@@ -132,11 +133,12 @@ describe("loop", () => {
 
   test("reports commit errors", async () => {
     const { repo } = await fixture("commit-error");
-    await writeFile(path.join(repo, ".git/hooks/pre-commit"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    await writeFile(path.join(repo, ".git/hooks/pre-commit"), "#!/usr/bin/env bash\necho 'pre-commit blocked commit' >&2\nexit 1\n", { mode: 0o755 });
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const { result } = await run(repo);
+    const { result, events } = await run(repo);
 
     expect(result.status).toBe("commit-error");
+    expect(events).toContainEqual({ type: "done", id: "commit", ok: false, detail: "pre-commit blocked commit" });
   });
 
   test("uses a suffixed branch when the default branch exists", async () => {

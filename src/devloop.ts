@@ -151,9 +151,8 @@ export function parseCriteria(markdown: string): string[] {
 }
 
 export function parseVerdict(review: string): Verdict | "" {
-  return review.match(/^Verdict:\s+(ACCEPT|REJECT|UNCLEAR)/m)?.[1] as
-    | Verdict
-    | "";
+  const match = review.match(/^Verdict:\s+(ACCEPT|REJECT|UNCLEAR)/m);
+  return match ? (match[1] as Verdict) : "";
 }
 
 export function hasPassingMatrix(review: string, count: number) {
@@ -350,8 +349,12 @@ export async function runDevloop(
       id: commitId,
       title: "local branch and commit",
     });
+    let commitError = "";
     const committed = await commitAccepted(repo, slug, initialDirty).catch(
-      () => undefined,
+      (error) => {
+        commitError = error instanceof Error ? error.message : String(error);
+        return undefined;
+      },
     );
     if (committed) {
       finalBranch = committed.branch;
@@ -371,7 +374,7 @@ export async function runDevloop(
         type: "done",
         id: commitId,
         ok: false,
-        detail: "failed",
+        detail: commitError || "failed",
       });
     }
   }
@@ -425,7 +428,12 @@ async function command(cmd: string, args: string[]) {
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  if (code !== 0) throw new Error(err.trim() || `${cmd} failed`);
+  if (code !== 0)
+    throw new Error(
+      err.trim() ||
+        out.trim() ||
+        `${cmd} ${args.join(" ")} failed with exit ${code}`,
+    );
   return out;
 }
 
@@ -635,7 +643,7 @@ async function runCodex(
     args,
     prompt,
     log,
-    log.match(/r(\d+)-codex/) ? `codex-${RegExp.$1}` : "codex",
+    logId(log, "codex"),
   );
   if (result.code !== 0) return false;
   if (!session) {
@@ -677,11 +685,16 @@ async function runClaude(
     args,
     prompt,
     log,
-    log.match(/r(\d+)-claude/) ? `claude-${RegExp.$1}` : "report",
+    logId(log, "claude"),
   );
   if (result.code !== 0) return false;
   if (!session) await writeLine(sessionFile, next);
   return true;
+}
+
+function logId(log: string, kind: "codex" | "claude") {
+  const pass = log.match(new RegExp(`r(\\d+)-${kind}`))?.[1];
+  return pass ? `${kind}-${pass}` : kind === "codex" ? "codex" : "report";
 }
 
 function extractSessionId(output: string) {
