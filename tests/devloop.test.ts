@@ -42,7 +42,7 @@ describe("parsing", () => {
   });
 
   test("renders a useful default screen", () => {
-    expect(welcome()).toContain("▐▌▗▞▀▚▖");
+    expect(welcome()).toContain("____/ /__");
     expect(welcome()).toContain("Common commands:");
     expect(welcome()).toContain("devloop .specs/change.md");
     expect(welcome()).toContain("bun scripts/install.ts");
