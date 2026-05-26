@@ -123,3 +123,7 @@ bun test
 ```
 
 `bun test` enforces 100% line, function, and statement coverage for the TypeScript core.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
