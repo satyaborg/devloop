@@ -5,47 +5,41 @@ created: YYYY-MM-DD
 pr: null
 ---
 
-# <Concise sentence-case title>
+# <Concise title>
 
-## Intent
-<State the real problem or user pain, not just the assumed solution. Include the concrete moment this hurts if known.>
+## Problem
+<The real user pain or failure. Include the concrete moment this hurts.>
 
-## Desired outcome
-<Describe the end state that would make the user say this is exactly what they meant.>
+## Outcome
+<The observable end state that means this worked.>
 
 ## Scope
-- Touch: <paths, modules, commands, UI surfaces, or "agent to identify">
-- Do not touch: <explicit exclusions>
+- In: <paths, commands, APIs, UI surfaces, or behavior>
+- Out: <explicit exclusions>
 
 ## Behavior
 Happy path:
-1. <End-to-end behavior from the user's point of view.>
+1. <User/system action>
+2. <Expected observable result>
 
-Edge cases and failures:
-- <Condition>: <expected behavior>
-- <Condition>: <expected behavior>
+Edge cases:
+- <Condition>: <expected result>
+- <Condition>: <expected result>
+
+## Acceptance criteria
+1. <Singular, verifiable requirement with observable evidence.>
+2. <Singular, verifiable requirement with observable evidence.>
+
+## Test plan
+- Red: <regression test to add/update first, or why not applicable>
+- Green: <targeted command(s)>
+- Full: <full test/typecheck/lint command(s)>
+- Coverage: <100% coverage command, or why unavailable>
 
 ## Constraints
 - Must: <hard requirement>
-- Prefer: <soft preference or existing project convention>
-- Avoid: <forbidden approach, dependency, churn, or scope creep>
+- Avoid: <forbidden approach, dependency, or churn>
+- Existing convention: <repo pattern to preserve>
 
-## Acceptance criteria
-1. <Independently verifiable criterion with observable evidence.>
-2. <Independently verifiable criterion with observable evidence.>
-
-## Test plan
-- Regression first: <test to add or update before implementation, or why not applicable>
-- Targeted: <command(s)>
-- Full: <command(s)>
-- Coverage: <100% coverage command, or explicit reason coverage tooling is not applicable>
-
-## Implementation notes
-- <Known files, design direction, compatibility constraints, or migration notes.>
-- <If a decision is unclear, ask before coding.>
-
-## Out of scope
-- <Adjacent work explicitly excluded from this change.>
-
-## Review focus
-- <Risks Claude should scrutinize: acceptance evidence, tests, edge cases, compatibility, performance, security, or maintainability.>
+## Notes
+<Only material implementation hints, risks, dependencies, migrations, or open questions.>

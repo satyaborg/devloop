@@ -10,6 +10,8 @@ Run from the target git worktree. The spec may live anywhere.
 
 Start new specs from [`templates/spec.md`](templates/spec.md), usually copied to `.specs/YYYY-MM-DD-slug.md`.
 
+The template is intentionally short: clear problem, observable outcome, tight scope, behavior examples, verifiable acceptance criteria, regression-first test plan, constraints, and only material notes.
+
 ## Install
 
 From this checkout:
@@ -101,3 +103,11 @@ bun test
 ```
 
 `bun test` enforces 100% line/function/statement coverage for the TypeScript core.
+
+## References
+
+- [ISO/IEC/IEEE 29148:2018](https://byui-cse.github.io/cse372-course/Reading/CSE372Week10-IEEE.pdf): requirements should be necessary, unambiguous, singular, feasible, verifiable, and focused on what is needed.
+- [Erdogmus, Morisio, and Torchiano, 2005](https://cs.unm.edu/~joel/cs351/paper/IEEE-Effectiveness_of_Test-First_Approach_to_Programming.pdf): test-first work formalizes functionality as tests, gives fast feedback, and supports small measurable tasks.
+- [Fucci et al., 2016](https://bura.brunel.ac.uk/bitstream/2438/14550/1/FullText.pdf): TDD benefits depend heavily on fine-grained, steady cycles, not ceremony.
+- [Rafique and Misic, 2013](https://openurl.ebsco.com/contentitem/doi%3A10.1109/tse.2012.28?id=ebsco%3Adoi%3A10.1109%2Ftse.2012.28&sid=ebsco%3Aplink%3Acrawler) and [Bissi, Neto, and Emer, 2016](https://www.sciencedirect.com/science/article/abs/pii/S0950584916300222): TDD evidence is strongest for quality, less conclusive for productivity.
+- [Agile Alliance user stories](https://agilealliance.org/glossary/user-stories/), [Given-When-Then](https://agilealliance.org/glossary/given-when-then/), and [Cucumber Gherkin reference](https://cucumber.io/docs/gherkin/reference/): acceptance criteria are strongest when they become concrete, observable examples.
