@@ -1,112 +1,113 @@
 # devloop
 
-Spec in, accepted code out. Codex implements, Claude reviews, loop until ACCEPT, stall, or max turns. One bash file.
-
-```
-devloop.sh [--report-format html|markdown] path/to/spec.md [max=5]
-```
-
-## Why
-
-Skills-as-orchestrators drift. The LLM driver has discretion to skip steps and often does, especially under load. A shell state machine cannot. devloop is the same workflow as the [`/devloop`](https://github.com/anthropics/claude-code) skill it replaces, minus the discretion.
-
-What stays in the LLMs (because they are good at it):
-- Codex: implementation, design decisions, fix passes
-- Claude: review judgment, verdict, final synthesis
-
-What moves to bash (because the LLM does not need discretion here):
-- Sequencing the loop
-- Spawning each agent headless
-- Reusing one Codex implementation session and one Claude review session
-- Parsing the verdict
-- Detecting stalls
-- File path conventions
-- Stopping at max turns
-
-## Quick start
-
-Prereqs on PATH: `claude`, `codex`, `git`.
+Codex implements. Claude reviews. devloop runs the loop until the work is accepted, stalls, becomes unclear, hits max turns, or an agent fails.
 
 ```sh
-# 1. write a spec
-cat > .specs/add-foo-flag.md <<'EOF'
-# Add foo flag to bar config
+devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] spec.md [max=5]
+```
 
+Run from the target git worktree. The spec may live anywhere.
+
+Start new specs from [`templates/spec.md`](templates/spec.md), usually copied to `.specs/YYYY-MM-DD-slug.md`.
+
+The template is intentionally short: clear problem, observable outcome, tight scope, behavior examples, verifiable acceptance criteria, regression-first test plan, constraints, and only material notes.
+
+## Install
+
+From this checkout:
+
+```sh
+bun scripts/install.ts
+```
+
+That installs dependencies and links `devloop` into `~/.local/bin`. Set `DEVLOOP_BIN_DIR` to choose another bin directory.
+
+## Defaults
+
+- strict mode is on
+- HTML reports are on
+- max turns default to 5 and clamp to 1-10
+- TTY runs use the collapsed OpenTUI view
+- non-TTY runs use plain output
+- accepted runs create a local branch and local commit
+- no-arg `devloop` shows the logo and common commands
+
+Use `--plain` for CI. Use `--tui` to force the TUI. Use `--no-strict` only when you explicitly want weaker gates.
+
+## Strict Acceptance
+
+Strict mode requires:
+
+```md
 ## Acceptance criteria
 1. ...
-EOF
-
-# 2. loop
-./devloop.sh .specs/add-foo-flag.md
 ```
 
-Defaults to unattended (`--dangerously-bypass-approvals-and-sandbox` for codex, `--dangerously-skip-permissions` for claude). Run inside a git worktree, not your main checkout.
+Codex is prompted to work regression-first: add or update tests, observe the red phase when behavior changes, implement the smallest fix, then run targeted tests, full tests, lint/typecheck, and coverage.
 
-The implementation worktree is resolved from the directory where you invoke `devloop.sh`, not from the spec file's location. The spec can live elsewhere; Codex and Claude are pointed at the current worktree.
+Claude must write:
 
-## The loop
+```md
+## Acceptance matrix
 
-```
-pass 1: codex implements against spec
-        claude reviews → ACCEPT | REJECT | UNCLEAR
-pass N: codex fixes findings from review N-1
-        claude reviews
-exit:   ACCEPT          → 0
-        stall | max | unclear → 1
-        codex/claude error    → 2
+- AC1: PASS - evidence
 ```
 
-Stall = normalized findings hash matches the prior REJECT.
+In strict mode, `Verdict: ACCEPT` only counts when every parsed criterion has a `PASS` matrix row. Missing evidence exits as `unclear`.
 
-## Sessions
+## Output
 
-Each spec slug gets two persisted sessions:
-
-```
-.codex/sessions/<slug>-codex.id
-.codex/sessions/<slug>-claude.id
-```
-
-Pass 1 starts the Codex implementation session and records the resumable session ID. Later fix passes call `codex exec resume <session-id>`, so Codex keeps the implementation context. Claude uses one review session for every review pass and the final report.
-
-## Artifacts
-
-```
-.codex/tracks/<slug>.md        codex's running notes per pass
-.codex/reviews/<slug>-r<N>.md  one per review turn
-.codex/reports/<slug>.html     synthesized post-mortem by default
-.codex/reports/<slug>.md       synthesized post-mortem with --report-format markdown
-.codex/logs/                   raw agent stdout for debugging
+```text
+.codex/tracks/<slug>.md
+.codex/reviews/<slug>-r<N>.md
+.codex/reports/<slug>.html
+.codex/reports/<slug>.md
+.codex/logs/
+.codex/sessions/
 ```
 
-## Tests
+Reports can be HTML or Markdown:
 
 ```sh
-./tests/devloop_test.sh
+devloop --report-format html .specs/change.md
+devloop --report-format markdown .specs/change.md
+devloop --md .specs/change.md
 ```
 
-The tests run the shell state machine against temporary git repos with mocked `codex` and `claude` commands, so they do not call either agent.
+Reports include result, passes, repo, spec, base branch, starting branch, final branch, local commit, commit message, Codex session ID, Claude session ID, track, and review files.
 
-## The report
+## Local Commit
 
-Not a mechanical concat. Claude is called one more time in the same review session with the spec + track + all reviews and writes a learning-oriented post-mortem:
+On `accepted`, devloop creates or reuses:
 
-- **Shape of the problem** — what the spec really asked for, alternatives ruled out
-- **What was built** — design choices and the tradeoffs weighed
-- **What review caught (and why it mattered)** — symptom → root cause → principle violated, grouped into patterns
-- **What to remember next time** — transferable lessons in `When X, prefer Y because Z` form
-- **Residual risk** — concrete, not generic
+```text
+devloop/<spec-slug>
+```
 
-The "why" is enforced in the prompts: codex must explain decisions, claude must articulate the principle behind each finding ("if you cannot articulate the principle, the finding is too shallow — drop it or sharpen it").
+It commits only files that were clean when the run started and excludes `.codex/`. Commit messages are Conventional Commit style:
 
-## Caveats
+```text
+feat: <spec-slug>
+```
 
-- **Unattended = trusts both agents.** Use worktrees.
-- **Sessions persist per spec slug.** Delete the matching files in `.codex/sessions/` when you want a fresh Codex or Claude context for the same spec filename.
-- **No spec writing.** Deliberate. Write the spec yourself (or via an interview skill) and hand the path in.
-- **Stall detection is hash-based.** Cosmetic rewording of identical findings will defeat it.
-- **Base branch is auto-guessed** (`origin/HEAD` → `main` → `master`). Edit the `BASE=` line for stacked branches.
+devloop does not push or open a PR.
 
-## License
+## Development
 
-MIT
+Prereqs: `bun`, `codex`, `claude`, `git`.
+
+```sh
+bun scripts/install.ts
+bun run typecheck
+bun test
+```
+
+`bun test` enforces 100% line/function/statement coverage for the TypeScript core.
+
+## References
+
+- [ISO/IEC/IEEE 29148:2018](https://byui-cse.github.io/cse372-course/Reading/CSE372Week10-IEEE.pdf): requirements should be necessary, unambiguous, singular, feasible, verifiable, and focused on what is needed.
+- [Erdogmus, Morisio, and Torchiano, 2005](https://cs.unm.edu/~joel/cs351/paper/IEEE-Effectiveness_of_Test-First_Approach_to_Programming.pdf): test-first work formalizes functionality as tests, gives fast feedback, and supports small measurable tasks.
+- [Fucci et al., 2016](https://bura.brunel.ac.uk/bitstream/2438/14550/1/FullText.pdf): TDD benefits depend heavily on fine-grained, steady cycles, not ceremony.
+- [Rafique and Misic, 2013](https://openurl.ebsco.com/contentitem/doi%3A10.1109/tse.2012.28?id=ebsco%3Adoi%3A10.1109%2Ftse.2012.28&sid=ebsco%3Aplink%3Acrawler) and [Bissi, Neto, and Emer, 2016](https://www.sciencedirect.com/science/article/abs/pii/S0950584916300222): TDD evidence is strongest for quality, less conclusive for productivity.
+- [Agile Alliance user stories](https://agilealliance.org/glossary/user-stories/), [Given-When-Then](https://agilealliance.org/glossary/given-when-then/), and [Cucumber Gherkin reference](https://cucumber.io/docs/gherkin/reference/): acceptance criteria are strongest when they become concrete, observable examples.
