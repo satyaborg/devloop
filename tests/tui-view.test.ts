@@ -39,6 +39,8 @@ describe("tui view", () => {
       branch: "devloop/change",
       commit: "",
       commitMessage: "",
+      worktree: "/tmp/repo-devloop-change",
+      sourceRepo: "/tmp/repo",
       codexSessionId: "codex-session",
       claudeSessionId: "claude-session",
     });

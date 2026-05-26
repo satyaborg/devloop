@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs, parseCriteria, parseVerdict, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
@@ -26,8 +26,10 @@ describe("parsing", () => {
       max: 8,
       reportFormat: "markdown",
       strict: false,
+      worktree: true,
       cwd: "/x",
     } satisfies Options);
+    expect(parseArgs(["--in-place", "spec.md"], "/x")).toMatchObject({ worktree: false });
     expect(parseArgs(["spec.md", "0"], "/x")).toMatchObject({ max: 1 });
     expect(parseArgs(["spec.md", "99"], "/x")).toMatchObject({ max: 10 });
     expect(parseArgs(["--wat"], "/x")).toContain("unknown option");
@@ -55,28 +57,36 @@ describe("loop", () => {
     const { repo, state } = await fixture("accept");
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     const { result, events } = await run(repo);
+    const worktree = result.worktree;
 
     expect(result.status).toBe("accepted");
     expect(result.passes).toBe(1);
     expect(result.branch).toBe("devloop/change");
     expect(result.commit).toMatch(/^[0-9a-f]+$/);
     expect(result.commitMessage).toBe("feat: change");
-    await exists(path.join(repo, ".codex/tracks/change.md"));
-    await exists(path.join(repo, ".codex/reviews/change-r1.md"));
-    await exists(path.join(repo, ".codex/reports/change.html"));
-    expect(await readFile(path.join(repo, ".codex/sessions/change-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
-    expect(await readFile(path.join(repo, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
-    expect(await readFile(path.join(repo, ".codex/reviews/change-r1.md"), "utf8")).toContain("- AC1: PASS");
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${repo} -`);
-    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("devloop/change");
-    expect((await Bun.$`git -C ${repo} log -1 --format=%s`.text()).trim()).toBe("feat: change");
-    expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).toContain("feature.txt");
-    expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain(".codex/");
+    expect(result.sourceRepo).toBe(repo);
+    expect(worktree).not.toBe(repo);
+    await exists(path.join(worktree, ".codex/specs/change.md"));
+    await exists(path.join(worktree, ".codex/tracks/change.md"));
+    await exists(path.join(worktree, ".codex/reviews/change-r1.md"));
+    await exists(path.join(worktree, ".codex/reports/change.html"));
+    expect(await readFile(path.join(worktree, ".codex/sessions/change-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
+    expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
+    expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
+    expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("- AC1: PASS");
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
+    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("main");
+    expect((await Bun.$`git -C ${worktree} branch --show-current`.text()).trim()).toBe("devloop/change");
+    expect((await Bun.$`git -C ${worktree} log -1 --format=%s`.text()).trim()).toBe("feat: change");
+    expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).toContain("feature.txt");
+    expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).not.toContain(".codex/");
     const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
     expect(reportPrompt).toContain("Codex session: 00000000-0000-4000-8000-000000000001");
     expect(reportPrompt).toContain("Final branch: devloop/change");
+    expect(reportPrompt).toContain(`Worktree: ${worktree}`);
     expect(reportPrompt).toContain(`Local commit: ${result.commit}`);
     expect(reportPrompt).toContain("Commit message: feat: change");
+    expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
     expect(events).toContainEqual({ type: "log", id: "codex-1", line: "codex-tail" });
   });
@@ -88,8 +98,8 @@ describe("loop", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.passes).toBe(2);
-    expect(await readFile(path.join(repo, ".codex/reviews/change-r1.md"), "utf8")).toContain("Verdict: REJECT");
-    expect(await readFile(path.join(repo, ".codex/reviews/change-r2.md"), "utf8")).toContain("Verdict: ACCEPT");
+    expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("Verdict: REJECT");
+    expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r2.md"), "utf8")).toContain("Verdict: ACCEPT");
     expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
   });
 
@@ -108,12 +118,12 @@ describe("loop", () => {
     const { result } = await run(repo, { reportFormat: "markdown" });
 
     expect(result.report).toBe(".codex/reports/change.md");
-    await exists(path.join(repo, ".codex/reports/change.md"));
-    expect(await exists(path.join(repo, ".codex/reports/change.html"), false)).toBe(false);
+    await exists(path.join(result.worktree, ".codex/reports/change.md"));
+    expect(await exists(path.join(result.worktree, ".codex/reports/change.html"), false)).toBe(false);
     expect(await readFile(path.join(state, "claude-prompts.log"), "utf8")).toContain("in markdown");
   });
 
-  test("skips files dirty before the run when committing", async () => {
+  test("isolates default runs from files dirty before the run", async () => {
     const { repo } = await fixture("dirty-before");
     await writeFile(path.join(repo, "dirty.txt"), "do not commit\n");
     await writeFile(path.join(repo, "old.txt"), "old\n");
@@ -124,11 +134,35 @@ describe("loop", () => {
     const { result } = await run(repo);
 
     expect(result.status).toBe("accepted");
+    expect(await Bun.$`git -C ${result.worktree} show --name-only --format= HEAD`.text()).toContain("feature.txt");
+    expect(await Bun.$`git -C ${result.worktree} show --name-only --format= HEAD`.text()).not.toContain("dirty.txt");
+    expect(await Bun.$`git -C ${result.worktree} show --name-only --format= HEAD`.text()).not.toContain("renamed.txt");
+    expect(await exists(path.join(result.worktree, "dirty.txt"), false)).toBe(false);
+    expect(await Bun.$`git -C ${repo} status --short -- dirty.txt`.text()).toContain("?? dirty.txt");
+    expect(await Bun.$`git -C ${repo} status --short -- renamed.txt`.text()).toContain("renamed.txt");
+  });
+
+  test("supports opting out and running in the current worktree", async () => {
+    const { repo, state } = await fixture("in-place");
+    await writeFile(path.join(repo, "dirty.txt"), "do not commit\n");
+    await writeFile(path.join(repo, "old.txt"), "old\n");
+    await Bun.$`git -C ${repo} add old.txt`.quiet();
+    await Bun.$`git -C ${repo} commit -q -m old`.quiet();
+    await Bun.$`git -C ${repo} mv old.txt renamed.txt`.quiet();
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result, events } = await run(repo, { worktree: false });
+
+    expect(result.status).toBe("accepted");
+    expect(result.worktree).toBe(repo);
+    expect(result.sourceRepo).toBe(repo);
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${repo} -`);
+    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("devloop/change");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).toContain("feature.txt");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain("dirty.txt");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain("renamed.txt");
     expect(await Bun.$`git -C ${repo} status --short -- dirty.txt`.text()).toContain("?? dirty.txt");
     expect(await Bun.$`git -C ${repo} status --short -- renamed.txt`.text()).toContain("renamed.txt");
+    expect(events.some((event) => event.type === "step" && event.id === "worktree")).toBe(false);
   });
 
   test("reports commit errors", async () => {
@@ -149,6 +183,17 @@ describe("loop", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.branch).toBe("devloop/change-2");
+    expect(path.basename(result.worktree)).toBe("repo-devloop-change-2");
+  });
+
+  test("uses a suffixed worktree path when the default path exists", async () => {
+    const { repo } = await fixture("worktree-path-exists");
+    await mkdir(path.join(path.dirname(repo), "repo-devloop-change"), { recursive: true });
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result } = await run(repo);
+
+    expect(result.status).toBe("accepted");
+    expect(path.basename(result.worktree)).toBe("repo-devloop-change-2");
   });
 
   test("preserves spacey slugs and invocation repo ownership", async () => {
@@ -158,21 +203,22 @@ describe("loop", () => {
     process.env.DEVLOOP_TEST_STATE = work.state;
     process.env.DEVLOOP_TEST_VERDICTS = "REJECT,ACCEPT";
 
-    const spaced = await runDevloop({ spec: work.specPath, max: 2, reportFormat: "html", strict: true, cwd: work.repo });
+    const spaced = await runDevloop({ spec: work.specPath, max: 2, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
     expect(spaced.status).toBe("accepted");
-    await exists(path.join(work.repo, ".codex/reviews/change with spaces-r2.md"));
+    await exists(path.join(spaced.worktree, ".codex/reviews/change with spaces-r2.md"));
 
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const external = await runDevloop({ spec: specOnly.specPath, max: 1, reportFormat: "html", strict: true, cwd: work.repo });
+    const external = await runDevloop({ spec: specOnly.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
     expect(external.status).toBe("accepted");
-    await exists(path.join(work.repo, ".codex/tracks/external spec.md"));
+    await exists(path.join(external.worktree, ".codex/tracks/external spec.md"));
+    expect(await exists(path.join(work.repo, ".codex"), false)).toBe(false);
     expect(await exists(path.join(specOnly.repo, ".codex"), false)).toBe(false);
   });
 
   test("requires acceptance criteria in strict mode", async () => {
     const { repo } = await fixture("no-criteria", "# Spec\n");
     await expect(run(repo)).rejects.toThrow("strict mode requires ## Acceptance criteria");
-    await expect(runDevloop({ spec: path.join(repo, ".specs/missing.md"), max: 1, reportFormat: "html", strict: true, cwd: repo })).rejects.toThrow("usage:");
+    await expect(runDevloop({ spec: path.join(repo, ".specs/missing.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo })).rejects.toThrow("usage:");
   });
 
   test("allows missing criteria only when strict is off", async () => {
@@ -232,8 +278,9 @@ describe("loop", () => {
     const { repo } = await fixture("no-base");
     await Bun.$`git -C ${repo} branch -m topic`.quiet();
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    expect((await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, cwd: repo })).status).toBe("accepted");
-    expect(await readFile(path.join(repo, ".codex/tracks/change.md"), "utf8")).toContain("- base: main");
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    expect(result.status).toBe("accepted");
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- base: main");
   });
 });
 
@@ -321,7 +368,7 @@ fi
 async function run(repo: string, overrides: Partial<Options> = {}) {
   const events: Event[] = [];
   const result = await runDevloop(
-    { spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, cwd: repo, ...overrides },
+    { spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...overrides },
     { event: (event) => void events.push(event) },
   );
   return { result, events };

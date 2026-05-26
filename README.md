@@ -1,16 +1,8 @@
 # devloop
 
-Codex implements. Claude reviews. devloop runs the loop until the work is accepted, stalls, becomes unclear, hits max turns, or an agent fails.
+`devloop` runs a Codex implementation loop with Claude as the reviewer.
 
-```sh
-devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] spec.md [max=5]
-```
-
-Run from the target git worktree. The spec may live anywhere.
-
-Start new specs from [`templates/spec.md`](templates/spec.md), usually copied to `.specs/YYYY-MM-DD-slug.md`.
-
-The template is intentionally short: clear problem, observable outcome, tight scope, behavior examples, verifiable acceptance criteria, regression-first test plan, constraints, and only material notes.
+Codex makes the change. Claude reviews it. If Claude rejects it, Codex gets the review and tries again. The loop stops when the work is accepted, stalls, becomes unclear, reaches the max turn count, or an agent fails.
 
 ## Install
 
@@ -20,42 +12,72 @@ From this checkout:
 bun scripts/install.ts
 ```
 
-That installs dependencies and links `devloop` into `~/.local/bin`. Set `DEVLOOP_BIN_DIR` to choose another bin directory.
+This installs dependencies and links `devloop` into `~/.local/bin`.
 
-## Defaults
+To use another bin directory:
 
-- strict mode is on
-- HTML reports are on
-- max turns default to 5 and clamp to 1-10
-- TTY runs use the collapsed OpenTUI view
-- non-TTY runs use plain output
-- accepted runs create a local branch and local commit
-- no-arg `devloop` shows the logo and common commands
+```sh
+DEVLOOP_BIN_DIR=/path/to/bin bun scripts/install.ts
+```
 
-Use `--plain` for CI. Use `--tui` to force the TUI. Use `--no-strict` only when you explicitly want weaker gates.
+## Run
 
-## Strict Acceptance
+Run `devloop` from the git repository you want it to change:
 
-Strict mode requires:
+```sh
+devloop .specs/change.md
+```
+
+Full form:
+
+```sh
+devloop [--plain|--tui] [--in-place] [--no-strict] [--report-format html|markdown] spec.md [max=5]
+```
+
+Common examples:
+
+```sh
+devloop .specs/change.md
+devloop --plain .specs/change.md
+devloop --tui .specs/change.md
+devloop --report-format markdown .specs/change.md 3
+```
+
+## Write A Spec
+
+Start with [`templates/spec.md`](templates/spec.md). A good spec is short and concrete:
+
+- what is broken or missing
+- what the finished behavior should look like
+- what is in scope and out of scope
+- examples for happy paths and edge cases
+- acceptance criteria that can be verified
+- the tests or checks that should prove the change works
+
+Strict mode is on by default. In strict mode, the spec must include:
 
 ```md
 ## Acceptance criteria
 1. ...
 ```
 
-Codex is prompted to work regression-first: add or update tests, observe the red phase when behavior changes, implement the smallest fix, then run targeted tests, full tests, lint/typecheck, and coverage.
+## What Happens
 
-Claude must write:
+By default, `devloop`:
 
-```md
-## Acceptance matrix
+- runs up to 5 passes, clamped between 1 and 10
+- uses the TUI in a terminal and plain output elsewhere
+- writes an HTML report
+- requires Claude to pass every acceptance criterion
+- creates an isolated sibling git worktree and runs agents there
+- creates a local branch and commit when the run is accepted
+- never pushes or opens a PR
 
-- AC1: PASS - evidence
-```
-
-In strict mode, `Verdict: ACCEPT` only counts when every parsed criterion has a `PASS` matrix row. Missing evidence exits as `unclear`.
+Use `--plain` for CI. Use `--tui` to force the TUI. Use `--in-place` to opt out of the isolated worktree and run in the current checkout. Use `--no-strict` only when you want weaker acceptance gates.
 
 ## Output
+
+Each run writes files under `.codex/`:
 
 ```text
 .codex/tracks/<slug>.md
@@ -64,37 +86,22 @@ In strict mode, `Verdict: ACCEPT` only counts when every parsed criterion has a 
 .codex/reports/<slug>.md
 .codex/logs/
 .codex/sessions/
+.codex/specs/<slug>.md
 ```
 
-Reports can be HTML or Markdown:
+With the default isolated worktree, these files are written inside the generated sibling worktree. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree.
 
-```sh
-devloop --report-format html .specs/change.md
-devloop --report-format markdown .specs/change.md
-devloop --md .specs/change.md
-```
-
-Reports include result, passes, repo, spec, base branch, starting branch, final branch, local commit, commit message, Codex session ID, Claude session ID, track, and review files.
-
-## Local Commit
-
-On `accepted`, devloop creates or reuses:
+On acceptance, `devloop` creates or reuses a branch like:
 
 ```text
 devloop/<spec-slug>
 ```
 
-It commits only files that were clean when the run started and excludes `.codex/`. Commit messages are Conventional Commit style:
-
-```text
-feat: <spec-slug>
-```
-
-devloop does not push or open a PR.
+It commits only files that were clean when the run started. It excludes `.codex/`.
 
 ## Development
 
-Prereqs: `bun`, `codex`, `claude`, `git`.
+Prereqs: `bun`, `codex`, `claude`, and `git`.
 
 ```sh
 bun scripts/install.ts
@@ -102,12 +109,4 @@ bun run typecheck
 bun test
 ```
 
-`bun test` enforces 100% line/function/statement coverage for the TypeScript core.
-
-## References
-
-- [ISO/IEC/IEEE 29148:2018](https://byui-cse.github.io/cse372-course/Reading/CSE372Week10-IEEE.pdf): requirements should be necessary, unambiguous, singular, feasible, verifiable, and focused on what is needed.
-- [Erdogmus, Morisio, and Torchiano, 2005](https://cs.unm.edu/~joel/cs351/paper/IEEE-Effectiveness_of_Test-First_Approach_to_Programming.pdf): test-first work formalizes functionality as tests, gives fast feedback, and supports small measurable tasks.
-- [Fucci et al., 2016](https://bura.brunel.ac.uk/bitstream/2438/14550/1/FullText.pdf): TDD benefits depend heavily on fine-grained, steady cycles, not ceremony.
-- [Rafique and Misic, 2013](https://openurl.ebsco.com/contentitem/doi%3A10.1109/tse.2012.28?id=ebsco%3Adoi%3A10.1109%2Ftse.2012.28&sid=ebsco%3Aplink%3Acrawler) and [Bissi, Neto, and Emer, 2016](https://www.sciencedirect.com/science/article/abs/pii/S0950584916300222): TDD evidence is strongest for quality, less conclusive for productivity.
-- [Agile Alliance user stories](https://agilealliance.org/glossary/user-stories/), [Given-When-Then](https://agilealliance.org/glossary/given-when-then/), and [Cucumber Gherkin reference](https://cucumber.io/docs/gherkin/reference/): acceptance criteria are strongest when they become concrete, observable examples.
+`bun test` enforces 100% line, function, and statement coverage for the TypeScript core.

@@ -20,6 +20,7 @@ export type Options = {
   max: number;
   reportFormat: ReportFormat;
   strict: boolean;
+  worktree: boolean;
   cwd: string;
 };
 
@@ -32,6 +33,8 @@ export type Result = {
   branch: string;
   commit: string;
   commitMessage: string;
+  worktree: string;
+  sourceRepo: string;
   codexSessionId: string;
   claudeSessionId: string;
 };
@@ -86,6 +89,7 @@ Options:
   --plain                       force plain output
   --report-format html|markdown choose report format
   --no-strict                   weaken acceptance gates
+  --in-place                    run in the current worktree
   -h, --help                    show this screen`;
 }
 
@@ -95,6 +99,7 @@ export function parseArgs(
 ): Options | string {
   let reportFormat: ReportFormat = "html";
   let strict = true;
+  let worktree = true;
   let spec = "";
   let maxRaw = "5";
   let maxSet = false;
@@ -110,6 +115,7 @@ export function parseArgs(
     else if (arg === "--markdown" || arg === "--md") reportFormat = "markdown";
     else if (arg === "--no-strict") strict = false;
     else if (arg === "--strict") strict = true;
+    else if (arg === "--in-place") worktree = false;
     else if (arg === "--plain" || arg === "--tui") continue;
     else if (arg === "-h" || arg === "--help") return usage();
     else if (arg.startsWith("--")) return `unknown option: ${arg}\n${usage()}`;
@@ -128,12 +134,13 @@ export function parseArgs(
     max: clamp(Number.parseInt(maxRaw, 10), 1, 10),
     reportFormat,
     strict,
+    worktree,
     cwd,
   };
 }
 
 export function usage() {
-  return "usage: devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] <spec.md> [max=5]";
+  return "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--report-format html|markdown] <spec.md> [max=5]";
 }
 
 export function parseCriteria(markdown: string): string[] {
@@ -193,16 +200,40 @@ export async function runDevloop(
     detail: `${criteria.length} found`,
   });
 
-  const repo = (
+  const sourceRepo = (
     await command("git", ["-C", options.cwd, "rev-parse", "--show-toplevel"])
   ).trim();
-  const branch = (
-    await command("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])
+  const sourceBranch = (
+    await command("git", [
+      "-C",
+      sourceRepo,
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ])
   ).trim();
-  const base = await baseBranch(repo);
-  const initialDirty = await statusPaths(repo);
+  const base = await baseBranch(sourceRepo);
   const slug = path.basename(spec, ".md");
+
+  let repo = sourceRepo;
+  if (options.worktree) {
+    const worktreeId = "worktree";
+    await sink.event({
+      type: "step",
+      id: worktreeId,
+      title: "create isolated worktree",
+    });
+    repo = await createWorktree(sourceRepo, slug);
+    await sink.event({
+      type: "done",
+      id: worktreeId,
+      ok: true,
+      detail: repo,
+    });
+  }
+
   const dirs = [
+    ".codex/specs",
     ".codex/tracks",
     ".codex/reviews",
     ".codex/reports",
@@ -213,16 +244,27 @@ export async function runDevloop(
     dirs.map((dir) => mkdir(path.join(repo, dir), { recursive: true })),
   );
 
+  const runSpec = options.worktree
+    ? await snapshotSpec(repo, slug, specText)
+    : spec;
+  const initialDirty = await statusPaths(repo);
+  const runBranch = (
+    await command("git", ["-C", repo, "branch", "--show-current"])
+  ).trim();
   const track = `.codex/tracks/${slug}.md`;
   const report = `.codex/reports/${slug}.${options.reportFormat === "html" ? "html" : "md"}`;
   const codexSession = `.codex/sessions/${slug}-codex.id`;
   const claudeSession = `.codex/sessions/${slug}-claude.id`;
   const runner = makeRunner(repo, sink);
   await initTrack(path.join(repo, track), {
-    spec,
+    spec: runSpec,
+    sourceSpec: spec,
     cwd: options.cwd,
+    sourceRepo,
+    worktree: repo,
     base,
-    branch,
+    branch: sourceBranch,
+    worktreeBranch: runBranch,
     max: options.max,
     reportFormat: options.reportFormat,
     strict: options.strict,
@@ -233,7 +275,7 @@ export async function runDevloop(
   let pass = 0;
   let commit = "";
   let commitMessage = "";
-  let finalBranch = branch;
+  let finalBranch = runBranch;
 
   for (pass = 1; pass <= options.max; pass++) {
     const codexLog = `.codex/logs/${slug}-r${pass}-codex.log`;
@@ -249,7 +291,7 @@ export async function runDevloop(
       path.join(repo, codexSession),
       path.join(repo, codexLog),
       codexPrompt({
-        spec,
+        spec: runSpec,
         track,
         pass,
         strict: options.strict,
@@ -282,7 +324,7 @@ export async function runDevloop(
       path.join(repo, claudeSession),
       path.join(repo, claudeLog),
       reviewPrompt({
-        spec,
+        spec: runSpec,
         track,
         base,
         pass,
@@ -383,14 +425,17 @@ export async function runDevloop(
   const claudeSessionId = await readLine(path.join(repo, claudeSession));
   await synthesizeReport(runner, repo, {
     slug,
-    spec,
+    spec: runSpec,
+    sourceSpec: spec,
+    sourceRepo,
+    worktree: repo,
     track,
     report,
     status,
     pass,
     max: options.max,
     base,
-    initialBranch: branch,
+    initialBranch: sourceBranch,
     branch: finalBranch,
     commit,
     commitMessage,
@@ -408,6 +453,8 @@ export async function runDevloop(
     branch: finalBranch,
     commit,
     commitMessage,
+    worktree: repo,
+    sourceRepo,
     codexSessionId,
     claudeSessionId,
   };
@@ -435,6 +482,45 @@ async function command(cmd: string, args: string[]) {
         `${cmd} ${args.join(" ")} failed with exit ${code}`,
     );
   return out;
+}
+
+async function createWorktree(repo: string, slug: string) {
+  const branch = await nextBranch(repo, slug, "");
+  const worktree = await nextWorktreePath(
+    repo,
+    branch.replace(/^devloop\//, ""),
+  );
+  await command("git", [
+    "-C",
+    repo,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    worktree,
+    "HEAD",
+  ]);
+  return realpath(worktree);
+}
+
+async function nextWorktreePath(repo: string, slug: string) {
+  const base = path.join(
+    path.dirname(repo),
+    `${path.basename(repo)}-devloop-${slugify(slug)}`,
+  );
+  let suffix = 1;
+  let candidate = base;
+  while (await stat(candidate).catch(() => false)) {
+    suffix++;
+    candidate = `${base}-${suffix}`;
+  }
+  return candidate;
+}
+
+async function snapshotSpec(repo: string, slug: string, specText: string) {
+  const file = path.join(repo, ".codex/specs", `${slug}.md`);
+  await writeFile(file, specText);
+  return file;
 }
 
 async function baseBranch(repo: string) {
@@ -596,9 +682,13 @@ async function initTrack(
   file: string,
   data: {
     spec: string;
+    sourceSpec: string;
     cwd: string;
+    sourceRepo: string;
+    worktree: string;
     base: string;
     branch: string;
+    worktreeBranch: string;
     max: number;
     reportFormat: ReportFormat;
     strict: boolean;
@@ -607,7 +697,7 @@ async function initTrack(
   if (await stat(file).catch(() => false)) return;
   await writeFile(
     file,
-    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- cwd: ${data.cwd}\n- base: ${data.base}\n- branch: ${data.branch}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
+    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
   );
 }
 
@@ -759,6 +849,9 @@ async function synthesizeReport(
   input: {
     slug: string;
     spec: string;
+    sourceSpec: string;
+    sourceRepo: string;
+    worktree: string;
     track: string;
     report: string;
     status: Status;
@@ -779,6 +872,9 @@ async function synthesizeReport(
 Passes: ${input.pass} / ${input.max}
 Repository: ${repo}
 Spec: ${input.spec}
+Source spec: ${input.sourceSpec}
+Source repository: ${input.sourceRepo}
+Worktree: ${input.worktree}
 Base branch: ${input.base}
 Starting branch: ${input.initialBranch}
 Final branch: ${input.branch}

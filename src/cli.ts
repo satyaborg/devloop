@@ -40,12 +40,20 @@ function plainSink(): Sink {
   };
 }
 
-function printResult(result: { status: string; passes: number; max: number; report: string; track: string }) {
+function printResult(result: {
+  status: string;
+  passes: number;
+  max: number;
+  report: string;
+  track: string;
+  worktree?: string;
+}) {
   console.log("");
   console.log(`result:  ${result.status}`);
   console.log(`passes:  ${result.passes} / ${result.max}`);
   if ("branch" in result) console.log(`branch:  ${result.branch}`);
   if ("commit" in result) console.log(`commit:  ${result.commit || "none"}`);
+  if (result.worktree) console.log(`worktree: ${result.worktree}`);
   console.log(`report:  ${result.report}`);
   console.log(`track:   ${result.track}`);
 }
