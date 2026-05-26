@@ -8,6 +8,8 @@ devloop [--plain|--tui] [--no-strict] [--report-format html|markdown] spec.md [m
 
 Run from the target git worktree. The spec may live anywhere.
 
+Start new specs from [`templates/spec.md`](templates/spec.md), usually copied to `.specs/YYYY-MM-DD-slug.md`.
+
 ## Install
 
 From this checkout:
