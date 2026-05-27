@@ -22,11 +22,17 @@ describe("tui view", () => {
     const closed = view([{ ...baseRow, lines: ["hidden"] }], 0);
     const open = view([{ ...baseRow, status: "ok", detail: "completed", lines: Array.from({ length: 82 }, (_, i) => `line-${i}`), open: true }], 0);
 
-    expect(closed).toContain("> .. [+] run tests - running");
+    expect(closed).toContain("> ⠋ [+] run tests - running");
     expect(closed).not.toContain("hidden");
     expect(open).toContain("> ok [-] run tests - completed");
     expect(open).not.toContain("line-0");
     expect(open).toContain("line-81");
+  });
+
+  test("animates running rows with a spinner frame", () => {
+    const output = view([{ ...baseRow }], 0, undefined, 3);
+
+    expect(output).toContain("> ⠸     run tests - running");
   });
 
   test("renders failed rows and result details", () => {
