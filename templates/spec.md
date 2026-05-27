@@ -1,6 +1,8 @@
 ---
 status: draft
-type: feat|fix|chore
+type: null
+slug: null
+breaking: null
 created: YYYY-MM-DD
 pr: null
 ---

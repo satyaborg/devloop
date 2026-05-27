@@ -16,7 +16,10 @@ beforeEach(() => {
   delete process.env.DEVLOOP_TEST_NO_REVIEW;
   delete process.env.DEVLOOP_TEST_NO_VERDICT;
   delete process.env.DEVLOOP_TEST_FAIL_CODEX;
+  delete process.env.DEVLOOP_TEST_FAIL_NAMING;
   delete process.env.DEVLOOP_TEST_FAIL_CLAUDE;
+  delete process.env.DEVLOOP_TEST_NOISY_NAMING;
+  delete process.env.DEVLOOP_TEST_WORK_ITEM;
 });
 
 describe("parsing", () => {
@@ -61,7 +64,7 @@ describe("loop", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.passes).toBe(1);
-    expect(result.branch).toBe("devloop/change");
+    expect(result.branch).toBe("feat/change");
     expect(result.commit).toMatch(/^[0-9a-f]+$/);
     expect(result.commitMessage).toBe("feat: change");
     expect(result.sourceRepo).toBe(repo);
@@ -70,22 +73,26 @@ describe("loop", () => {
     await exists(path.join(worktree, ".codex/tracks/change.md"));
     await exists(path.join(worktree, ".codex/reviews/change-r1.md"));
     await exists(path.join(worktree, ".codex/reports/change.html"));
+    await exists(path.join(worktree, ".codex/logs/change-naming.log"));
     expect(await readFile(path.join(worktree, ".codex/sessions/change-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
     expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("- AC1: PASS");
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
+    const codexArgs = await readFile(path.join(state, "codex-args.log"), "utf8");
+    expect(codexArgs.split(/\r?\n/, 1)[0]).toBe(`exec -s read-only -C ${repo} -`);
+    expect(codexArgs).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
     expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("main");
-    expect((await Bun.$`git -C ${worktree} branch --show-current`.text()).trim()).toBe("devloop/change");
+    expect((await Bun.$`git -C ${worktree} branch --show-current`.text()).trim()).toBe("feat/change");
     expect((await Bun.$`git -C ${worktree} log -1 --format=%s`.text()).trim()).toBe("feat: change");
     expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).toContain("feature.txt");
     expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).not.toContain(".codex/");
     const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
     expect(reportPrompt).toContain("Codex session: 00000000-0000-4000-8000-000000000001");
-    expect(reportPrompt).toContain("Final branch: devloop/change");
+    expect(reportPrompt).toContain("Final branch: feat/change");
     expect(reportPrompt).toContain(`Worktree: ${worktree}`);
     expect(reportPrompt).toContain(`Local commit: ${result.commit}`);
     expect(reportPrompt).toContain("Commit message: feat: change");
+    expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
     expect(events).toContainEqual({ type: "log", id: "codex-1", line: "codex-tail" });
@@ -156,7 +163,7 @@ describe("loop", () => {
     expect(result.worktree).toBe(repo);
     expect(result.sourceRepo).toBe(repo);
     expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${repo} -`);
-    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("devloop/change");
+    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("feat/change");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).toContain("feature.txt");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain("dirty.txt");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain("renamed.txt");
@@ -177,42 +184,143 @@ describe("loop", () => {
 
   test("uses a suffixed branch when the default branch exists", async () => {
     const { repo } = await fixture("branch-exists");
-    await Bun.$`git -C ${repo} branch devloop/change`.quiet();
+    await Bun.$`git -C ${repo} branch feat/change`.quiet();
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     const { result } = await run(repo);
 
     expect(result.status).toBe("accepted");
-    expect(result.branch).toBe("devloop/change-2");
-    expect(path.basename(result.worktree)).toBe("repo-devloop-change-2");
+    expect(result.branch).toBe("feat/change-2");
+    expect(path.basename(result.worktree)).toBe("repo-change-2");
   });
 
   test("uses a suffixed worktree path when the default path exists", async () => {
     const { repo } = await fixture("worktree-path-exists");
-    await mkdir(path.join(path.dirname(repo), "repo-devloop-change"), { recursive: true });
+    await mkdir(path.join(path.dirname(repo), "repo-change"), { recursive: true });
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     const { result } = await run(repo);
 
     expect(result.status).toBe("accepted");
-    expect(path.basename(result.worktree)).toBe("repo-devloop-change-2");
+    expect(path.basename(result.worktree)).toBe("repo-change-2");
   });
 
-  test("preserves spacey slugs and invocation repo ownership", async () => {
+  test("uses codex-derived artifact names and preserves invocation repo ownership", async () => {
     const work = await fixture("space-work", undefined, "change with spaces.md");
     const specOnly = await fixture("space-spec", undefined, "external spec.md");
     process.env.PATH = `${work.bin}:${oldPath}`;
     process.env.DEVLOOP_TEST_STATE = work.state;
     process.env.DEVLOOP_TEST_VERDICTS = "REJECT,ACCEPT";
 
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"change-with-spaces","breaking":false}';
     const spaced = await runDevloop({ spec: work.specPath, max: 2, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
     expect(spaced.status).toBe("accepted");
-    await exists(path.join(spaced.worktree, ".codex/reviews/change with spaces-r2.md"));
+    await exists(path.join(spaced.worktree, ".codex/reviews/change-with-spaces-r2.md"));
 
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"external-spec","breaking":false}';
     const external = await runDevloop({ spec: specOnly.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
     expect(external.status).toBe("accepted");
-    await exists(path.join(external.worktree, ".codex/tracks/external spec.md"));
+    await exists(path.join(external.worktree, ".codex/tracks/external-spec.md"));
     expect(await exists(path.join(work.repo, ".codex"), false)).toBe(false);
     expect(await exists(path.join(specOnly.repo, ".codex"), false)).toBe(false);
+  });
+
+  test("uses codex-derived breaking work names", async () => {
+    const spec = [
+      "---",
+      "type: fix",
+      "breaking: true",
+      "---",
+      "",
+      "# Minimal AI SDK chat orchestration",
+      "",
+      "## Acceptance criteria",
+      "1. The loop runs deterministically under test.",
+      "",
+    ].join("\n");
+    const { repo, specPath } = await fixture("dated-spec", spec, "2026-05-26-minimal-ai-sdk-chat-orchestration.md");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"minimal-ai-sdk-chat-orchestration","breaking":false}';
+    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+
+    expect(result.status).toBe("accepted");
+    expect(result.branch).toBe("fix!/minimal-ai-sdk-chat-orchestration");
+    expect(result.commitMessage).toBe("fix!: minimal-ai-sdk-chat-orchestration");
+    expect(path.basename(result.worktree)).toBe("repo-minimal-ai-sdk-chat-orchestration");
+    await exists(path.join(result.worktree, ".codex/specs/minimal-ai-sdk-chat-orchestration.md"));
+    await exists(path.join(result.worktree, ".codex/tracks/minimal-ai-sdk-chat-orchestration.md"));
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/minimal-ai-sdk-chat-orchestration.md"), "utf8")).toContain("- breaking: true");
+  });
+
+  test("uses complete frontmatter names without a codex naming call", async () => {
+    const spec = [
+      "---",
+      "type: chore",
+      "slug: readme-refresh",
+      "breaking: false",
+      "---",
+      "",
+      "# Refresh README",
+      "",
+      "## Acceptance criteria",
+      "1. The loop runs deterministically under test.",
+      "",
+    ].join("\n");
+    const { repo, state, specPath } = await fixture("frontmatter-name", spec, "ignored-filename.md");
+    process.env.DEVLOOP_TEST_FAIL_NAMING = "1";
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+
+    expect(result.status).toBe("accepted");
+    expect(result.branch).toBe("chore/readme-refresh");
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).not.toContain("-s read-only");
+  });
+
+  test("parses noisy codex naming output", async () => {
+    const { repo } = await fixture("noisy-name");
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"fix","slug":"noisy-json","breaking":false}';
+    process.env.DEVLOOP_TEST_NOISY_NAMING = "1";
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+
+    expect(result.status).toBe("accepted");
+    expect(result.branch).toBe("fix/noisy-json");
+    expect(await readFile(path.join(result.worktree, ".codex/logs/noisy-json-naming.log"), "utf8")).toContain("{not json}");
+  });
+
+  test("uses codex-derived fix and chore work names", async () => {
+    const fix = await fixture("fix-prefix", undefined, "fix-null-check.md");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"fix","slug":"null-check","breaking":false}';
+    expect((await runDevloop({ spec: fix.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: fix.repo })).branch).toBe("fix/null-check");
+
+    const chore = await fixture("chore-prefix", undefined, "docs-readme-refresh.md");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"chore","slug":"readme-refresh","breaking":false}';
+    expect((await runDevloop({ spec: chore.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: chore.repo })).branch).toBe("chore/readme-refresh");
+  });
+
+  test("rejects invalid codex-derived work names", async () => {
+    const { repo } = await fixture("bad-name");
+    process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"docs","slug":"feat-bad-name","breaking":false}';
+
+    await expect(run(repo)).rejects.toThrow("naming log:");
+  });
+
+  test("rejects invalid explicit breaking metadata", async () => {
+    const spec = [
+      "---",
+      "breaking: maybe",
+      "---",
+      "",
+      "# Bad metadata",
+      "",
+      "## Acceptance criteria",
+      "1. The loop runs deterministically under test.",
+      "",
+    ].join("\n");
+    const { repo, specPath } = await fixture("bad-breaking", spec);
+
+    await expect(runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo })).rejects.toThrow("frontmatter breaking must be true or false");
   });
 
   test("requires acceptance criteria in strict mode", async () => {
@@ -282,6 +390,17 @@ describe("loop", () => {
     expect(result.status).toBe("accepted");
     expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- base: main");
   });
+
+  test("uses origin head as the base branch when available", async () => {
+    const { repo } = await fixture("origin-head");
+    await Bun.$`git -C ${repo} update-ref refs/remotes/origin/trunk HEAD`.quiet();
+    await Bun.$`git -C ${repo} symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk`.quiet();
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+
+    expect(result.status).toBe("accepted");
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- base: trunk");
+  });
 });
 
 async function fixture(name: string, spec = "# Fixture spec\n\n## Acceptance criteria\n1. The loop runs deterministically under test.\n", specName = "change.md") {
@@ -310,13 +429,24 @@ async function installMocks(bin: string) {
     path.join(bin, "codex"),
     `#!/usr/bin/env bash
 set -euo pipefail
-[[ -z "\${DEVLOOP_TEST_FAIL_CODEX:-}" ]] || exit 42
 prompt=$(cat)
 mkdir -p "$DEVLOOP_TEST_STATE"
-count=$(( $(cat "$DEVLOOP_TEST_STATE/codex-count" 2>/dev/null || echo 0) + 1 ))
-printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/codex-count"
 printf '%s\\n' "$*" >> "$DEVLOOP_TEST_STATE/codex-args.log"
 printf '%s\\n---\\n' "$prompt" >> "$DEVLOOP_TEST_STATE/codex-prompts.log"
+if [[ "$prompt" == Work\\ item\\ naming\\ task.* ]]; then
+  [[ -z "\${DEVLOOP_TEST_FAIL_NAMING:-}" ]] || exit 42
+  [[ -z "\${DEVLOOP_TEST_NOISY_NAMING:-}" ]] || printf 'trace {"ignore":true}\\n'
+  if [[ -n "\${DEVLOOP_TEST_WORK_ITEM:-}" ]]; then
+    printf '%s\\n' "$DEVLOOP_TEST_WORK_ITEM"
+  else
+    printf '%s\\n' '{"type":"feat","slug":"change","breaking":false}'
+  fi
+  [[ -z "\${DEVLOOP_TEST_NOISY_NAMING:-}" ]] || printf 'tail {not json}\\n'
+  exit 0
+fi
+[[ -z "\${DEVLOOP_TEST_FAIL_CODEX:-}" ]] || exit 42
+count=$(( $(cat "$DEVLOOP_TEST_STATE/codex-count" 2>/dev/null || echo 0) + 1 ))
+printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/codex-count"
 track=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Track: /{print $2; exit}')
 [[ -z "$track" ]] || printf '\\n## Pass %s - mock codex\\n- verification: fixture\\n' "$count" >> "$track"
 printf 'feature pass %s\\n' "$count" >> feature.txt
