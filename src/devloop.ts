@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -315,8 +316,10 @@ export async function runDevloop(
   await Promise.all(
     dirs.map((dir) => mkdir(path.join(repo, dir), { recursive: true })),
   );
-  if (namingLog)
+  if (namingLog) {
     await copyFile(namingLog, path.join(repo, ".codex/logs", `${slug}-naming.log`));
+    await rm(path.dirname(namingLog), { recursive: true, force: true });
+  }
 
   const runSpec = options.worktree
     ? await snapshotSpec(repo, slug, specText)
