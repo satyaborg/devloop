@@ -11,8 +11,8 @@ export async function createTuiSink(): Promise<Sink> {
 
   renderer.root.add(text);
   renderer.keyInput.on("keypress", (key) => {
-    if (key.name === "up" || key.name === "k") selected = Math.max(0, selected - 1);
-    else if (key.name === "down" || key.name === "j") selected = Math.min(rows.length - 1, selected + 1);
+    if (key.name === "up") selected = Math.max(0, selected - 1);
+    else if (key.name === "down") selected = Math.min(rows.length - 1, selected + 1);
     else if (rows.length && (key.name === "return" || key.name === "space")) rows[selected]!.open = !rows[selected]!.open;
     render();
   });

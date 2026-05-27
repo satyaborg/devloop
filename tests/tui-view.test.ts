@@ -15,7 +15,7 @@ describe("tui view", () => {
     const output = view([], 0);
 
     expect(output).toContain("____/ /__");
-    expect(output).toContain("enter toggles logs, j/k moves");
+    expect(output).toContain("enter toggles logs, ↑/↓ moves");
   });
 
   test("renders closed and open rows", () => {

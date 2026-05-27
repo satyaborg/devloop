@@ -25,7 +25,7 @@ export function view(rows: Row[], selected: number, result?: Result) {
         `report:  ${resultPath(result, result.report)}`,
         `track:   ${resultPath(result, result.track)}`,
       ]
-    : ["", "enter toggles logs, j/k moves"];
+    : ["", "enter toggles logs, ↑/↓ moves"];
   return [LOGO, "", ...body, ...tail].join("\n");
 }
 

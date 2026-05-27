@@ -252,7 +252,7 @@ export async function runDevloop(
   await sink.event({
     type: "step",
     id: namingId,
-    title: "derive work name",
+    title: "derive branch name",
   });
   let namingLog = "";
   let namingError = "";
@@ -294,7 +294,7 @@ export async function runDevloop(
     await sink.event({
       type: "step",
       id: worktreeId,
-      title: "create isolated worktree",
+      title: "create worktree",
     });
     repo = await createWorktree(sourceRepo, work);
     await sink.event({
