@@ -36,10 +36,10 @@ describe("tui view", () => {
       max: 5,
       report: ".codex/reports/change.html",
       track: ".codex/tracks/change.md",
-      branch: "devloop/change",
+      branch: "feat/change",
       commit: "",
       commitMessage: "",
-      worktree: "/tmp/repo-devloop-change",
+      worktree: "/tmp/repo-change",
       sourceRepo: "/tmp/repo",
       codexSessionId: "codex-session",
       claudeSessionId: "claude-session",
@@ -48,9 +48,9 @@ describe("tui view", () => {
     expect(output).toContain("> !!     run tests - failed");
     expect(output).toContain("result:  commit-error");
     expect(output).toContain("commit:  none");
-    expect(output).toContain("worktree: /tmp/repo-devloop-change");
-    expect(output).toContain("report:  /tmp/repo-devloop-change/.codex/reports/change.html");
-    expect(output).toContain("track:   /tmp/repo-devloop-change/.codex/tracks/change.md");
+    expect(output).toContain("worktree: /tmp/repo-change");
+    expect(output).toContain("report:  /tmp/repo-change/.codex/reports/change.html");
+    expect(output).toContain("track:   /tmp/repo-change/.codex/tracks/change.md");
   });
 
   test("suppresses worktree details for in-place results", () => {
@@ -60,7 +60,7 @@ describe("tui view", () => {
       max: 5,
       report: ".codex/reports/change.html",
       track: ".codex/tracks/change.md",
-      branch: "devloop/change",
+      branch: "feat/change",
       commit: "abc123",
       commitMessage: "feat: change",
       worktree: "/tmp/repo",

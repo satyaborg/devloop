@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 export type ReportFormat = "html" | "markdown";
@@ -14,6 +24,13 @@ export type Status =
   | "claude-error"
   | "review-missing"
   | "commit-error";
+
+type WorkType = "feat" | "fix" | "chore";
+type WorkItem = {
+  slug: string;
+  type: WorkType;
+  breaking: boolean;
+};
 
 export type Options = {
   spec: string;
@@ -51,7 +68,12 @@ export type Sink = {
   close?(): void | Promise<void>;
 };
 
-type RunResult = { code: number; output: string };
+type RunResult = {
+  code: number;
+  output: string;
+  stdout: string;
+  stderr: string;
+};
 type Runner = (
   cmd: string,
   args: string[],
@@ -72,7 +94,7 @@ export const LOGO = [
 export function welcome() {
   return `${LOGO}
 
-devloop runs a strict Codex implement -> Claude review loop.
+Spec-driven code and review loop. Codex implements, Claude reviews.
 
 Usage:
   devloop [options] <spec.md> [max=5]
@@ -226,7 +248,45 @@ export async function runDevloop(
     ])
   ).trim();
   const base = await baseBranch(sourceRepo);
-  const slug = path.basename(spec, ".md");
+  const namingId = "naming";
+  await sink.event({
+    type: "step",
+    id: namingId,
+    title: "derive work name",
+  });
+  let namingLog = "";
+  let namingError = "";
+  const work = await (async () => {
+    const fields = workItemFields(specText);
+    namingLog = completeWorkItem(fields)
+      ? ""
+      : path.join(
+          await mkdtemp(path.join(tmpdir(), "devloop-naming.")),
+          "naming.log",
+        );
+    return resolveWorkItem({
+      runner: makeRunner(sourceRepo, sink),
+      repo: sourceRepo,
+      spec,
+      specText,
+      fields,
+      log: namingLog,
+    });
+  })().catch((error) => {
+    namingError = error instanceof Error ? error.message : String(error);
+    return undefined;
+  });
+  await sink.event({
+    type: "done",
+    id: namingId,
+    ok: Boolean(work),
+    detail: work ? `${branchBase(work)}` : namingError,
+  });
+  if (!work)
+    throw new Error(
+      `naming failed: ${namingError}${namingLog ? `\nnaming log: ${namingLog}` : ""}`,
+    );
+  const slug = work.slug;
 
   let repo = sourceRepo;
   if (options.worktree) {
@@ -236,7 +296,7 @@ export async function runDevloop(
       id: worktreeId,
       title: "create isolated worktree",
     });
-    repo = await createWorktree(sourceRepo, slug);
+    repo = await createWorktree(sourceRepo, work);
     await sink.event({
       type: "done",
       id: worktreeId,
@@ -256,6 +316,10 @@ export async function runDevloop(
   await Promise.all(
     dirs.map((dir) => mkdir(path.join(repo, dir), { recursive: true })),
   );
+  if (namingLog) {
+    await copyFile(namingLog, path.join(repo, ".codex/logs", `${slug}-naming.log`));
+    await rm(path.dirname(namingLog), { recursive: true, force: true });
+  }
 
   const runSpec = options.worktree
     ? await snapshotSpec(repo, slug, specText)
@@ -281,6 +345,8 @@ export async function runDevloop(
     max: options.max,
     reportFormat: options.reportFormat,
     strict: options.strict,
+    type: work.type,
+    breaking: work.breaking,
   });
 
   let status: Status = "max-turns";
@@ -405,7 +471,7 @@ export async function runDevloop(
       title: "local branch and commit",
     });
     let commitError = "";
-    const committed = await commitAccepted(repo, slug, initialDirty).catch(
+    const committed = await commitAccepted(repo, work, initialDirty).catch(
       (error) => {
         commitError = error instanceof Error ? error.message : String(error);
         return undefined;
@@ -497,12 +563,9 @@ async function command(cmd: string, args: string[]) {
   return out;
 }
 
-async function createWorktree(repo: string, slug: string) {
-  const branch = await nextBranch(repo, slug, "");
-  const worktree = await nextWorktreePath(
-    repo,
-    branch.replace(/^devloop\//, ""),
-  );
+async function createWorktree(repo: string, work: WorkItem) {
+  const branch = await nextBranch(repo, work, "");
+  const worktree = await nextWorktreePath(repo, branchLeaf(branch));
   await command("git", [
     "-C",
     repo,
@@ -519,7 +582,7 @@ async function createWorktree(repo: string, slug: string) {
 async function nextWorktreePath(repo: string, slug: string) {
   const base = path.join(
     path.dirname(repo),
-    `${path.basename(repo)}-devloop-${slugify(slug)}`,
+    `${path.basename(repo)}-${slugify(slug)}`,
   );
   let suffix = 1;
   let candidate = base;
@@ -548,7 +611,9 @@ async function baseBranch(repo: string) {
     });
     if ((await proc.exited) === 0) {
       if (args[2] === "symbolic-ref")
-        return (await new Response(proc.stdout).text()).trim().replace(/^origin\//, "");
+        return (await new Response(proc.stdout).text())
+          .trim()
+          .replace(/^origin\//, "");
       return args.at(-1)!.split("/").pop()!;
     }
   }
@@ -581,14 +646,14 @@ async function statusPaths(repo: string) {
 
 async function commitAccepted(
   repo: string,
-  slug: string,
+  work: WorkItem,
   initialDirty: Set<string>,
 ) {
   const current = (
     await command("git", ["-C", repo, "branch", "--show-current"])
   ).trim();
-  const branch = await nextBranch(repo, slug, current);
-  const message = `feat: ${slugify(slug)}`;
+  const branch = await nextBranch(repo, work, current);
+  const message = `${work.type}${work.breaking ? "!" : ""}: ${work.slug}`;
   if (branch !== current)
     await command("git", ["-C", repo, "switch", "-c", branch]);
   const changed = [...(await statusPaths(repo))].filter(
@@ -615,8 +680,8 @@ async function commitAccepted(
   };
 }
 
-async function nextBranch(repo: string, slug: string, current: string) {
-  const base = `devloop/${slugify(slug)}`;
+async function nextBranch(repo: string, work: WorkItem, current: string) {
+  const base = branchBase(work);
   if (
     current === base ||
     new RegExp(`^${escapeRegex(base)}-\\d+$`).test(current)
@@ -629,6 +694,10 @@ async function nextBranch(repo: string, slug: string, current: string) {
     branch = `${base}-${suffix}`;
   }
   return branch;
+}
+
+function branchBase(work: WorkItem) {
+  return `${work.type}${work.breaking ? "!" : ""}/${work.slug}`;
 }
 
 async function branchExists(repo: string, branch: string) {
@@ -658,12 +727,17 @@ function makeRunner(cwd: string, sink: Sink): Runner {
     } catch (error) {
       const output = error instanceof Error ? error.message : String(error);
       if (log) await writeFile(log, output);
-      return { code: 127, output };
+      return { code: 127, output, stdout: "", stderr: output };
     }
     proc.stdin.write(input);
     proc.stdin.end();
     let output = "";
-    const pump = async (stream: ReadableStream<Uint8Array>) => {
+    let stdout = "";
+    let stderr = "";
+    const pump = async (
+      stream: ReadableStream<Uint8Array>,
+      append: (text: string) => void,
+    ) => {
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let pending = "";
@@ -672,6 +746,7 @@ function makeRunner(cwd: string, sink: Sink): Runner {
         if (done) break;
         const text = decoder.decode(value);
         output += text;
+        append(text);
         pending += text;
         const lines = pending.split(/\r?\n/);
         pending = lines.pop() ?? "";
@@ -682,12 +757,16 @@ function makeRunner(cwd: string, sink: Sink): Runner {
       if (id && pending) await sink.event({ type: "log", id, line: pending });
     };
     const [, , code] = await Promise.all([
-      pump(proc.stdout),
-      pump(proc.stderr),
+      pump(proc.stdout, (text) => {
+        stdout += text;
+      }),
+      pump(proc.stderr, (text) => {
+        stderr += text;
+      }),
       proc.exited,
     ]);
     if (log) await writeFile(log, output);
-    return { code, output };
+    return { code, output, stdout, stderr };
   };
 }
 
@@ -705,12 +784,14 @@ async function initTrack(
     max: number;
     reportFormat: ReportFormat;
     strict: boolean;
+    type: WorkType;
+    breaking: boolean;
   },
 ) {
   if (await stat(file).catch(() => false)) return;
   await writeFile(
     file,
-    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
+    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- type: ${data.type}\n- breaking: ${data.breaking}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
   );
 }
 
@@ -741,13 +822,7 @@ async function runCodex(
         "-",
       ]
     : ["exec", "--dangerously-bypass-approvals-and-sandbox", "-C", repo, "-"];
-  const result = await runner(
-    "codex",
-    args,
-    prompt,
-    log,
-    logId(log, "codex"),
-  );
+  const result = await runner("codex", args, prompt, log, logId(log, "codex"));
   if (result.code !== 0) return false;
   if (!session) {
     const next = extractSessionId(result.output);
@@ -938,13 +1013,209 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function slugify(value: string) {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "change"
+async function resolveWorkItem(input: {
+  runner: Runner;
+  repo: string;
+  spec: string;
+  specText: string;
+  fields: WorkItemFields;
+  log: string;
+}) {
+  const explicit = completeWorkItem(input.fields);
+  if (explicit) return explicit;
+  const derived = await deriveWorkItem(input);
+  return mergeWorkItem(derived, input.fields);
+}
+
+async function deriveWorkItem(input: {
+  runner: Runner;
+  repo: string;
+  spec: string;
+  specText: string;
+  log: string;
+}) {
+  const result = await input.runner(
+    "codex",
+    ["exec", "-s", "read-only", "-C", input.repo, "-"],
+    namingPrompt(input.spec, input.specText),
+    input.log,
+    "naming",
   );
+  if (result.code !== 0) throw new Error(result.output || "codex failed");
+  return parseWorkItem(result.stdout || result.output);
+}
+
+function namingPrompt(spec: string, specText: string) {
+  return `Work item naming task.
+
+Read the spec and, when useful, inspect the repository to choose the semantic work item identity.
+
+Return exactly one JSON object and no markdown:
+{"type":"feat","slug":"short-kebab-case-name","breaking":false}
+
+Rules:
+- type must be one of: feat, fix, chore.
+- Use feat for new capability or materially expanded behavior.
+- Use fix for correcting broken, incorrect, or regressed behavior.
+- Use chore for maintenance, docs, tests, dependency work, refactors, and internal cleanup.
+- Use breaking true only when the work intentionally breaks an external API, data contract, command behavior, or migration expectation.
+- slug must be 1-6 short kebab-case words that name the actual work, not the process.
+- Exclude dates, issue numbers, repo names, agent names, and type words from slug.
+- Prefer concrete nouns from the problem domain over generic words like change, update, cleanup, or implementation.
+
+Spec path: ${spec}
+
+Spec:
+${specText}`;
+}
+
+function parseWorkItem(output: string): WorkItem {
+  const errors: string[] = [];
+  for (const candidate of jsonObjectCandidates(output).reverse()) {
+    try {
+      return workItemFromJson(JSON.parse(candidate));
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  throw new Error(errors.at(0) ?? "naming output must include JSON");
+}
+
+function workItemFromJson(parsed: unknown): WorkItem {
+  if (!isRecord(parsed)) throw new Error("naming output must be an object");
+  return validateWorkItem(parsed);
+}
+
+type WorkItemFields = {
+  type?: WorkType;
+  slug?: string;
+  breaking?: boolean;
+};
+
+function mergeWorkItem(work: WorkItem, fields: WorkItemFields) {
+  return validateWorkItem({
+    type: fields.type ?? work.type,
+    slug: fields.slug ?? work.slug,
+    breaking: fields.breaking ?? work.breaking,
+  });
+}
+
+function completeWorkItem(fields: WorkItemFields) {
+  if (fields.type && fields.slug && fields.breaking !== undefined)
+    return validateWorkItem(fields);
+  return undefined;
+}
+
+function validateWorkItem(input: Record<string, unknown>): WorkItem {
+  const type = input.type;
+  if (typeof type !== "string" || !isWorkType(type))
+    throw new Error("naming output type must be feat, fix, or chore");
+  const slug = typeof input.slug === "string" ? slugify(input.slug) : "";
+  if (!slug) throw new Error("naming output slug is required");
+  if (slug.split("-").length > 6)
+    throw new Error("naming output slug must be 1-6 words");
+  if (["feat", "fix", "chore"].includes(slug.split("-", 1)[0] ?? ""))
+    throw new Error("naming output slug must not include a type prefix");
+  if (typeof input.breaking !== "boolean")
+    throw new Error("naming output breaking must be boolean");
+  return { type, slug, breaking: input.breaking };
+}
+
+function jsonObjectCandidates(output: string) {
+  const candidates: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let string = false;
+  let escape = false;
+  for (let i = 0; i < output.length; i++) {
+    const char = output[i]!;
+    if (string) {
+      if (escape) escape = false;
+      else if (char === "\\") escape = true;
+      else if (char === "\"") string = false;
+    } else if (char === "\"") string = true;
+    else if (char === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (char === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) candidates.push(output.slice(start, i + 1));
+    }
+  }
+  return candidates;
+}
+
+function workItemFields(specText: string): WorkItemFields {
+  const metadata = parseFrontmatter(specText);
+  const fields: WorkItemFields = {};
+  const type = frontmatterValue(metadata, "type");
+  if (type) {
+    const base = type.toLowerCase().replace(/!$/, "");
+    if (!isWorkType(base))
+      throw new Error("frontmatter type must be feat, fix, or chore");
+    fields.type = base;
+    if (type.endsWith("!")) fields.breaking = true;
+  }
+  const slug = frontmatterValue(metadata, "slug");
+  if (slug) fields.slug = slugify(slug);
+  const breaking = frontmatterValue(metadata, "breaking");
+  if (breaking) {
+    const parsed = parseBoolean(breaking);
+    if (fields.breaking === true && !parsed)
+      throw new Error("frontmatter breaking conflicts with type !");
+    fields.breaking = parsed;
+  }
+  return fields;
+}
+
+function parseFrontmatter(text: string) {
+  const metadata = new Map<string, string>();
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return metadata;
+  for (const line of match[1]!.split(/\r?\n/)) {
+    const pair = line.trim().match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (pair) metadata.set(pair[1]!.toLowerCase(), pair[2]!.trim());
+  }
+  return metadata;
+}
+
+function frontmatterValue(metadata: Map<string, string>, key: string) {
+  const value = (metadata.get(key) ?? "").replace(/^["']|["']$/g, "").trim();
+  if (
+    !value ||
+    value === "null" ||
+    value === "undefined" ||
+    value.includes("|") ||
+    /^<.*>$/.test(value)
+  )
+    return undefined;
+  return value;
+}
+
+function parseBoolean(value: string) {
+  if (/^(true|yes|1)$/i.test(value)) return true;
+  if (/^(false|no|0)$/i.test(value)) return false;
+  throw new Error("frontmatter breaking must be true or false");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isWorkType(value: string): value is WorkType {
+  return value === "feat" || value === "fix" || value === "chore";
+}
+
+function branchLeaf(branch: string) {
+  return branch.split("/").at(-1) ?? branch;
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function escapeRegex(value: string) {

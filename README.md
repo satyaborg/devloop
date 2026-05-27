@@ -89,25 +89,41 @@ Each run writes files under `.codex/`:
 .codex/specs/<slug>.md
 ```
 
-With the default isolated worktree, these files are written inside the generated sibling worktree. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
+With the default isolated worktree, these files are written inside the generated sibling worktree named `<repo>-<slug>`. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
+
+Before creating the worktree, `devloop` asks Codex to read the spec and repository and return the semantic work item identity. That identity supplies `<slug>`, branch type, and breaking-change status. Explicit spec frontmatter wins when set:
+
+```yaml
+type: fix
+slug: chat-retry
+breaking: true
+```
+
+When `type`, `slug`, and `breaking` are all set, `devloop` skips the naming call.
 
 On acceptance, `devloop` creates or reuses a branch like:
 
 ```text
-devloop/<spec-slug>
+feat/<slug>
+fix/<slug>
+chore/<slug>
 ```
+
+Breaking changes use `!`, for example `feat!/<slug>`.
 
 It commits only files that were clean when the run started. It excludes `.codex/`. Commit messages use:
 
 ```text
-feat: <spec-slug>
+feat: <slug>
+feat!: <slug>
 ```
 
 devloop intentionally keeps generated worktrees and branches for inspection after both successful and failed runs. To remove one when you are done:
 
 ```sh
 git -C <source-repo> worktree remove <worktree-path>
-git -C <source-repo> branch -D devloop/<spec-slug>
+git -C <source-repo> branch -D feat/<slug>
+git -C <source-repo> branch -D 'feat!/<slug>'
 ```
 
 If `worktree remove` reports local modifications, inspect the worktree first or rerun the command with `--force` to discard them.
