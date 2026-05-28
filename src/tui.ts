@@ -7,18 +7,24 @@ export async function createTuiSink(): Promise<Sink> {
   const text = new TextRenderable(renderer, { id: "devloop", width: "100%", height: "100%", content: "" });
   const rows: Row[] = [];
   let selected = 0;
+  let spinnerFrame = 0;
   let result: Result | undefined;
+  const spinner = setInterval(() => {
+    if (!rows.some((item) => item.status === "run")) return;
+    spinnerFrame++;
+    render();
+  }, 120);
 
   renderer.root.add(text);
   renderer.keyInput.on("keypress", (key) => {
-    if (key.name === "up" || key.name === "k") selected = Math.max(0, selected - 1);
-    else if (key.name === "down" || key.name === "j") selected = Math.min(rows.length - 1, selected + 1);
+    if (key.name === "up") selected = Math.max(0, selected - 1);
+    else if (key.name === "down") selected = Math.min(rows.length - 1, selected + 1);
     else if (rows.length && (key.name === "return" || key.name === "space")) rows[selected]!.open = !rows[selected]!.open;
     render();
   });
 
   function render() {
-    text.content = view(rows, selected, result);
+    text.content = view(rows, selected, result, spinnerFrame);
     renderer.requestRender();
   }
 
@@ -34,6 +40,7 @@ export async function createTuiSink(): Promise<Sink> {
       render();
     },
     close() {
+      clearInterval(spinner);
       renderer.destroy();
     },
   };
