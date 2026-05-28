@@ -21,6 +21,9 @@ beforeEach(() => {
   delete process.env.DEVLOOP_TEST_FAIL_CLAUDE;
   delete process.env.DEVLOOP_TEST_NOISY_NAMING;
   delete process.env.DEVLOOP_TEST_WORK_ITEM;
+  delete process.env.DEVLOOP_TEST_MULTI_COMMIT;
+  delete process.env.DEVLOOP_TEST_NO_CODE_CHANGE;
+  delete process.env.DEVLOOP_TEST_FAIL_GH;
 });
 
 describe("parsing", () => {
@@ -34,8 +37,11 @@ describe("parsing", () => {
       coder: "codex",
       reviewer: "claude",
       cwd: "/x",
+      createPr: false,
     } satisfies Options);
     expect(parseArgs(["--in-place", "spec.md"], "/x")).toMatchObject({ worktree: false });
+    expect(parseArgs(["--create-pr", "spec.md"], "/x")).toMatchObject({ createPr: true });
+    expect(parseArgs(["--pr", "spec.md"], "/x")).toMatchObject({ createPr: true });
     expect(parseArgs(["--coder", "claude", "--reviewer", "codex", "spec.md"], "/x")).toMatchObject({ coder: "claude", reviewer: "codex" });
     expect(parseArgs(["--coder", "gpt", "spec.md"], "/x")).toContain("coder must be codex or claude");
     expect(parseArgs(["--reviewer", "gpt", "spec.md"], "/x")).toContain("reviewer must be codex or claude");
@@ -84,6 +90,7 @@ describe("parsing", () => {
     expect(welcome()).toContain("____/ /__");
     expect(welcome()).toContain("Common commands:");
     expect(welcome()).toContain("devloop .specs/change.md");
+    expect(welcome()).toContain("--create-pr");
     expect(welcome()).toContain("bun scripts/install.ts");
   });
 });
@@ -100,6 +107,7 @@ describe("loop", () => {
     expect(result.branch).toBe("feat/change");
     expect(result.commit).toMatch(/^[0-9a-f]+$/);
     expect(result.commitMessage).toBe("feat: change");
+    expect(result.commits).toEqual([{ pass: 1, commit: result.commit, message: "feat: change", paths: ["feature.txt"] }]);
     expect(result.sourceRepo).toBe(repo);
     expect(worktree).not.toBe(repo);
     await exists(path.join(worktree, ".codex/specs/change.md"));
@@ -111,6 +119,7 @@ describe("loop", () => {
     expect(result.reviewer).toBe("claude");
     expect(await readFile(path.join(worktree, ".codex/sessions/change-coder-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
+    expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- create-pr: false");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- coder: codex");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- reviewer: claude");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
@@ -131,6 +140,9 @@ describe("loop", () => {
     expect(reportPrompt).toContain(`Worktree: ${worktree}`);
     expect(reportPrompt).toContain(`Local commit: ${result.commit}`);
     expect(reportPrompt).toContain("Commit message: feat: change");
+    expect(reportPrompt).toContain(`- pass 1 ${result.commit} feat: change (feature.txt)`);
+    expect(reportPrompt).toContain("Pull request: none");
+    expect(reportPrompt).toContain("Pull request error: none");
     expect(reportPrompt).toContain("Title: Fixture spec");
     expect(reportPrompt).toContain("Subtitle: The loop runs deterministically under test.");
     expect(reportPrompt).toContain("Haiku: Compose a three-line haiku");
@@ -146,6 +158,7 @@ describe("loop", () => {
     expect(reportPrompt).toContain("Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT");
     expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
+    expect(events).toContainEqual({ type: "done", id: "commit-1", ok: true, detail: "1 commit" });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
     expect(events).toContainEqual({ type: "log", id: "coder-1", line: "codex-tail" });
   });
@@ -157,6 +170,7 @@ describe("loop", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.passes).toBe(2);
+    expect(result.commits.map((item) => item.message)).toEqual(["feat: change", "fix: change"]);
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("Verdict: REJECT");
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r2.md"), "utf8")).toContain("Verdict: ACCEPT");
     expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
@@ -245,6 +259,20 @@ describe("loop", () => {
     expect(events.some((event) => event.type === "step" && event.id === "worktree")).toBe(false);
   });
 
+  test("does not create an in-place branch when a coder pass has no eligible changes", async () => {
+    const { repo } = await fixture("in-place-no-changes");
+    process.env.DEVLOOP_TEST_NO_CODE_CHANGE = "1";
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result, events } = await run(repo, { worktree: false });
+
+    expect(result.status).toBe("accepted");
+    expect(result.branch).toBe("main");
+    expect(result.commit).toBe("");
+    expect(result.commits).toEqual([]);
+    expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("main");
+    expect(events).toContainEqual({ type: "done", id: "commit-1", ok: true, detail: "no changes" });
+  });
+
   test("reports commit errors", async () => {
     const { repo } = await fixture("commit-error");
     await writeFile(path.join(repo, ".git/hooks/pre-commit"), "#!/usr/bin/env bash\necho 'pre-commit blocked commit' >&2\nexit 1\n", { mode: 0o755 });
@@ -252,7 +280,74 @@ describe("loop", () => {
     const { result, events } = await run(repo);
 
     expect(result.status).toBe("commit-error");
-    expect(events).toContainEqual({ type: "done", id: "commit", ok: false, detail: "pre-commit blocked commit" });
+    expect(events).toContainEqual({ type: "done", id: "commit-1", ok: false, detail: "pre-commit blocked commit" });
+  });
+
+  test("creates one bundled commit per coder pass", async () => {
+    const { repo } = await fixture("multi-file-pass");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    process.env.DEVLOOP_TEST_MULTI_COMMIT = "1";
+    const { result, events } = await run(repo);
+
+    expect(result.status).toBe("accepted");
+    expect(result.commits).toEqual([{ pass: 1, commit: result.commit, message: "feat: change", paths: ["api.txt", "ui.txt"] }]);
+    expect(result.commitMessage).toBe("feat: change");
+    expect((await Bun.$`git -C ${result.worktree} log --format=%s --reverse main..HEAD`.text()).trim()).toBe("feat: change");
+    expect(events).toContainEqual({ type: "done", id: "commit-1", ok: true, detail: "1 commit" });
+  });
+
+  test("optionally pushes and opens a pull request", async () => {
+    const { repo, state } = await fixture("create-pr");
+    const remote = path.join(path.dirname(repo), "remote.git");
+    await Bun.$`git init -q --bare ${remote}`.quiet();
+    await Bun.$`git -C ${repo} remote add origin ${remote}`.quiet();
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result, events } = await run(repo, { createPr: true });
+
+    expect(result.status).toBe("accepted");
+    expect(result.pullRequest).toBe("https://github.com/example/repo/pull/42");
+    expect(result.pullRequestError).toBe("");
+    expect(await Bun.$`git -C ${repo} ls-remote --heads origin feat/change`.text()).toContain("refs/heads/feat/change");
+    expect(await readFile(path.join(state, "gh-args.log"), "utf8")).toBe("pr create --fill --base main --head feat/change\n");
+    expect(await readFile(path.join(state, "gh-pwd.log"), "utf8")).toBe(`${result.worktree}\n`);
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- create-pr: true");
+    const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
+    expect(reportPrompt).toContain("Pull request: https://github.com/example/repo/pull/42");
+    expect(reportPrompt).toContain("- pull request: https://github.com/example/repo/pull/42");
+    expect(events).toContainEqual({ type: "done", id: "pull-request", ok: true, detail: "https://github.com/example/repo/pull/42" });
+  });
+
+  test("reports pull request publishing failures", async () => {
+    const { repo, state } = await fixture("create-pr-fail");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result, events } = await run(repo, { createPr: true });
+
+    expect(result.status).toBe("pr-error");
+    expect(result.pullRequest).toBe("");
+    expect(result.pullRequestError).toContain("origin");
+    const error = result.pullRequestError ?? "";
+    expect(events).toContainEqual({ type: "done", id: "pull-request", ok: false, detail: error });
+    const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
+    expect(reportPrompt).toContain("Result: pr-error");
+    expect(reportPrompt).toContain("Pull request: none");
+    expect(reportPrompt).toContain("Pull request error:");
+  });
+
+  test("reports a pushed branch when pull request creation fails after push", async () => {
+    const { repo, state } = await fixture("create-pr-after-push-fail");
+    const remote = path.join(path.dirname(repo), "remote.git");
+    await Bun.$`git init -q --bare ${remote}`.quiet();
+    await Bun.$`git -C ${repo} remote add origin ${remote}`.quiet();
+    process.env.DEVLOOP_TEST_FAIL_GH = "1";
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result } = await run(repo, { createPr: true });
+
+    expect(result.status).toBe("pr-error");
+    expect(result.pullRequestError).toContain("pushed origin/feat/change");
+    expect(result.pullRequestError).toContain("gh blocked");
+    expect(await Bun.$`git -C ${repo} ls-remote --heads origin feat/change`.text()).toContain("refs/heads/feat/change");
+    const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
+    expect(reportPrompt).toContain("pushed origin/feat/change");
   });
 
   test("uses a suffixed branch when the default branch exists", async () => {
@@ -345,7 +440,7 @@ describe("loop", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.branch).toBe("chore/readme-refresh");
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).not.toContain("-s read-only");
+    expect(await readFile(path.join(state, "codex-prompts.log"), "utf8")).not.toContain("Work item naming task.");
   });
 
   test("parses noisy codex naming output", async () => {
@@ -556,7 +651,14 @@ count=$(( $(cat "$DEVLOOP_TEST_STATE/codex-count" 2>/dev/null || echo 0) + 1 ))
 printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/codex-count"
 track=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Track: /{print $2; exit}')
 [[ -z "$track" ]] || printf '\\n## Pass %s - mock codex\\n- verification: fixture\\n' "$count" >> "$track"
-printf 'feature pass %s\\n' "$count" >> feature.txt
+if [[ -z "\${DEVLOOP_TEST_NO_CODE_CHANGE:-}" ]]; then
+  if [[ -n "\${DEVLOOP_TEST_MULTI_COMMIT:-}" ]]; then
+    printf 'api pass %s\\n' "$count" >> api.txt
+    printf 'ui pass %s\\n' "$count" >> ui.txt
+  else
+    printf 'feature pass %s\\n' "$count" >> feature.txt
+  fi
+fi
 printf 'codex pass %s\\n' "$count"
 printf 'To continue this session, run codex exec resume 00000000-0000-4000-8000-000000000001\\n'
 printf 'codex-tail' >&2
@@ -617,11 +719,30 @@ else
     printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/claude-count"
     track=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Track: /{print $2; exit}')
     [[ -z "$track" ]] || printf '\\n## Pass %s - mock claude\\n- verification: fixture\\n' "$count" >> "$track"
-    printf 'feature pass %s\\n' "$count" >> feature.txt
+    if [[ -z "\${DEVLOOP_TEST_NO_CODE_CHANGE:-}" ]]; then
+      if [[ -n "\${DEVLOOP_TEST_MULTI_COMMIT:-}" ]]; then
+        printf 'api pass %s\\n' "$count" >> api.txt
+        printf 'ui pass %s\\n' "$count" >> ui.txt
+      else
+        printf 'feature pass %s\\n' "$count" >> feature.txt
+      fi
+    fi
     printf 'claude pass %s\\n' "$count"
     printf 'claude-tail' >&2
   fi
 fi
+`,
+    { mode: 0o755 },
+  );
+  await writeFile(
+    path.join(bin, "gh"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$DEVLOOP_TEST_STATE"
+printf '%s\\n' "$*" >> "$DEVLOOP_TEST_STATE/gh-args.log"
+printf '%s\\n' "$PWD" >> "$DEVLOOP_TEST_STATE/gh-pwd.log"
+[[ -z "\${DEVLOOP_TEST_FAIL_GH:-}" ]] || { echo 'gh blocked' >&2; exit 42; }
+printf 'https://github.com/example/repo/pull/42\\n'
 `,
     { mode: 0o755 },
   );

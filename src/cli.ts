@@ -64,6 +64,7 @@ function printResult(result: {
   track: string;
   branch?: string;
   commit?: string;
+  pullRequest?: string;
   worktree?: string;
   sourceRepo?: string;
   coder?: string;
@@ -77,6 +78,7 @@ function printResult(result: {
   if (result.branch) console.log(resultLine("branch", result.branch));
   if (result.commit !== undefined)
     console.log(resultLine("commit", result.commit || "none"));
+  if (result.pullRequest) console.log(resultLine("pr", result.pullRequest));
   if (hasWorktreeInfo(result) && isIsolatedWorktree(result))
     console.log(resultLine("worktree", result.worktree));
   console.log(resultLine("report", displayPath(result, result.report)));

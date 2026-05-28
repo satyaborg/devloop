@@ -24,13 +24,21 @@ export type Status =
   | "coder-error"
   | "reviewer-error"
   | "review-missing"
-  | "commit-error";
+  | "commit-error"
+  | "pr-error";
 
 type WorkType = "feat" | "fix" | "chore";
 type WorkItem = {
   slug: string;
   type: WorkType;
   breaking: boolean;
+};
+
+export type CommitRecord = {
+  pass: number;
+  commit: string;
+  message: string;
+  paths: string[];
 };
 
 export type Options = {
@@ -42,6 +50,7 @@ export type Options = {
   coder: Agent;
   reviewer: Agent;
   cwd: string;
+  createPr?: boolean;
 };
 
 export type Result = {
@@ -53,12 +62,15 @@ export type Result = {
   branch: string;
   commit: string;
   commitMessage: string;
+  commits: CommitRecord[];
   worktree: string;
   sourceRepo: string;
   coder: Agent;
   reviewer: Agent;
   coderSessionId: string;
   reviewerSessionId: string;
+  pullRequest?: string;
+  pullRequestError?: string;
 };
 
 export type Event =
@@ -111,6 +123,7 @@ Common commands:
   devloop --plain .specs/change.md
   devloop --report-format markdown .specs/change.md 3
   devloop --coder claude --reviewer codex .specs/change.md
+  devloop --create-pr .specs/change.md
   bun scripts/install.ts
 
 Options:
@@ -121,6 +134,7 @@ Options:
   --report-format html|markdown choose report format
   --no-strict                   weaken acceptance gates
   --in-place                    run in the current worktree
+  --create-pr, --pr             push accepted branch and open a PR
   -h, --help                    show this screen`;
 }
 
@@ -133,6 +147,7 @@ export function parseArgs(
   let worktree = true;
   let coder: Agent = "codex";
   let reviewer: Agent = "claude";
+  let createPr = false;
   let spec = "";
   let maxRaw = "5";
   let maxSet = false;
@@ -157,6 +172,7 @@ export function parseArgs(
     else if (arg === "--no-strict") strict = false;
     else if (arg === "--strict") strict = true;
     else if (arg === "--in-place") worktree = false;
+    else if (arg === "--create-pr" || arg === "--pr") createPr = true;
     else if (arg === "--plain" || arg === "--tui") continue;
     else if (arg === "-h" || arg === "--help") return usage();
     else if (arg.startsWith("--")) return `unknown option: ${arg}\n${usage()}`;
@@ -179,11 +195,12 @@ export function parseArgs(
     coder,
     reviewer,
     cwd,
+    createPr,
   };
 }
 
 export function usage() {
-  return "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]";
+  return "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]";
 }
 
 export function parseCriteria(markdown: string): string[] {
@@ -383,6 +400,7 @@ export async function runDevloop(
     reviewer: options.reviewer,
     type: work.type,
     breaking: work.breaking,
+    createPr: Boolean(options.createPr),
   });
 
   let status: Status = "max-turns";
@@ -391,6 +409,9 @@ export async function runDevloop(
   let commit = "";
   let commitMessage = "";
   let finalBranch = runBranch;
+  const commits: CommitRecord[] = [];
+  let pullRequest = "";
+  let pullRequestError = "";
 
   for (pass = 1; pass <= options.max; pass++) {
     const coderLog = `.codex/logs/${slug}-r${pass}-coder.log`;
@@ -426,6 +447,49 @@ export async function runDevloop(
       status = "coder-error";
       break;
     }
+
+    const commitId = `commit-${pass}`;
+    await sink.event({
+      type: "step",
+      id: commitId,
+      title: `pass ${pass}/${options.max} commit`,
+    });
+    let commitError = "";
+    const committed = await commitPass({
+      repo,
+      work,
+      pass,
+      initialDirty,
+    }).catch((error) => {
+      commitError = error instanceof Error ? error.message : String(error);
+      return undefined;
+    });
+    if (!committed) {
+      status = "commit-error";
+      await sink.event({
+        type: "done",
+        id: commitId,
+        ok: false,
+        detail: commitError || "failed",
+      });
+      break;
+    }
+    if (committed.branch) finalBranch = committed.branch;
+    const passCommits = committed.commits;
+    commits.push(...passCommits);
+    const latest = passCommits.at(-1);
+    if (latest) {
+      commit = latest.commit;
+      commitMessage = latest.message;
+    }
+    await sink.event({
+      type: "done",
+      id: commitId,
+      ok: true,
+      detail: passCommits.length
+        ? `${passCommits.length} commit${passCommits.length === 1 ? "" : "s"}`
+        : "no changes",
+    });
 
     const review = `.codex/reviews/${slug}-r${pass}.md`;
     const reviewerLog = `.codex/logs/${slug}-r${pass}-reviewer.log`;
@@ -504,39 +568,34 @@ export async function runDevloop(
   }
 
   if (pass > options.max) pass = options.max;
-  if (status === "accepted") {
-    const commitId = "commit";
+  if (options.createPr && status === "accepted") {
+    const prId = "pull-request";
     await sink.event({
       type: "step",
-      id: commitId,
-      title: "local branch and commit",
+      id: prId,
+      title: "push branch and create PR",
     });
-    let commitError = "";
-    const committed = await commitAccepted(repo, work, initialDirty).catch(
+    const published = await createPullRequest(repo, finalBranch, base).catch(
       (error) => {
-        commitError = error instanceof Error ? error.message : String(error);
+        pullRequestError = error instanceof Error ? error.message : String(error);
         return undefined;
       },
     );
-    if (committed) {
-      finalBranch = committed.branch;
-      commit = committed.commit;
-      commitMessage = committed.message;
+    if (published) {
+      pullRequest = published.url;
       await sink.event({
         type: "done",
-        id: commitId,
+        id: prId,
         ok: true,
-        detail: commit
-          ? `${finalBranch} ${commit}`
-          : `${finalBranch} no changes`,
+        detail: pullRequest || `${published.remote}/${published.branch}`,
       });
     } else {
-      status = "commit-error";
+      status = "pr-error";
       await sink.event({
         type: "done",
-        id: commitId,
+        id: prId,
         ok: false,
-        detail: commitError || "failed",
+        detail: pullRequestError || "failed",
       });
     }
   }
@@ -561,6 +620,9 @@ export async function runDevloop(
     branch: finalBranch,
     commit,
     commitMessage,
+    commits,
+    pullRequest,
+    pullRequestError,
     coder: options.coder,
     reviewerSessionFile: path.join(repo, reviewerSession),
     coderSessionId,
@@ -577,6 +639,9 @@ export async function runDevloop(
     branch: finalBranch,
     commit,
     commitMessage,
+    commits,
+    pullRequest,
+    pullRequestError,
     worktree: repo,
     sourceRepo,
     coder: options.coder,
@@ -594,8 +659,13 @@ async function absoluteFile(file: string, cwd: string) {
   return realpath(full);
 }
 
-async function command(cmd: string, args: string[]) {
-  const proc = Bun.spawn([cmd, ...args], { stdout: "pipe", stderr: "pipe" });
+async function command(cmd: string, args: string[], cwd?: string) {
+  const proc = Bun.spawn([cmd, ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: Bun.env,
+  });
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -608,6 +678,24 @@ async function command(cmd: string, args: string[]) {
         `${cmd} ${args.join(" ")} failed with exit ${code}`,
     );
   return out;
+}
+
+async function createPullRequest(repo: string, branch: string, base: string) {
+  const remote = "origin";
+  await command("git", ["-C", repo, "push", "-u", remote, branch]);
+  const output = await command(
+    "gh",
+    ["pr", "create", "--fill", "--base", base, "--head", branch],
+    repo,
+  ).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`pushed ${remote}/${branch}, but PR creation failed: ${message}`);
+  });
+  return {
+    url: output.split(/\s+/).find((part) => /^https?:\/\//.test(part)) ?? output.trim(),
+    remote,
+    branch,
+  };
 }
 
 async function createWorktree(repo: string, work: WorkItem) {
@@ -691,26 +779,32 @@ async function statusPaths(repo: string) {
   return paths;
 }
 
-async function commitAccepted(
-  repo: string,
-  work: WorkItem,
-  initialDirty: Set<string>,
-) {
+async function switchToWorkBranch(repo: string, work: WorkItem) {
   const current = (
     await command("git", ["-C", repo, "branch", "--show-current"])
   ).trim();
   const branch = await nextBranch(repo, work, current);
-  const message = `${work.type}${work.breaking ? "!" : ""}: ${work.slug}`;
   if (branch !== current)
     await command("git", ["-C", repo, "switch", "-c", branch]);
-  const changed = [...(await statusPaths(repo))].filter(
-    (file) => !initialDirty.has(file) && !file.startsWith(".codex/"),
-  );
-  if (changed.length === 0) return { branch, commit: "", message };
-  await command("git", ["-C", repo, "add", "--", ...changed]);
+  return branch;
+}
+
+async function commitPass(input: {
+  repo: string;
+  work: WorkItem;
+  pass: number;
+  initialDirty: Set<string>;
+}): Promise<
+  { branch: string; commits: CommitRecord[] } | { branch: ""; commits: [] }
+> {
+  const changed = await committablePaths(input.repo, input.initialDirty);
+  if (changed.length === 0) return { branch: "", commits: [] };
+  const branch = await switchToWorkBranch(input.repo, input.work);
+  const message = passCommitMessage(input.work, input.pass);
+  await command("git", ["-C", input.repo, "add", "--", ...changed]);
   await command("git", [
     "-C",
-    repo,
+    input.repo,
     "commit",
     "--only",
     "-m",
@@ -720,11 +814,29 @@ async function commitAccepted(
   ]);
   return {
     branch,
-    commit: (
-      await command("git", ["-C", repo, "rev-parse", "--short", "HEAD"])
-    ).trim(),
-    message,
+    commits: [
+      {
+        pass: input.pass,
+        commit: (
+          await command("git", ["-C", input.repo, "rev-parse", "--short", "HEAD"])
+        ).trim(),
+        message,
+        paths: changed,
+      },
+    ],
   };
+}
+
+async function committablePaths(repo: string, initialDirty: Set<string>) {
+  return [...(await statusPaths(repo))]
+    .filter((file) => !initialDirty.has(file) && !file.startsWith(".codex/"))
+    .sort();
+}
+
+function passCommitMessage(work: WorkItem, pass: number) {
+  if (pass === 1) return `${work.type}${work.breaking ? "!" : ""}: ${work.slug}`;
+  const type = work.type === "chore" ? "chore" : "fix";
+  return `${type}: ${work.slug}`;
 }
 
 async function nextBranch(repo: string, work: WorkItem, current: string) {
@@ -835,12 +947,13 @@ async function initTrack(
     reviewer: Agent;
     type: WorkType;
     breaking: boolean;
+    createPr: boolean;
   },
 ) {
   if (await stat(file).catch(() => false)) return;
   await writeFile(
     file,
-    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- coder: ${data.coder}\n- reviewer: ${data.reviewer}\n- type: ${data.type}\n- breaking: ${data.breaking}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
+    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- coder: ${data.coder}\n- reviewer: ${data.reviewer}\n- type: ${data.type}\n- breaking: ${data.breaking}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- create-pr: ${data.createPr}\n- started: ${new Date().toISOString()}\n\n`,
   );
 }
 
@@ -1017,6 +1130,17 @@ function reviewPrompt(input: {
   return `You are reviewing a ${agentLabel(input.coder)} implementation. Be a senior reviewer, not a linter.\n\nSpec: ${input.spec}\nTrack: ${input.track}\nBase: ${input.base}\nPass: ${input.pass}\nPrior reviews:\n${input.priors}\nAcceptance criteria:\n${criteriaBlock(input.criteria)}\nOutput path: ${input.output}\n\nSteps:\n1. Read the spec and track.\n2. Run: git diff ${input.base}...HEAD\n3. Read prior reviews so you do not repeat resolved findings.\n4. Write the review to ${input.output} using this exact format:\n\n# Review ${input.pass}\n\nVerdict: <ACCEPT | REJECT | UNCLEAR>\n\n## Acceptance matrix\n\n| Criterion | Status | Implementation evidence | Test evidence |\n| --- | --- | --- | --- |\n| AC1 | <PASS, FAIL, or UNCLEAR> | <code or behavior evidence> | <test, check, or explicit gap> |\n\n## Review flags\n\n- Silent decision: <present or absent> - <evidence, or None>\n- Scope drift: <present or absent> - <evidence, or None>\n- Missing test: <present or absent> - <evidence, or None>\n\n## Findings\n\n1. [severity] <file:line> - <symptom>. Root cause: <why>. Principle: <principle>.\n\n## Missing tests\n\n- <gap, or None>\n\n## Fix instructions\n\n1. <standalone instruction>\n\n## Notes\n\n- <scope, disputes, ambiguity questions, lessons, or None>\n\nRules:\n- The verdict line must appear verbatim.\n- ACCEPT requires every acceptance criterion PASS with concrete implementation evidence and concrete test evidence.${input.strict ? "\n- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, and 100% coverage when coverage tooling exists." : ""}\n- Flag a silent decision when the diff makes a tradeoff, default choice, compatibility choice, migration choice, or risk acceptance that is not recorded in the spec or track.\n- Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the acceptance criteria, or includes a broad refactor not needed for the spec.\n- Flag a missing test when behavior changed without targeted test evidence, even if the full suite passed.\n- Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes.\n- For ACCEPT: Findings and Fix instructions bodies are "None".\n- Findings must explain WHY, not just WHAT.\n`;
 }
 
+function commitLines(commits: CommitRecord[]) {
+  return commits.length
+    ? commits
+        .map(
+          (item) =>
+            `- pass ${item.pass} ${item.commit} ${item.message} (${item.paths.join(", ")})`,
+        )
+        .join("\n")
+    : "- none";
+}
+
 async function synthesizeReport(
   runner: Runner,
   repo: string,
@@ -1038,6 +1162,9 @@ async function synthesizeReport(
     branch: string;
     commit: string;
     commitMessage: string;
+    commits: CommitRecord[];
+    pullRequest: string;
+    pullRequestError: string;
     coder: Agent;
     reviewerSessionFile: string;
     coderSessionId: string;
@@ -1059,6 +1186,10 @@ Starting branch: ${input.initialBranch}
 Final branch: ${input.branch}
 Local commit: ${input.commit || "none"}
 Commit message: ${input.commitMessage || "none"}
+Commits:
+${commitLines(input.commits)}
+Pull request: ${input.pullRequest || "none"}
+Pull request error: ${input.pullRequestError || "none"}
 Coder: ${agentLabel(input.coder)}
 Reviewer: ${agentLabel(input.reviewer)}
 Coder session: ${input.coderSessionId || "unknown"}
@@ -1076,7 +1207,7 @@ ${input.reviews}`;
     repo,
     input.reviewerSessionFile,
     path.join(repo, `.codex/logs/${input.slug}-report.log`),
-    `You are writing a learning-oriented post-mortem for a developer who just ran a devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
+    `You are writing a learning-oriented post-mortem for a developer who just ran a devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n- pull request: ${input.pullRequest || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
     "report",
   );
 }
