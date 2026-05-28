@@ -58,8 +58,8 @@ describe("spec command parsing", () => {
 
 describe("spec prompt helpers", () => {
   test("builds agent-specific invocations", () => {
-    expect(agentInvocation("codex", "/repo")).toEqual({ cmd: "codex", args: ["exec", "-s", "read-only", "-C", "/repo", "-"] });
-    expect(agentInvocation("claude", "/repo")).toEqual({ cmd: "claude", args: ["-p", "--add-dir", "/repo"] });
+    expect(agentInvocation("codex", "/repo")).toEqual({ cmd: "codex", args: ["exec", "-c", 'model_reasoning_effort="xhigh"', "-s", "read-only", "-C", "/repo", "-"] });
+    expect(agentInvocation("claude", "/repo")).toEqual({ cmd: "claude", args: ["-p", "--effort", "max", "--add-dir", "/repo"] });
     expect(agentInvocation("my-agent", "/repo")).toEqual({ cmd: "my-agent", args: [] });
   });
 
@@ -87,10 +87,10 @@ describe("spec generation", () => {
 
     expect(result).toEqual({
       agent: "codex",
-      command: ["codex", "exec", "-s", "read-only", "-C", cwd, "-"],
+      command: ["codex", "exec", "-c", 'model_reasoning_effort="xhigh"', "-s", "read-only", "-C", cwd, "-"],
       file: path.join(cwd, ".specs/chat-retry.md"),
     });
-    expect(calls[0]).toMatchObject({ cmd: "codex", args: ["exec", "-s", "read-only", "-C", cwd, "-"], cwd });
+    expect(calls[0]).toMatchObject({ cmd: "codex", args: ["exec", "-c", 'model_reasoning_effort="xhigh"', "-s", "read-only", "-C", cwd, "-"], cwd });
     expect(calls[0]!.input).toContain("Source file:");
     expect(calls[0]!.input).toContain("Retry failed chat sends.");
     expect(calls[0]!.input).toContain("Context:\nKeep the existing CLI shape.");
@@ -121,7 +121,7 @@ describe("spec generation", () => {
 
     const result = await generateSpec(baseOptions(cwd, { agent: "claude", context: ["Add retries."] }), runner);
 
-    expect(result.command).toEqual(["claude", "-p", "--add-dir", cwd]);
+    expect(result.command).toEqual(["claude", "-p", "--effort", "max", "--add-dir", cwd]);
     expect(result.file).toBe(path.join(cwd, ".specs", "2026-05-28-chat-retries-2.md"));
     expect(await readFile(result.file, "utf8")).toContain("# Chat retries");
   });
