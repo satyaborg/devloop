@@ -56,10 +56,14 @@ function printResult(result: {
   track: string;
   worktree?: string;
   sourceRepo?: string;
+  coder?: string;
+  reviewer?: string;
 }) {
   console.log("");
   console.log(`result:  ${result.status}`);
   console.log(`passes:  ${result.passes} / ${result.max}`);
+  if (result.coder) console.log(`coder:   ${result.coder}`);
+  if (result.reviewer) console.log(`reviewer:${result.reviewer}`);
   if ("branch" in result) console.log(`branch:  ${result.branch}`);
   if ("commit" in result) console.log(`commit:  ${result.commit || "none"}`);
   if (hasWorktreeInfo(result) && isIsolatedWorktree(result))

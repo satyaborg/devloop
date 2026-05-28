@@ -20,6 +20,8 @@ export function view(rows: Row[], selected: number, result?: Result, spinnerFram
         "",
         `result:  ${result.status}`,
         `passes:  ${result.passes} / ${result.max}`,
+        `coder:   ${result.coder}`,
+        `reviewer:${result.reviewer}`,
         `branch:  ${result.branch}`,
         `commit:  ${result.commit || "none"}`,
         ...(isIsolatedWorktree(result) ? [`worktree: ${result.worktree}`] : []),

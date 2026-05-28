@@ -47,8 +47,10 @@ describe("tui view", () => {
       commitMessage: "",
       worktree: "/tmp/repo-change",
       sourceRepo: "/tmp/repo",
-      codexSessionId: "codex-session",
-      claudeSessionId: "claude-session",
+      coder: "codex",
+      reviewer: "claude",
+      coderSessionId: "codex-session",
+      reviewerSessionId: "claude-session",
     });
 
     expect(output).toContain("> !!     run tests - failed");
@@ -71,8 +73,10 @@ describe("tui view", () => {
       commitMessage: "feat: change",
       worktree: "/tmp/repo",
       sourceRepo: "/tmp/repo",
-      codexSessionId: "codex-session",
-      claudeSessionId: "claude-session",
+      coder: "codex",
+      reviewer: "claude",
+      coderSessionId: "codex-session",
+      reviewerSessionId: "claude-session",
     });
 
     expect(output).not.toContain("worktree:");

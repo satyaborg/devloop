@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 export type ReportFormat = "html" | "markdown";
+export type Agent = "codex" | "claude";
 export type Verdict = "ACCEPT" | "REJECT" | "UNCLEAR";
 export type Status =
   | "accepted"
@@ -20,8 +21,8 @@ export type Status =
   | "max-turns"
   | "unclear"
   | "no-verdict"
-  | "codex-error"
-  | "claude-error"
+  | "coder-error"
+  | "reviewer-error"
   | "review-missing"
   | "commit-error";
 
@@ -38,6 +39,8 @@ export type Options = {
   reportFormat: ReportFormat;
   strict: boolean;
   worktree: boolean;
+  coder: Agent;
+  reviewer: Agent;
   cwd: string;
 };
 
@@ -52,8 +55,10 @@ export type Result = {
   commitMessage: string;
   worktree: string;
   sourceRepo: string;
-  codexSessionId: string;
-  claudeSessionId: string;
+  coder: Agent;
+  reviewer: Agent;
+  coderSessionId: string;
+  reviewerSessionId: string;
 };
 
 export type Event =
@@ -94,7 +99,7 @@ export const LOGO = [
 export function welcome() {
   return `${LOGO}
 
-Spec-driven code and review loop. Codex implements, Claude reviews.
+Spec-driven code and review loop. Codex implements and Claude Code reviews by default.
 
 Usage:
   devloop [options] <spec.md> [max=5]
@@ -104,11 +109,14 @@ Common commands:
   devloop --tui .specs/change.md
   devloop --plain .specs/change.md
   devloop --report-format markdown .specs/change.md 3
+  devloop --coder claude --reviewer codex .specs/change.md
   bun scripts/install.ts
 
 Options:
   --tui                         force the collapsed TUI
   --plain                       force plain output
+  --coder codex|claude          choose the implementation agent
+  --reviewer codex|claude       choose the review agent
   --report-format html|markdown choose report format
   --no-strict                   weaken acceptance gates
   --in-place                    run in the current worktree
@@ -122,6 +130,8 @@ export function parseArgs(
   let reportFormat: ReportFormat = "html";
   let strict = true;
   let worktree = true;
+  let coder: Agent = "codex";
+  let reviewer: Agent = "claude";
   let spec = "";
   let maxRaw = "5";
   let maxSet = false;
@@ -133,6 +143,14 @@ export function parseArgs(
       if (value !== "html" && value !== "markdown" && value !== "md")
         return usage();
       reportFormat = value === "md" ? "markdown" : value;
+    } else if (arg === "--coder" || arg === "--coder-model") {
+      const value = parseAgent(argv[++i]);
+      if (!value) return `coder must be codex or claude\n${usage()}`;
+      coder = value;
+    } else if (arg === "--reviewer" || arg === "--reviewer-model") {
+      const value = parseAgent(argv[++i]);
+      if (!value) return `reviewer must be codex or claude\n${usage()}`;
+      reviewer = value;
     } else if (arg === "--html") reportFormat = "html";
     else if (arg === "--markdown" || arg === "--md") reportFormat = "markdown";
     else if (arg === "--no-strict") strict = false;
@@ -157,12 +175,14 @@ export function parseArgs(
     reportFormat,
     strict,
     worktree,
+    coder,
+    reviewer,
     cwd,
   };
 }
 
 export function usage() {
-  return "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--report-format html|markdown] <spec.md> [max=5]";
+  return "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]";
 }
 
 export function parseCriteria(markdown: string): string[] {
@@ -264,7 +284,7 @@ export async function runDevloop(
   await sink.event({
     type: "step",
     id: namingId,
-    title: "derive branch name",
+    title: `derive branch name with ${agentLabel(options.coder)}`,
   });
   let namingLog = "";
   let namingError = "";
@@ -277,6 +297,7 @@ export async function runDevloop(
           "naming.log",
         );
     return resolveWorkItem({
+      agent: options.coder,
       runner: makeRunner(sourceRepo, sink),
       repo: sourceRepo,
       spec,
@@ -342,8 +363,8 @@ export async function runDevloop(
   ).trim();
   const track = `.codex/tracks/${slug}.md`;
   const report = `.codex/reports/${slug}.${options.reportFormat === "html" ? "html" : "md"}`;
-  const codexSession = `.codex/sessions/${slug}-codex.id`;
-  const claudeSession = `.codex/sessions/${slug}-claude.id`;
+  const coderSession = `.codex/sessions/${slug}-coder.id`;
+  const reviewerSession = `.codex/sessions/${slug}-reviewer.id`;
   const runner = makeRunner(repo, sink);
   await initTrack(path.join(repo, track), {
     spec: runSpec,
@@ -357,6 +378,8 @@ export async function runDevloop(
     max: options.max,
     reportFormat: options.reportFormat,
     strict: options.strict,
+    coder: options.coder,
+    reviewer: options.reviewer,
     type: work.type,
     breaking: work.breaking,
   });
@@ -369,19 +392,20 @@ export async function runDevloop(
   let finalBranch = runBranch;
 
   for (pass = 1; pass <= options.max; pass++) {
-    const codexLog = `.codex/logs/${slug}-r${pass}-codex.log`;
-    const codexId = `codex-${pass}`;
+    const coderLog = `.codex/logs/${slug}-r${pass}-coder.log`;
+    const coderId = `coder-${pass}`;
     await sink.event({
       type: "step",
-      id: codexId,
-      title: `pass ${pass}/${options.max} codex`,
+      id: coderId,
+      title: `pass ${pass}/${options.max} ${agentLabel(options.coder)} implementation`,
     });
-    const codex = await runCodex(
+    const coded = await runAgent(
+      options.coder,
       runner,
       repo,
-      path.join(repo, codexSession),
-      path.join(repo, codexLog),
-      codexPrompt({
+      path.join(repo, coderSession),
+      path.join(repo, coderLog),
+      coderPrompt({
         spec: runSpec,
         track,
         pass,
@@ -389,32 +413,35 @@ export async function runDevloop(
         previous: `.codex/reviews/${slug}-r${pass - 1}.md`,
         criteria,
       }),
+      coderId,
     );
     await sink.event({
       type: "done",
-      id: codexId,
-      ok: codex,
-      detail: codex ? "completed" : "failed",
+      id: coderId,
+      ok: coded,
+      detail: coded ? "completed" : "failed",
     });
-    if (!codex) {
-      status = "codex-error";
+    if (!coded) {
+      status = "coder-error";
       break;
     }
 
     const review = `.codex/reviews/${slug}-r${pass}.md`;
-    const claudeLog = `.codex/logs/${slug}-r${pass}-claude.log`;
-    const claudeId = `claude-${pass}`;
+    const reviewerLog = `.codex/logs/${slug}-r${pass}-reviewer.log`;
+    const reviewerId = `reviewer-${pass}`;
     await sink.event({
       type: "step",
-      id: claudeId,
-      title: `pass ${pass}/${options.max} claude review`,
+      id: reviewerId,
+      title: `pass ${pass}/${options.max} ${agentLabel(options.reviewer)} review`,
     });
-    const ok = await runClaude(
+    const ok = await runAgent(
+      options.reviewer,
       runner,
       repo,
-      path.join(repo, claudeSession),
-      path.join(repo, claudeLog),
+      path.join(repo, reviewerSession),
+      path.join(repo, reviewerLog),
       reviewPrompt({
+        coder: options.coder,
         spec: runSpec,
         track,
         base,
@@ -424,15 +451,16 @@ export async function runDevloop(
         criteria,
         strict: options.strict,
       }),
+      reviewerId,
     );
     await sink.event({
       type: "done",
-      id: claudeId,
+      id: reviewerId,
       ok,
       detail: ok ? "completed" : "failed",
     });
     if (!ok) {
-      status = "claude-error";
+      status = "reviewer-error";
       break;
     }
 
@@ -512,10 +540,11 @@ export async function runDevloop(
     }
   }
 
-  const codexSessionId = await readLine(path.join(repo, codexSession));
-  const claudeSessionId = await readLine(path.join(repo, claudeSession));
+  const coderSessionId = await readLine(path.join(repo, coderSession));
+  const reviewerSessionId = await readLine(path.join(repo, reviewerSession));
   await synthesizeReport(runner, repo, {
     slug,
+    reviewer: options.reviewer,
     spec: runSpec,
     specText,
     sourceSpec: spec,
@@ -531,8 +560,10 @@ export async function runDevloop(
     branch: finalBranch,
     commit,
     commitMessage,
-    codexSessionId,
-    claudeSessionId,
+    coder: options.coder,
+    reviewerSession: path.join(repo, reviewerSession),
+    coderSessionId,
+    reviewerSessionId,
     format: options.reportFormat,
     reviews: listReviews(slug, pass, options.max),
   });
@@ -547,8 +578,10 @@ export async function runDevloop(
     commitMessage,
     worktree: repo,
     sourceRepo,
-    codexSessionId,
-    claudeSessionId,
+    coder: options.coder,
+    reviewer: options.reviewer,
+    coderSessionId,
+    reviewerSessionId,
   };
   await sink.event({ type: "result", result });
   return result;
@@ -797,6 +830,8 @@ async function initTrack(
     max: number;
     reportFormat: ReportFormat;
     strict: boolean;
+    coder: Agent;
+    reviewer: Agent;
     type: WorkType;
     breaking: boolean;
   },
@@ -804,7 +839,7 @@ async function initTrack(
   if (await stat(file).catch(() => false)) return;
   await writeFile(
     file,
-    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- type: ${data.type}\n- breaking: ${data.breaking}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
+    `# Track: ${path.basename(file, ".md")}\n\n- spec: ${data.spec}\n- source-spec: ${data.sourceSpec}\n- cwd: ${data.cwd}\n- source-repo: ${data.sourceRepo}\n- worktree: ${data.worktree}\n- base: ${data.base}\n- branch: ${data.branch}\n- worktree-branch: ${data.worktreeBranch}\n- coder: ${data.coder}\n- reviewer: ${data.reviewer}\n- type: ${data.type}\n- breaking: ${data.breaking}\n- max: ${data.max}\n- report-format: ${data.reportFormat}\n- strict: ${data.strict}\n- started: ${new Date().toISOString()}\n\n`,
   );
 }
 
@@ -818,12 +853,52 @@ async function writeLine(file: string, value: string) {
   await writeFile(file, `${value}\n`);
 }
 
+async function runAgent(
+  agent: Agent,
+  runner: Runner,
+  repo: string,
+  sessionFile: string,
+  log: string,
+  prompt: string,
+  id: string,
+) {
+  return agent === "codex"
+    ? runCodex(runner, repo, sessionFile, log, prompt, id)
+    : runClaude(runner, repo, sessionFile, log, prompt, id);
+}
+
+async function runAgentOnce(
+  agent: Agent,
+  runner: Runner,
+  repo: string,
+  log: string,
+  prompt: string,
+  id: string,
+) {
+  return agent === "codex"
+    ? runner(
+        "codex",
+        ["exec", "-s", "read-only", "-C", repo, "-"],
+        prompt,
+        log,
+        id,
+      )
+    : runner(
+        "claude",
+        ["-p", "--dangerously-skip-permissions", "--add-dir", repo],
+        prompt,
+        log,
+        id,
+      );
+}
+
 async function runCodex(
   runner: Runner,
   repo: string,
   sessionFile: string,
   log: string,
   prompt: string,
+  id: string,
 ) {
   const session = await readLine(sessionFile);
   const args = session
@@ -835,7 +910,7 @@ async function runCodex(
         "-",
       ]
     : ["exec", "--dangerously-bypass-approvals-and-sandbox", "-C", repo, "-"];
-  const result = await runner("codex", args, prompt, log, logId(log, "codex"));
+  const result = await runner("codex", args, prompt, log, id);
   if (result.code !== 0) return false;
   if (!session) {
     const next = extractSessionId(result.output);
@@ -851,6 +926,7 @@ async function runClaude(
   sessionFile: string,
   log: string,
   prompt: string,
+  id: string,
 ) {
   const session = await readLine(sessionFile);
   const next = session || randomUUID();
@@ -876,16 +952,11 @@ async function runClaude(
     args,
     prompt,
     log,
-    logId(log, "claude"),
+    id,
   );
   if (result.code !== 0) return false;
   if (!session) await writeLine(sessionFile, next);
   return true;
-}
-
-function logId(log: string, kind: "codex" | "claude") {
-  const pass = log.match(new RegExp(`r(\\d+)-${kind}`))?.[1];
-  return pass ? `${kind}-${pass}` : kind === "codex" ? "codex" : "report";
 }
 
 function extractSessionId(output: string) {
@@ -915,7 +986,7 @@ function criteriaBlock(criteria: string[]) {
   );
 }
 
-function codexPrompt(input: {
+function coderPrompt(input: {
   spec: string;
   track: string;
   pass: number;
@@ -932,6 +1003,7 @@ function codexPrompt(input: {
 }
 
 function reviewPrompt(input: {
+  coder: Agent;
   spec: string;
   track: string;
   base: string;
@@ -941,7 +1013,7 @@ function reviewPrompt(input: {
   criteria: string[];
   strict: boolean;
 }) {
-  return `You are reviewing a Codex implementation. Be a senior reviewer, not a linter.\n\nSpec: ${input.spec}\nTrack: ${input.track}\nBase: ${input.base}\nPass: ${input.pass}\nPrior reviews:\n${input.priors}\nAcceptance criteria:\n${criteriaBlock(input.criteria)}\nOutput path: ${input.output}\n\nSteps:\n1. Read the spec and track.\n2. Run: git diff ${input.base}...HEAD\n3. Read prior reviews so you do not repeat resolved findings.\n4. Write the review to ${input.output} using this exact format:\n\n# Claude review ${input.pass}\n\nVerdict: <ACCEPT | REJECT | UNCLEAR>\n\n## Acceptance matrix\n\n- AC1: <PASS | FAIL | UNCLEAR> - <evidence>\n\n## Findings\n\n1. [severity] <file:line> - <symptom>. Root cause: <why>. Principle: <principle>.\n\n## Missing tests\n\n- <gap, or None>\n\n## Fix instructions\n\n1. <standalone instruction>\n\n## Notes\n\n- <scope, disputes, lessons, or None>\n\nRules:\n- The verdict line must appear verbatim.\n- ACCEPT requires every acceptance criterion PASS with concrete evidence.${input.strict ? "\n- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, and 100% coverage when coverage tooling exists." : ""}\n- For ACCEPT: Findings and Fix instructions bodies are "None".\n- Findings must explain WHY, not just WHAT.\n`;
+  return `You are reviewing a ${agentLabel(input.coder)} implementation. Be a senior reviewer, not a linter.\n\nSpec: ${input.spec}\nTrack: ${input.track}\nBase: ${input.base}\nPass: ${input.pass}\nPrior reviews:\n${input.priors}\nAcceptance criteria:\n${criteriaBlock(input.criteria)}\nOutput path: ${input.output}\n\nSteps:\n1. Read the spec and track.\n2. Run: git diff ${input.base}...HEAD\n3. Read prior reviews so you do not repeat resolved findings.\n4. Write the review to ${input.output} using this exact format:\n\n# Review ${input.pass}\n\nVerdict: <ACCEPT | REJECT | UNCLEAR>\n\n## Acceptance matrix\n\n- AC1: <PASS | FAIL | UNCLEAR> - <evidence>\n\n## Findings\n\n1. [severity] <file:line> - <symptom>. Root cause: <why>. Principle: <principle>.\n\n## Missing tests\n\n- <gap, or None>\n\n## Fix instructions\n\n1. <standalone instruction>\n\n## Notes\n\n- <scope, disputes, lessons, or None>\n\nRules:\n- The verdict line must appear verbatim.\n- ACCEPT requires every acceptance criterion PASS with concrete evidence.${input.strict ? "\n- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, and 100% coverage when coverage tooling exists." : ""}\n- For ACCEPT: Findings and Fix instructions bodies are "None".\n- Findings must explain WHY, not just WHAT.\n`;
 }
 
 async function synthesizeReport(
@@ -949,6 +1021,7 @@ async function synthesizeReport(
   repo: string,
   input: {
     slug: string;
+    reviewer: Agent;
     spec: string;
     specText: string;
     sourceSpec: string;
@@ -964,8 +1037,10 @@ async function synthesizeReport(
     branch: string;
     commit: string;
     commitMessage: string;
-    codexSessionId: string;
-    claudeSessionId: string;
+    coder: Agent;
+    reviewerSession: string;
+    coderSessionId: string;
+    reviewerSessionId: string;
     format: ReportFormat;
     reviews: string;
   },
@@ -983,8 +1058,10 @@ Starting branch: ${input.initialBranch}
 Final branch: ${input.branch}
 Local commit: ${input.commit || "none"}
 Commit message: ${input.commitMessage || "none"}
-Codex session: ${input.codexSessionId || "unknown"}
-Claude session: ${input.claudeSessionId || "unknown"}
+Coder: ${agentLabel(input.coder)}
+Reviewer: ${agentLabel(input.reviewer)}
+Coder session: ${input.coderSessionId || "unknown"}
+Reviewer session: ${input.reviewerSessionId || "unknown"}
 Track: ${input.track}
 Reviews:
 ${input.reviews}`;
@@ -992,36 +1069,15 @@ ${input.reviews}`;
     input.format === "html"
       ? `Write the report to ${input.report} as valid standalone HTML. Use a readable document layout with embedded CSS, set the HTML <title> to the report title, render the report title and subtitle before Metadata, render a topical three-line haiku immediately after the subtitle, use a compact metadata table, and add substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`
       : `Write the report to ${input.report} in markdown. Start with the report title as the H1, put the subtitle directly below it, put a topical three-line haiku immediately after the subtitle, then include these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`;
-  const sessionFile = path.join(
+  await runAgent(
+    input.reviewer,
+    runner,
     repo,
-    `.codex/sessions/${input.slug}-claude.id`,
-  );
-  const session = await readLine(sessionFile);
-  const next = session || randomUUID();
-  await runner(
-    "claude",
-    session
-      ? [
-          "-p",
-          "--resume",
-          session,
-          "--dangerously-skip-permissions",
-          "--add-dir",
-          repo,
-        ]
-      : [
-          "-p",
-          "--session-id",
-          next,
-          "--dangerously-skip-permissions",
-          "--add-dir",
-          repo,
-        ],
-    `You are writing a learning-oriented post-mortem for a developer who just ran a Codex/Claude devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
+    input.reviewerSession,
     path.join(repo, `.codex/logs/${input.slug}-report.log`),
+    `You are writing a learning-oriented post-mortem for a developer who just ran a devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
     "report",
   );
-  if (!session) await writeLine(sessionFile, next);
 }
 
 function reportTitle(specText: string) {
@@ -1069,7 +1125,19 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function parseAgent(value: string | undefined): Agent | undefined {
+  const normalized = (value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (normalized === "codex") return "codex";
+  if (normalized === "claude" || normalized === "claudecode") return "claude";
+  return undefined;
+}
+
+function agentLabel(agent: Agent) {
+  return agent === "codex" ? "Codex" : "Claude Code";
+}
+
 async function resolveWorkItem(input: {
+  agent: Agent;
   runner: Runner;
   repo: string;
   spec: string;
@@ -1084,20 +1152,23 @@ async function resolveWorkItem(input: {
 }
 
 async function deriveWorkItem(input: {
+  agent: Agent;
   runner: Runner;
   repo: string;
   spec: string;
   specText: string;
   log: string;
 }) {
-  const result = await input.runner(
-    "codex",
-    ["exec", "-s", "read-only", "-C", input.repo, "-"],
-    namingPrompt(input.spec, input.specText),
+  const result = await runAgentOnce(
+    input.agent,
+    input.runner,
+    input.repo,
     input.log,
+    namingPrompt(input.spec, input.specText),
     "naming",
   );
-  if (result.code !== 0) throw new Error(result.output || "codex failed");
+  if (result.code !== 0)
+    throw new Error(result.output || `${input.agent} failed`);
   return parseWorkItem(result.stdout || result.output);
 }
 
