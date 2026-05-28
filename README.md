@@ -1,3 +1,8 @@
+[![CI](https://github.com/satyaborg/devloop/actions/workflows/ci.yml/badge.svg)](https://github.com/satyaborg/devloop/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@satyaborg/devloop.svg)](https://www.npmjs.com/package/@satyaborg/devloop)
+[![license](https://img.shields.io/npm/l/@satyaborg/devloop.svg)](LICENSE)
+[![npm downloads](https://img.shields.io/npm/dm/@satyaborg/devloop.svg)](https://www.npmjs.com/package/@satyaborg/devloop)
+
 ```text
        __          __
   ____/ /__ _   __/ /___  ____  ____
@@ -13,15 +18,36 @@ The coder makes the change. The reviewer reviews it. If the reviewer rejects it,
 
 ## Install
 
-From this checkout:
+Prerequisites:
+
+- Bun 1.2 or newer
+- git
+- the local agent CLIs you configure
+- Codex and Claude Code for the default coder/reviewer pairing
+
+Install the public npm package globally:
 
 ```sh
+npm install -g @satyaborg/devloop
+```
+
+Run without a global install:
+
+```sh
+bunx @satyaborg/devloop --help
+```
+
+The npm package name is `@satyaborg/devloop`, and the binary remains `devloop`.
+
+For source checkout development:
+
+```sh
+git clone https://github.com/satyaborg/devloop.git
+cd devloop
 bun scripts/install.ts
 ```
 
-This installs dependencies and links `devloop` into `~/.local/bin`.
-
-To use another bin directory:
+This installs dependencies and links `devloop` into `~/.local/bin`. To use another bin directory:
 
 ```sh
 DEVLOOP_BIN_DIR=/path/to/bin bun scripts/install.ts
@@ -100,7 +126,7 @@ By default, `devloop`:
 - writes an HTML report
 - requires the reviewer to pass every acceptance criterion with implementation and test evidence
 - asks the reviewer to flag silent decisions, scope drift, and missing tests
-- creates an isolated sibling git worktree and runs agents there
+- creates isolated sibling git worktrees by default and runs agents there
 - creates one conventional commit after each coder pass, before review
 - never pushes or opens a PR
 
@@ -161,6 +187,14 @@ git -C <source-repo> branch -D 'feat!/<slug>'
 
 If `worktree remove` reports local modifications, inspect the worktree first or rerun the command with `--force` to discard them.
 
+## Security Model
+
+devloop runs local agent CLIs with broad permissions because the configured coder and reviewer need to inspect and change a checkout. By default it creates isolated sibling git worktrees before running those agents, but the agents still execute on your machine with your local credentials and PATH.
+
+devloop writes `.codex/` artifacts for specs, tracks, reviews, reports, logs, and session ids. devloop does not add telemetry, phone home, or send data anywhere itself. Network access depends on the agent CLIs and commands you configure.
+
+CI currently verifies the package on Ubuntu. The maintainer development environment is macOS with Bun; other platforms may work but are not release-gated yet.
+
 ## Development
 
 Prereqs: `bun`, `git`, and the agents you configure. The defaults require `codex` and `claude`.
@@ -169,6 +203,7 @@ Prereqs: `bun`, `git`, and the agents you configure. The defaults require `codex
 bun scripts/install.ts
 bun run typecheck
 bun test
+bun run package:smoke
 ```
 
 `bun test` enforces 100% line, function, and statement coverage for the TypeScript core.
