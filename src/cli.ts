@@ -8,9 +8,17 @@ import {
   type Event,
   type Sink,
 } from "./devloop.ts";
+import {
+  bundledSpecSkillPath,
+  generateSpec,
+  parseSpecArgs,
+  readBundledSpecSkill,
+} from "./spec.ts";
 import { createTuiSink } from "./tui.ts";
 
 const argv = process.argv.slice(2);
+if (argv[0] === "spec") await runSpecCommand(argv.slice(1));
+
 if (argv.length === 0 || argv.includes("-h") || argv.includes("--help")) {
   console.log(welcome());
   process.exit(0);
@@ -80,4 +88,27 @@ function displayPath(
   file: string,
 ) {
   return hasWorktreeInfo(result) ? resultPath(result, file) : file;
+}
+
+async function runSpecCommand(argv: string[]) {
+  const parsed = parseSpecArgs(argv);
+  if (typeof parsed === "string") {
+    const help = argv.includes("-h") || argv.includes("--help");
+    console[help ? "log" : "error"](parsed);
+    process.exit(help ? 0 : 2);
+  }
+
+  try {
+    if (parsed.type === "print-skill") console.log(await readBundledSpecSkill());
+    else if (parsed.type === "skill-path") console.log(bundledSpecSkillPath());
+    else {
+      const result = await generateSpec(parsed.options);
+      console.log(`spec:  ${result.file}`);
+      console.log(`agent: ${result.agent}`);
+    }
+    process.exit(0);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
 }

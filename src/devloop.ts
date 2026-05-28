@@ -100,6 +100,7 @@ Usage:
   devloop [options] <spec.md> [max=5]
 
 Common commands:
+  devloop spec "add retry behavior to the chat sender"
   devloop .specs/change.md
   devloop --tui .specs/change.md
   devloop --plain .specs/change.md
