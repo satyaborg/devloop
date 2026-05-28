@@ -118,6 +118,9 @@ describe("loop", () => {
     expect(reportPrompt).toContain("Commit message: feat: change");
     expect(reportPrompt).toContain("Title: Fixture spec");
     expect(reportPrompt).toContain("Subtitle: The loop runs deterministically under test.");
+    expect(reportPrompt).toContain("Haiku: Compose a three-line haiku");
+    expect(reportPrompt).toContain("Haiku topic: Fixture spec - The loop runs deterministically under test.");
+    expect(reportPrompt).toContain("rendered immediately after the subtitle before Metadata");
     expect(reportPrompt).toContain("The subtitle must be specific to this work");
     expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
