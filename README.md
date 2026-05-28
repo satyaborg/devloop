@@ -38,7 +38,7 @@ devloop .specs/change.md
 Full form:
 
 ```sh
-devloop [--plain|--tui] [--in-place] [--no-strict] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] spec.md [max=5]
+devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] spec.md [max=5]
 ```
 
 Common examples:
@@ -49,6 +49,7 @@ devloop --plain .specs/change.md
 devloop --tui .specs/change.md
 devloop --report-format markdown .specs/change.md 3
 devloop --coder claude --reviewer codex .specs/change.md
+devloop --create-pr .specs/change.md
 ```
 
 ## Generate A Spec
@@ -100,10 +101,10 @@ By default, `devloop`:
 - requires the reviewer to pass every acceptance criterion with implementation and test evidence
 - asks the reviewer to flag silent decisions, scope drift, and missing tests
 - creates an isolated sibling git worktree and runs agents there
-- creates a local branch and commit when the run is accepted
+- creates one conventional commit after each coder pass, before review
 - never pushes or opens a PR
 
-Use `--plain` for CI. Use `--tui` to force the TUI. Use `--coder` and `--reviewer` to choose `codex` or `claude` for either role. Use `--in-place` to opt out of the isolated worktree and run in the current checkout. Use `--no-strict` only when you want weaker acceptance gates.
+Use `--plain` for CI. Use `--tui` to force the TUI. Use `--coder` and `--reviewer` to choose `codex` or `claude` for either role. Use `--in-place` to opt out of the isolated worktree and run in the current checkout. Use `--create-pr` or `--pr` to push an accepted branch to `origin` and open a GitHub pull request with `gh pr create --fill --base <base> --head <branch>`. If PR creation fails after the push succeeds, the report keeps the pushed branch name so you can open the PR manually. Use `--no-strict` only when you want weaker acceptance gates.
 
 ## Output
 
@@ -120,7 +121,7 @@ Each run writes files under `.codex/`:
 .codex/specs/<slug>.md
 ```
 
-With the default isolated worktree, these files are written inside the generated sibling worktree named `<repo>-<slug>`. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
+With the default isolated worktree, these files are written inside the generated sibling worktree named `<repo>-<slug>`. Agents and git commands run against that worktree explicitly. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
 
 Before creating the worktree, `devloop` asks the configured coder to read the spec and repository and return the semantic work item identity. That identity supplies `<slug>`, branch type, and breaking-change status. Explicit spec frontmatter wins when set:
 
@@ -132,7 +133,7 @@ breaking: true
 
 When `type`, `slug`, and `breaking` are all set, `devloop` skips the naming call.
 
-On acceptance, `devloop` creates or reuses a branch like:
+Before the first review, `devloop` creates or reuses a branch like:
 
 ```text
 feat/<slug>
@@ -142,11 +143,12 @@ chore/<slug>
 
 Breaking changes use `!`, for example `feat!/<slug>`.
 
-It commits only files that were clean when the run started. It excludes `.codex/`. Commit messages use:
+After each coder pass, `devloop` commits the current eligible diff before handing the work to the reviewer. It commits only files that were clean when the run started and excludes `.codex/`. Commit messages use:
 
 ```text
 feat: <slug>
 feat!: <slug>
+fix: <slug>
 ```
 
 devloop intentionally keeps generated worktrees and branches for inspection after both successful and failed runs. To remove one when you are done:
