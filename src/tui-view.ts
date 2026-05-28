@@ -24,6 +24,7 @@ export function view(rows: Row[], selected: number, result?: Result, spinnerFram
         resultLine("reviewer", result.reviewer),
         resultLine("branch", result.branch),
         resultLine("commit", result.commit || "none"),
+        ...(result.pullRequest ? [resultLine("pr", result.pullRequest)] : []),
         ...(isIsolatedWorktree(result) ? [resultLine("worktree", result.worktree)] : []),
         resultLine("report", resultPath(result, result.report)),
         resultLine("track", resultPath(result, result.track)),
