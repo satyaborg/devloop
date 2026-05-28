@@ -44,6 +44,26 @@ devloop --report-format markdown .specs/change.md 3
 devloop --coder claude --reviewer codex .specs/change.md
 ```
 
+## Generate A Spec
+
+`devloop` bundles a reusable [`spec` skill](skills/spec/SKILL.md). The skill has two paths: it interviews from a cold start when the user only has a rough idea, or it distills notes, an issue, a file, URL, or pasted context into a devloop spec.
+
+```sh
+devloop spec
+devloop spec "add retry behavior to the chat sender"
+devloop spec --agent claude --output .specs/chat-retry.md notes.md
+devloop spec --agent my-agent ./research.md
+```
+
+`--agent codex` is the default. `--agent claude` uses Claude's stdin mode. Any other `--agent` value is treated as a command that accepts the generated prompt on stdin and returns the markdown spec on stdout. With no context, the prompt tells the selected agent to use the bundled cold-start interview path before writing the final spec.
+
+For agent-native skill systems:
+
+```sh
+devloop spec --skill-path
+devloop spec --print-skill
+```
+
 ## Write A Spec
 
 Start with [`templates/spec.md`](templates/spec.md). A good spec is short and concrete:
