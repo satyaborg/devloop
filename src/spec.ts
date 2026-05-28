@@ -65,7 +65,6 @@ export function parseSpecArgs(
   }
 
   if (action) return { type: action };
-  if (context.length === 0) return specUsage();
   return {
     type: "generate",
     options: {
@@ -80,9 +79,11 @@ export function parseSpecArgs(
 
 export function specUsage() {
   return [
-    "usage: devloop spec [--agent codex|claude|<cmd>] [--output spec.md] [--force] <context...>",
+    "usage: devloop spec [--agent codex|claude|<cmd>] [--output spec.md] [--force] [context...]",
     "       devloop spec --print-skill",
     "       devloop spec --skill-path",
+    "",
+    "Without context, the bundled skill uses its interview path before writing a spec.",
   ].join("\n");
 }
 
@@ -148,12 +149,12 @@ export function specPrompt(input: {
   skill: string;
   today: string;
 }) {
-  return `Use this bundled devloop skill to generate one implementation spec.
+  return `Use this bundled devloop skill to produce one implementation spec.
 
 Current date: ${input.today}
 ${input.output ? `Output path: ${input.output}` : "Output path: choose a .specs/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."}
 
-Return only the markdown spec. Do not wrap it in a code fence.
+If the source context is missing or too thin, follow the skill's interview path before drafting. Return only the final markdown spec. Do not wrap it in a code fence.
 
 Bundled skill:
 ${input.skill}
@@ -172,6 +173,8 @@ export function extractGeneratedSpec(output: string) {
 }
 
 async function resolveContext(items: string[], cwd: string) {
+  if (items.length === 0)
+    return "No source material was provided. Use the cold-start interview path in the bundled skill to discover intent before writing the spec.";
   const resolved = await Promise.all(items.map((item) => contextBlock(item, cwd)));
   return resolved.join("\n\n---\n\n");
 }

@@ -37,12 +37,22 @@ describe("spec command parsing", () => {
     expect(parseSpecArgs(["-o"], "/repo")).toContain("--output requires a value");
     expect(parseSpecArgs(["--wat"], "/repo")).toContain("unknown option");
     expect(parseSpecArgs(["--help"], "/repo")).toBe(specUsage());
-    expect(parseSpecArgs([], "/repo")).toBe(specUsage());
+    expect(parseSpecArgs([], "/repo")).toEqual({
+      type: "generate",
+      options: {
+        agent: "codex",
+        context: [],
+        cwd: "/repo",
+        force: false,
+        output: undefined,
+      },
+    });
   });
 
   test("exposes the bundled skill", async () => {
     expect(bundledSpecSkillPath()).toEndWith(path.join("skills", "spec", "SKILL.md"));
     expect(await readBundledSpecSkill()).toContain("name: spec");
+    expect(await readBundledSpecSkill()).toContain("Cold Start Interview");
   });
 });
 
@@ -56,6 +66,7 @@ describe("spec prompt helpers", () => {
   test("builds prompts and extracts markdown specs", () => {
     expect(specPrompt({ context: "notes", output: ".specs/x.md", skill: "skill body", today: "2026-05-28" })).toContain("Output path: .specs/x.md");
     expect(specPrompt({ context: "notes", skill: "skill body", today: "2026-05-28" })).toContain("choose a .specs/YYYY-MM-DD-<slug>.md path");
+    expect(specPrompt({ context: "No source material was provided.", skill: "skill body", today: "2026-05-28" })).toContain("interview path");
     expect(extractGeneratedSpec("```markdown\n---\nstatus: draft\n---\n\n# Chat retries\n```")).toBe("---\nstatus: draft\n---\n\n# Chat retries");
     expect(extractGeneratedSpec("preface\n---\nstatus: draft\n---\n\n# Chat retries")).toBe("---\nstatus: draft\n---\n\n# Chat retries");
     expect(() => extractGeneratedSpec("no spec here")).toThrow("agent output must include spec frontmatter");
@@ -85,6 +96,21 @@ describe("spec generation", () => {
     expect(calls[0]!.input).toContain("Context:\nKeep the existing CLI shape.");
     expect(calls[0]!.input).toContain("Current date: 2026-05-28");
     expect(await readFile(result.file, "utf8")).toBe(`${specMarkdown("Chat retries")}\n`);
+  });
+
+  test("generates from the bundled cold-start interview path without context", async () => {
+    const cwd = await fixture("cold-start");
+    const calls: Array<{ input: string }> = [];
+    const runner: AgentRunner = async (_cmd, _args, input) => {
+      calls.push({ input });
+      return { code: 0, stdout: specMarkdown("Cold start spec"), stderr: "", output: specMarkdown("Cold start spec") };
+    };
+
+    const result = await generateSpec(baseOptions(cwd, { context: [] }), runner);
+
+    expect(calls[0]!.input).toContain("No source material was provided");
+    expect(calls[0]!.input).toContain("Cold Start Interview");
+    expect(result.file).toBe(path.join(cwd, ".specs", "2026-05-28-cold-start-spec.md"));
   });
 
   test("generates dated paths and suffixes existing files", async () => {

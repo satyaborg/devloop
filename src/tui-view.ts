@@ -18,16 +18,22 @@ export function view(rows: Row[], selected: number, result?: Result, spinnerFram
   const tail = result
     ? [
         "",
-        `result:  ${result.status}`,
-        `passes:  ${result.passes} / ${result.max}`,
-        `branch:  ${result.branch}`,
-        `commit:  ${result.commit || "none"}`,
-        ...(isIsolatedWorktree(result) ? [`worktree: ${result.worktree}`] : []),
-        `report:  ${resultPath(result, result.report)}`,
-        `track:   ${resultPath(result, result.track)}`,
+        resultLine("result", result.status),
+        resultLine("passes", `${result.passes} / ${result.max}`),
+        resultLine("coder", result.coder),
+        resultLine("reviewer", result.reviewer),
+        resultLine("branch", result.branch),
+        resultLine("commit", result.commit || "none"),
+        ...(isIsolatedWorktree(result) ? [resultLine("worktree", result.worktree)] : []),
+        resultLine("report", resultPath(result, result.report)),
+        resultLine("track", resultPath(result, result.track)),
       ]
     : ["", "enter toggles logs, ↑/↓ moves"];
   return [LOGO, "", ...body, ...tail].join("\n");
+}
+
+function resultLine(label: string, value: string) {
+  return `${`${label}:`.padEnd(10)}${value}`;
 }
 
 function icon(status: Row["status"], spinnerFrame: number) {

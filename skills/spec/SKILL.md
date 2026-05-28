@@ -1,22 +1,56 @@
 ---
 name: spec
-description: Distill existing material into one devloop-compatible implementation spec. Use when the user provides notes, a file, a URL, research, or conversation context and wants a concrete spec that a coding agent can implement and another agent can review.
+description: Interview from a cold start or distill existing material into one devloop-compatible implementation spec. Use when the user wants a concrete spec for devloop, whether they provide notes, a file, a URL, research, conversation context, or only a rough idea.
 ---
 
 # Spec
 
-Distill the provided context into one implementation spec that conforms to the devloop standard. The user has already supplied the thinking in a document, notes, URL, issue, or conversation. Compress it faithfully, flag missing details, and do not invent behavior that is not present in the source material.
+Produce one implementation spec that conforms to the devloop standard. This skill has two modes:
 
-## Get The Context
+- Cold start: if the user has not provided enough source material, interview them one question at a time until the implementation target is clear.
+- Distill: if the user supplied notes, a file, a URL, research, an issue, or conversation context, compress that material faithfully and flag any remaining gaps.
+
+The output is the spec that `devloop` will use as its implementation input.
+
+## Scope Guard
+
+Write exactly one spec sized for one worktree and one PR. Push back before drafting when the request mixes multiple logical changes, depends on an unresolved preparatory refactor, or would plausibly exceed about 300 meaningful changed lines.
+
+When the scope is too large, name the overflow, propose the smallest useful slice, and ask the user to confirm the slice before writing.
+
+## Cold Start Interview
+
+Use this mode when there is no document, URL, issue, or concrete context to distill.
+
+- Ask one question at a time.
+- Ask why before what.
+- Skip obvious questions the repository or prior answers already settle.
+- Push vague answers toward observable behavior and acceptance criteria.
+- Name contradictions and ask which statement is true.
+- Stop only when the spec can be written without TODOs, TBDs, or invented requirements.
+
+Cover these points:
+
+1. The actual problem and when it hurts.
+2. The desired observable outcome.
+3. Happy path behavior.
+4. Edge cases and failure modes.
+5. Files, commands, APIs, UI surfaces, or workflows in scope.
+6. Explicitly out-of-scope work.
+7. Hard constraints, existing conventions, and test expectations.
+
+If the environment cannot ask interactive questions, write a draft with explicit `> **GAP:** ...` markers rather than inventing missing facts.
+
+## Distill Existing Material
 
 Resolve the input before drafting:
 
 - File path: read it.
-- URL: fetch it if your environment allows web access; otherwise keep the URL in Notes as a source to verify.
+- URL: fetch it if the environment allows web access; otherwise record the URL in Notes as a source to verify.
 - Pasted text: use it verbatim.
-- Empty request: use the current conversation if it clearly concerns one task; ask which task if the boundary is ambiguous.
+- Current conversation: use only the part clearly about this task; ask for the boundary if the conversation covers unrelated work.
 
-If a referenced path or URL cannot be loaded, stop and report that instead of guessing.
+Do not fill unsupported sections with plausible detail. Every line must trace to supplied context, repository evidence, or an explicit user answer.
 
 ## Standard
 
@@ -71,17 +105,18 @@ Edge cases:
 - `created` is today's date.
 - Infer `type`: `feat` for new capability, `fix` for broken behavior, and `chore` for maintenance, docs, tests, dependencies, or refactors.
 - The H1 is a concise title, not a sentence.
-- Use concrete paths, commands, APIs, and observable behavior when the context provides them.
+- Acceptance criteria must be singular, verifiable, and observable.
+- Include concrete paths, commands, APIs, and behaviors when the context provides them.
 
 ## Gaps
 
-Do not fill unsupported sections with plausible detail. If required information is missing, replace the placeholder with:
+When required information is still missing, replace that section's placeholder with:
 
 ```markdown
 > **GAP:** <what is missing and why it matters>
 ```
 
-Keep the section present, remove any leftover placeholder, and continue drafting. End with the count and names of remaining gaps so the user can decide whether to fill them.
+Keep every standard section present, remove leftover placeholders, and list the count and names of remaining gaps in Notes.
 
 ## Output
 

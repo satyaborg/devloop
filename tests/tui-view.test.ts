@@ -47,16 +47,19 @@ describe("tui view", () => {
       commitMessage: "",
       worktree: "/tmp/repo-change",
       sourceRepo: "/tmp/repo",
-      codexSessionId: "codex-session",
-      claudeSessionId: "claude-session",
+      coder: "codex",
+      reviewer: "claude",
+      coderSessionId: "codex-session",
+      reviewerSessionId: "claude-session",
     });
 
     expect(output).toContain("> !!     run tests - failed");
-    expect(output).toContain("result:  commit-error");
-    expect(output).toContain("commit:  none");
+    expect(output).toContain("result:   commit-error");
+    expect(output).toContain("reviewer: claude");
+    expect(output).toContain("commit:   none");
     expect(output).toContain("worktree: /tmp/repo-change");
-    expect(output).toContain("report:  /tmp/repo-change/.codex/reports/change.html");
-    expect(output).toContain("track:   /tmp/repo-change/.codex/tracks/change.md");
+    expect(output).toContain("report:   /tmp/repo-change/.codex/reports/change.html");
+    expect(output).toContain("track:    /tmp/repo-change/.codex/tracks/change.md");
   });
 
   test("suppresses worktree details for in-place results", () => {
@@ -71,12 +74,14 @@ describe("tui view", () => {
       commitMessage: "feat: change",
       worktree: "/tmp/repo",
       sourceRepo: "/tmp/repo",
-      codexSessionId: "codex-session",
-      claudeSessionId: "claude-session",
+      coder: "codex",
+      reviewer: "claude",
+      coderSessionId: "codex-session",
+      reviewerSessionId: "claude-session",
     });
 
     expect(output).not.toContain("worktree:");
-    expect(output).toContain("report:  .codex/reports/change.html");
-    expect(output).toContain("track:   .codex/tracks/change.md");
+    expect(output).toContain("report:   .codex/reports/change.html");
+    expect(output).toContain("track:    .codex/tracks/change.md");
   });
 });
