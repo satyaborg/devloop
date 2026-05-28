@@ -90,7 +90,8 @@ By default, `devloop`:
 - uses Codex as the coder and Claude Code as the reviewer
 - uses the TUI in a terminal and plain output elsewhere
 - writes an HTML report
-- requires the reviewer to pass every acceptance criterion
+- requires the reviewer to pass every acceptance criterion with implementation and test evidence
+- asks the reviewer to flag silent decisions, scope drift, and missing tests
 - creates an isolated sibling git worktree and runs agents there
 - creates a local branch and commit when the run is accepted
 - never pushes or opens a PR
