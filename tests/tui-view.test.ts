@@ -54,11 +54,12 @@ describe("tui view", () => {
     });
 
     expect(output).toContain("> !!     run tests - failed");
-    expect(output).toContain("result:  commit-error");
-    expect(output).toContain("commit:  none");
+    expect(output).toContain("result:   commit-error");
+    expect(output).toContain("reviewer: claude");
+    expect(output).toContain("commit:   none");
     expect(output).toContain("worktree: /tmp/repo-change");
-    expect(output).toContain("report:  /tmp/repo-change/.codex/reports/change.html");
-    expect(output).toContain("track:   /tmp/repo-change/.codex/tracks/change.md");
+    expect(output).toContain("report:   /tmp/repo-change/.codex/reports/change.html");
+    expect(output).toContain("track:    /tmp/repo-change/.codex/tracks/change.md");
   });
 
   test("suppresses worktree details for in-place results", () => {
@@ -80,7 +81,7 @@ describe("tui view", () => {
     });
 
     expect(output).not.toContain("worktree:");
-    expect(output).toContain("report:  .codex/reports/change.html");
-    expect(output).toContain("track:   .codex/tracks/change.md");
+    expect(output).toContain("report:   .codex/reports/change.html");
+    expect(output).toContain("track:    .codex/tracks/change.md");
   });
 });

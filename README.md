@@ -87,8 +87,8 @@ Each run writes files under `.codex/`:
 .codex/reports/<slug>.html
 .codex/reports/<slug>.md
 .codex/logs/
-.codex/sessions/<slug>-coder.id
-.codex/sessions/<slug>-reviewer.id
+.codex/sessions/<slug>-coder-<agent>.id
+.codex/sessions/<slug>-reviewer-<agent>.id
 .codex/specs/<slug>.md
 ```
 

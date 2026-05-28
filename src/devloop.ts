@@ -143,11 +143,11 @@ export function parseArgs(
       if (value !== "html" && value !== "markdown" && value !== "md")
         return usage();
       reportFormat = value === "md" ? "markdown" : value;
-    } else if (arg === "--coder" || arg === "--coder-model") {
+    } else if (arg === "--coder") {
       const value = parseAgent(argv[++i]);
       if (!value) return `coder must be codex or claude\n${usage()}`;
       coder = value;
-    } else if (arg === "--reviewer" || arg === "--reviewer-model") {
+    } else if (arg === "--reviewer") {
       const value = parseAgent(argv[++i]);
       if (!value) return `reviewer must be codex or claude\n${usage()}`;
       reviewer = value;
@@ -363,8 +363,8 @@ export async function runDevloop(
   ).trim();
   const track = `.codex/tracks/${slug}.md`;
   const report = `.codex/reports/${slug}.${options.reportFormat === "html" ? "html" : "md"}`;
-  const coderSession = `.codex/sessions/${slug}-coder.id`;
-  const reviewerSession = `.codex/sessions/${slug}-reviewer.id`;
+  const coderSession = `.codex/sessions/${slug}-coder-${options.coder}.id`;
+  const reviewerSession = `.codex/sessions/${slug}-reviewer-${options.reviewer}.id`;
   const runner = makeRunner(repo, sink);
   await initTrack(path.join(repo, track), {
     spec: runSpec,
@@ -561,7 +561,7 @@ export async function runDevloop(
     commit,
     commitMessage,
     coder: options.coder,
-    reviewerSession: path.join(repo, reviewerSession),
+    reviewerSessionFile: path.join(repo, reviewerSession),
     coderSessionId,
     reviewerSessionId,
     format: options.reportFormat,
@@ -1038,7 +1038,7 @@ async function synthesizeReport(
     commit: string;
     commitMessage: string;
     coder: Agent;
-    reviewerSession: string;
+    reviewerSessionFile: string;
     coderSessionId: string;
     reviewerSessionId: string;
     format: ReportFormat;
@@ -1073,7 +1073,7 @@ ${input.reviews}`;
     input.reviewer,
     runner,
     repo,
-    input.reviewerSession,
+    input.reviewerSessionFile,
     path.join(repo, `.codex/logs/${input.slug}-report.log`),
     `You are writing a learning-oriented post-mortem for a developer who just ran a devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
     "report",
@@ -1126,9 +1126,9 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function parseAgent(value: string | undefined): Agent | undefined {
-  const normalized = (value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "codex") return "codex";
-  if (normalized === "claude" || normalized === "claudecode") return "claude";
+  if (normalized === "claude") return "claude";
   return undefined;
 }
 

@@ -36,8 +36,9 @@ describe("parsing", () => {
       cwd: "/x",
     } satisfies Options);
     expect(parseArgs(["--in-place", "spec.md"], "/x")).toMatchObject({ worktree: false });
-    expect(parseArgs(["--coder", "claude-code", "--reviewer-model", "codex", "spec.md"], "/x")).toMatchObject({ coder: "claude", reviewer: "codex" });
+    expect(parseArgs(["--coder", "claude", "--reviewer", "codex", "spec.md"], "/x")).toMatchObject({ coder: "claude", reviewer: "codex" });
     expect(parseArgs(["--coder", "gpt", "spec.md"], "/x")).toContain("coder must be codex or claude");
+    expect(parseArgs(["--reviewer", "gpt", "spec.md"], "/x")).toContain("reviewer must be codex or claude");
     expect(parseArgs(["spec.md", "0"], "/x")).toMatchObject({ max: 1 });
     expect(parseArgs(["spec.md", "99"], "/x")).toMatchObject({ max: 10 });
     expect(parseArgs(["--wat"], "/x")).toContain("unknown option");
@@ -105,7 +106,7 @@ describe("loop", () => {
     await exists(path.join(worktree, ".codex/logs/change-naming.log"));
     expect(result.coder).toBe("codex");
     expect(result.reviewer).toBe("claude");
-    expect(await readFile(path.join(worktree, ".codex/sessions/change-coder.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
+    expect(await readFile(path.join(worktree, ".codex/sessions/change-coder-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- coder: codex");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- reviewer: claude");
