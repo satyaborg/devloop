@@ -54,18 +54,25 @@ function printResult(result: {
   max: number;
   report: string;
   track: string;
+  branch?: string;
+  commit?: string;
   worktree?: string;
   sourceRepo?: string;
+  coder?: string;
+  reviewer?: string;
 }) {
   console.log("");
-  console.log(`result:  ${result.status}`);
-  console.log(`passes:  ${result.passes} / ${result.max}`);
-  if ("branch" in result) console.log(`branch:  ${result.branch}`);
-  if ("commit" in result) console.log(`commit:  ${result.commit || "none"}`);
+  console.log(resultLine("result", result.status));
+  console.log(resultLine("passes", `${result.passes} / ${result.max}`));
+  if (result.coder) console.log(resultLine("coder", result.coder));
+  if (result.reviewer) console.log(resultLine("reviewer", result.reviewer));
+  if (result.branch) console.log(resultLine("branch", result.branch));
+  if (result.commit !== undefined)
+    console.log(resultLine("commit", result.commit || "none"));
   if (hasWorktreeInfo(result) && isIsolatedWorktree(result))
-    console.log(`worktree: ${result.worktree}`);
-  console.log(`report:  ${displayPath(result, result.report)}`);
-  console.log(`track:   ${displayPath(result, result.track)}`);
+    console.log(resultLine("worktree", result.worktree));
+  console.log(resultLine("report", displayPath(result, result.report)));
+  console.log(resultLine("track", displayPath(result, result.track)));
 }
 
 function hasWorktreeInfo(result: {
@@ -80,4 +87,8 @@ function displayPath(
   file: string,
 ) {
   return hasWorktreeInfo(result) ? resultPath(result, file) : file;
+}
+
+function resultLine(label: string, value: string) {
+  return `${`${label}:`.padEnd(10)}${value}`;
 }

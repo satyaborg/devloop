@@ -6,6 +6,7 @@ import { parseArgs, parseCriteria, parseVerdict, reportFraming, runDevloop, welc
 
 const root = await mkdtemp(path.join(tmpdir(), "devloop-test."));
 let oldPath = process.env.PATH ?? "";
+const defaultAgents = { coder: "codex", reviewer: "claude" } as const;
 
 afterAll(async () => rm(root, { recursive: true, force: true }));
 beforeEach(() => {
@@ -30,9 +31,14 @@ describe("parsing", () => {
       reportFormat: "markdown",
       strict: false,
       worktree: true,
+      coder: "codex",
+      reviewer: "claude",
       cwd: "/x",
     } satisfies Options);
     expect(parseArgs(["--in-place", "spec.md"], "/x")).toMatchObject({ worktree: false });
+    expect(parseArgs(["--coder", "claude", "--reviewer", "codex", "spec.md"], "/x")).toMatchObject({ coder: "claude", reviewer: "codex" });
+    expect(parseArgs(["--coder", "gpt", "spec.md"], "/x")).toContain("coder must be codex or claude");
+    expect(parseArgs(["--reviewer", "gpt", "spec.md"], "/x")).toContain("reviewer must be codex or claude");
     expect(parseArgs(["spec.md", "0"], "/x")).toMatchObject({ max: 1 });
     expect(parseArgs(["spec.md", "99"], "/x")).toMatchObject({ max: 10 });
     expect(parseArgs(["--wat"], "/x")).toContain("unknown option");
@@ -98,8 +104,12 @@ describe("loop", () => {
     await exists(path.join(worktree, ".codex/reviews/change-r1.md"));
     await exists(path.join(worktree, ".codex/reports/change.html"));
     await exists(path.join(worktree, ".codex/logs/change-naming.log"));
-    expect(await readFile(path.join(worktree, ".codex/sessions/change-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
+    expect(result.coder).toBe("codex");
+    expect(result.reviewer).toBe("claude");
+    expect(await readFile(path.join(worktree, ".codex/sessions/change-coder-codex.id"), "utf8")).toContain("00000000-0000-4000-8000-000000000001");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- strict: true");
+    expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- coder: codex");
+    expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- reviewer: claude");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
     expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("- AC1: PASS");
     const codexArgs = await readFile(path.join(state, "codex-args.log"), "utf8");
@@ -111,7 +121,9 @@ describe("loop", () => {
     expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).toContain("feature.txt");
     expect(await Bun.$`git -C ${worktree} show --name-only --format= HEAD`.text()).not.toContain(".codex/");
     const reportPrompt = await readFile(path.join(state, "claude-prompts.log"), "utf8");
-    expect(reportPrompt).toContain("Codex session: 00000000-0000-4000-8000-000000000001");
+    expect(reportPrompt).toContain("Coder: Codex");
+    expect(reportPrompt).toContain("Reviewer: Claude Code");
+    expect(reportPrompt).toContain("Coder session: 00000000-0000-4000-8000-000000000001");
     expect(reportPrompt).toContain("Final branch: feat/change");
     expect(reportPrompt).toContain(`Worktree: ${worktree}`);
     expect(reportPrompt).toContain(`Local commit: ${result.commit}`);
@@ -125,7 +137,7 @@ describe("loop", () => {
     expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
-    expect(events).toContainEqual({ type: "log", id: "codex-1", line: "codex-tail" });
+    expect(events).toContainEqual({ type: "log", id: "coder-1", line: "codex-tail" });
   });
 
   test("rejects then accepts with resumed sessions", async () => {
@@ -138,6 +150,27 @@ describe("loop", () => {
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("Verdict: REJECT");
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r2.md"), "utf8")).toContain("Verdict: ACCEPT");
     expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
+  });
+
+  test("supports swapping coder and reviewer agents", async () => {
+    const { repo, state } = await fixture("swapped-agents");
+    process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
+    const { result, events } = await run(repo, { coder: "claude", reviewer: "codex" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.coder).toBe("claude");
+    expect(result.reviewer).toBe("codex");
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- coder: claude");
+    expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- reviewer: codex");
+    const claudePrompts = await readFile(path.join(state, "claude-prompts.log"), "utf8");
+    const codexPrompts = await readFile(path.join(state, "codex-prompts.log"), "utf8");
+    expect(claudePrompts).toContain("Work item naming task.");
+    expect(claudePrompts).toContain("You are implementing against an approved spec.");
+    expect(codexPrompts).toContain("You are reviewing a Claude Code implementation.");
+    expect(codexPrompts).toContain("Coder: Claude Code");
+    expect(codexPrompts).toContain("Reviewer: Codex");
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
+    expect(events).toContainEqual({ type: "log", id: "coder-1", line: "claude-tail" });
   });
 
   test("stalls on repeated reject findings", async () => {
@@ -241,13 +274,13 @@ describe("loop", () => {
     process.env.DEVLOOP_TEST_VERDICTS = "REJECT,ACCEPT";
 
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"change-with-spaces","breaking":false}';
-    const spaced = await runDevloop({ spec: work.specPath, max: 2, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
+    const spaced = await runDevloop({ spec: work.specPath, max: 2, reportFormat: "html", strict: true, worktree: true, cwd: work.repo, ...defaultAgents });
     expect(spaced.status).toBe("accepted");
     await exists(path.join(spaced.worktree, ".codex/reviews/change-with-spaces-r2.md"));
 
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"external-spec","breaking":false}';
-    const external = await runDevloop({ spec: specOnly.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: work.repo });
+    const external = await runDevloop({ spec: specOnly.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: work.repo, ...defaultAgents });
     expect(external.status).toBe("accepted");
     await exists(path.join(external.worktree, ".codex/tracks/external-spec.md"));
     expect(await exists(path.join(work.repo, ".codex"), false)).toBe(false);
@@ -270,7 +303,7 @@ describe("loop", () => {
     const { repo, specPath } = await fixture("dated-spec", spec, "2026-05-26-minimal-ai-sdk-chat-orchestration.md");
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"feat","slug":"minimal-ai-sdk-chat-orchestration","breaking":false}';
-    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents });
 
     expect(result.status).toBe("accepted");
     expect(result.branch).toBe("fix!/minimal-ai-sdk-chat-orchestration");
@@ -298,7 +331,7 @@ describe("loop", () => {
     const { repo, state, specPath } = await fixture("frontmatter-name", spec, "ignored-filename.md");
     process.env.DEVLOOP_TEST_FAIL_NAMING = "1";
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    const result = await runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents });
 
     expect(result.status).toBe("accepted");
     expect(result.branch).toBe("chore/readme-refresh");
@@ -310,7 +343,7 @@ describe("loop", () => {
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"fix","slug":"noisy-json","breaking":false}';
     process.env.DEVLOOP_TEST_NOISY_NAMING = "1";
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents });
 
     expect(result.status).toBe("accepted");
     expect(result.branch).toBe("fix/noisy-json");
@@ -321,12 +354,12 @@ describe("loop", () => {
     const fix = await fixture("fix-prefix", undefined, "fix-null-check.md");
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"fix","slug":"null-check","breaking":false}';
-    expect((await runDevloop({ spec: fix.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: fix.repo })).branch).toBe("fix/null-check");
+    expect((await runDevloop({ spec: fix.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: fix.repo, ...defaultAgents })).branch).toBe("fix/null-check");
 
     const chore = await fixture("chore-prefix", undefined, "docs-readme-refresh.md");
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
     process.env.DEVLOOP_TEST_WORK_ITEM = '{"type":"chore","slug":"readme-refresh","breaking":false}';
-    expect((await runDevloop({ spec: chore.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: chore.repo })).branch).toBe("chore/readme-refresh");
+    expect((await runDevloop({ spec: chore.specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: chore.repo, ...defaultAgents })).branch).toBe("chore/readme-refresh");
   });
 
   test("rejects invalid codex-derived work names", async () => {
@@ -350,13 +383,13 @@ describe("loop", () => {
     ].join("\n");
     const { repo, specPath } = await fixture("bad-breaking", spec);
 
-    await expect(runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo })).rejects.toThrow("frontmatter breaking must be true or false");
+    await expect(runDevloop({ spec: specPath, max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents })).rejects.toThrow("frontmatter breaking must be true or false");
   });
 
   test("requires acceptance criteria in strict mode", async () => {
     const { repo } = await fixture("no-criteria", "# Spec\n");
     await expect(run(repo)).rejects.toThrow("strict mode requires ## Acceptance criteria");
-    await expect(runDevloop({ spec: path.join(repo, ".specs/missing.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo })).rejects.toThrow("usage:");
+    await expect(runDevloop({ spec: path.join(repo, ".specs/missing.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents })).rejects.toThrow("usage:");
   });
 
   test("allows missing criteria only when strict is off", async () => {
@@ -381,12 +414,12 @@ describe("loop", () => {
   test("handles agent and review failures", async () => {
     const codex = await fixture("codex-fail");
     process.env.DEVLOOP_TEST_FAIL_CODEX = "1";
-    expect((await run(codex.repo)).result.status).toBe("codex-error");
+    expect((await run(codex.repo)).result.status).toBe("coder-error");
     delete process.env.DEVLOOP_TEST_FAIL_CODEX;
 
     const claude = await fixture("claude-fail");
     process.env.DEVLOOP_TEST_FAIL_CLAUDE = "1";
-    expect((await run(claude.repo)).result.status).toBe("claude-error");
+    expect((await run(claude.repo)).result.status).toBe("reviewer-error");
     delete process.env.DEVLOOP_TEST_FAIL_CLAUDE;
 
     const missing = await fixture("missing-review");
@@ -409,14 +442,14 @@ describe("loop", () => {
     await rm(path.join(missingClaude.repo, "../bin/claude"), { force: true });
     process.env.PATH = `${path.join(missingClaude.repo, "../bin")}:/usr/bin:/bin`;
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    expect((await run(missingClaude.repo)).result.status).toBe("claude-error");
+    expect((await run(missingClaude.repo)).result.status).toBe("reviewer-error");
   });
 
   test("falls back to main when no base branch exists", async () => {
     const { repo } = await fixture("no-base");
     await Bun.$`git -C ${repo} branch -m topic`.quiet();
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents });
     expect(result.status).toBe("accepted");
     expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- base: main");
   });
@@ -426,7 +459,7 @@ describe("loop", () => {
     await Bun.$`git -C ${repo} update-ref refs/remotes/origin/trunk HEAD`.quiet();
     await Bun.$`git -C ${repo} symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk`.quiet();
     process.env.DEVLOOP_TEST_VERDICTS = "ACCEPT";
-    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo });
+    const result = await runDevloop({ spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents });
 
     expect(result.status).toBe("accepted");
     expect(await readFile(path.join(result.worktree, ".codex/tracks/change.md"), "utf8")).toContain("- base: trunk");
@@ -475,6 +508,37 @@ if [[ "$prompt" == Work\\ item\\ naming\\ task.* ]]; then
   exit 0
 fi
 [[ -z "\${DEVLOOP_TEST_FAIL_CODEX:-}" ]] || exit 42
+if [[ "$prompt" == *"Output path:"* ]]; then
+  [[ -z "\${DEVLOOP_TEST_NO_REVIEW:-}" ]] || exit 0
+  review_file=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Output path: /{print $2; exit}')
+  count=$(( $(cat "$DEVLOOP_TEST_STATE/codex-review-count" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/codex-review-count"
+  IFS=',' read -r -a verdicts <<< "\${DEVLOOP_TEST_VERDICTS:-ACCEPT}"
+  verdict="\${verdicts[$(( count <= \${#verdicts[@]} ? count - 1 : \${#verdicts[@]} - 1 ))]}"
+  mkdir -p "$(dirname "$review_file")"
+  {
+    printf '# Review %s\\n\\n' "$count"
+    [[ -n "\${DEVLOOP_TEST_NO_VERDICT:-}" ]] || printf 'Verdict: %s\\n\\n' "$verdict"
+    if [[ -z "\${DEVLOOP_TEST_NO_MATRIX:-}" ]]; then
+      printf '## Acceptance matrix\\n\\n'
+      printf -- '- AC1: PASS - mock evidence\\n\\n'
+    fi
+    printf '## Findings\\n\\n'
+    if [[ "$verdict" == "ACCEPT" ]]; then printf 'None\\n\\n'; else printf '1. [must-fix] devloop.ts:1 - repeated fixture finding. Root cause: mock review. Principle: deterministic retry behavior.\\n\\n'; fi
+    printf '## Missing tests\\n\\n- None\\n\\n## Fix instructions\\n\\n'
+    if [[ "$verdict" == "ACCEPT" ]]; then printf 'None\\n\\n'; else printf '1. Fix the repeated fixture finding.\\n\\n'; fi
+    printf '## Notes\\n\\n- None\\n'
+  } > "$review_file"
+  printf 'To continue this session, run codex exec resume 00000000-0000-4000-8000-000000000001\\n'
+  exit 0
+fi
+report_file=$(printf '%s\\n' "$prompt" | sed -n 's/^Write the report to \\([^ ]*\\).*/\\1/p' | head -n 1)
+if [[ -n "$report_file" ]]; then
+  mkdir -p "$(dirname "$report_file")"
+  printf '# mock devloop report\\n' > "$report_file"
+  printf 'To continue this session, run codex exec resume 00000000-0000-4000-8000-000000000001\\n'
+  exit 0
+fi
 count=$(( $(cat "$DEVLOOP_TEST_STATE/codex-count" 2>/dev/null || echo 0) + 1 ))
 printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/codex-count"
 track=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Track: /{print $2; exit}')
@@ -495,6 +559,17 @@ prompt=$(cat)
 mkdir -p "$DEVLOOP_TEST_STATE"
 printf '%s\\n' "$*" >> "$DEVLOOP_TEST_STATE/claude-args.log"
 printf '%s\\n---\\n' "$prompt" >> "$DEVLOOP_TEST_STATE/claude-prompts.log"
+if [[ "$prompt" == Work\\ item\\ naming\\ task.* ]]; then
+  [[ -z "\${DEVLOOP_TEST_FAIL_NAMING:-}" ]] || exit 42
+  [[ -z "\${DEVLOOP_TEST_NOISY_NAMING:-}" ]] || printf 'trace {"ignore":true}\\n'
+  if [[ -n "\${DEVLOOP_TEST_WORK_ITEM:-}" ]]; then
+    printf '%s\\n' "$DEVLOOP_TEST_WORK_ITEM"
+  else
+    printf '%s\\n' '{"type":"feat","slug":"change","breaking":false}'
+  fi
+  [[ -z "\${DEVLOOP_TEST_NOISY_NAMING:-}" ]] || printf 'tail {not json}\\n'
+  exit 0
+fi
 if [[ "$prompt" == *"Output path:"* ]]; then
   [[ -z "\${DEVLOOP_TEST_NO_REVIEW:-}" ]] || exit 0
   review_file=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Output path: /{print $2; exit}')
@@ -504,7 +579,7 @@ if [[ "$prompt" == *"Output path:"* ]]; then
   verdict="\${verdicts[$(( count <= \${#verdicts[@]} ? count - 1 : \${#verdicts[@]} - 1 ))]}"
   mkdir -p "$(dirname "$review_file")"
   {
-    printf '# Claude review %s\\n\\n' "$count"
+    printf '# Review %s\\n\\n' "$count"
     [[ -n "\${DEVLOOP_TEST_NO_VERDICT:-}" ]] || printf 'Verdict: %s\\n\\n' "$verdict"
     if [[ -z "\${DEVLOOP_TEST_NO_MATRIX:-}" ]]; then
       printf '## Acceptance matrix\\n\\n'
@@ -518,7 +593,18 @@ if [[ "$prompt" == *"Output path:"* ]]; then
   } > "$review_file"
 else
   report_file=$(printf '%s\\n' "$prompt" | sed -n 's/^Write the report to \\([^ ]*\\).*/\\1/p' | head -n 1)
-  [[ -z "$report_file" ]] || { mkdir -p "$(dirname "$report_file")"; printf '# mock devloop report\\n' > "$report_file"; }
+  if [[ -n "$report_file" ]]; then
+    mkdir -p "$(dirname "$report_file")"
+    printf '# mock devloop report\\n' > "$report_file"
+  else
+    count=$(( $(cat "$DEVLOOP_TEST_STATE/claude-count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\\n' "$count" > "$DEVLOOP_TEST_STATE/claude-count"
+    track=$(printf '%s\\n' "$prompt" | awk -F': ' '/^Track: /{print $2; exit}')
+    [[ -z "$track" ]] || printf '\\n## Pass %s - mock claude\\n- verification: fixture\\n' "$count" >> "$track"
+    printf 'feature pass %s\\n' "$count" >> feature.txt
+    printf 'claude pass %s\\n' "$count"
+    printf 'claude-tail' >&2
+  fi
 fi
 `,
     { mode: 0o755 },
@@ -528,7 +614,7 @@ fi
 async function run(repo: string, overrides: Partial<Options> = {}) {
   const events: Event[] = [];
   const result = await runDevloop(
-    { spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...overrides },
+    { spec: path.join(repo, ".specs/change.md"), max: 1, reportFormat: "html", strict: true, worktree: true, cwd: repo, ...defaultAgents, ...overrides },
     { event: (event) => void events.push(event) },
   );
   return { result, events };
