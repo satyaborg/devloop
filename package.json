@@ -1,10 +1,10 @@
 {
   "name": "@satyaborg/devloop",
   "version": "0.1.0",
-  "description": "Codex and Claude Code implementation review loop CLI.",
+  "description": "Spec-driven code and review loop with Codex and Claude Code.",
   "license": "MIT",
   "author": {
-    "name": "Satya Borg",
+    "name": "@satyaborg",
     "url": "https://satyaborg.com"
   },
   "repository": {
