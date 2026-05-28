@@ -3,43 +3,29 @@
 [![license](https://img.shields.io/npm/l/@satyaborg/devloop.svg)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/@satyaborg/devloop.svg)](https://www.npmjs.com/package/@satyaborg/devloop)
 
-```text
-       __          __
-  ____/ /__ _   __/ /___  ____  ____
- / __  / _ \ | / / / __ \/ __ \/ __ \
-/ /_/ /  __/ |/ / / /_/ / /_/ / /_/ /
-\__,_/\___/|___/_/\____/\____/ .___/
-                            /_/
-```
+# Devloop
 
-`devloop` runs a configurable implementation and review loop. By default, Codex codes and Claude Code reviews.
+**Spec in. Reviewed code out.**
 
-The coder makes the change. The reviewer reviews it. If the reviewer rejects it, the coder gets the review and tries again. The loop stops when the work is accepted, stalls, becomes unclear, reaches the max turn count, or an agent fails.
+`devloop` runs a local implementation and review loop for agent-written code.
+
+By default, Codex makes the change, Claude Code reviews it, and Codex retries until the work is accepted, stalled, unclear, or out of passes.
 
 ## Install
 
-Prerequisites:
-
-- Bun 1.2 or newer
-- git
-- the local agent CLIs you configure
-- Codex and Claude Code for the default coder/reviewer pairing
-
-Install the public npm package globally:
+Prereqs: Bun 1.2+, git, and the agent CLIs you want to use. The default pairing requires `codex` and `claude`.
 
 ```sh
 npm install -g @satyaborg/devloop
 ```
 
-Run without a global install:
+Run without installing:
 
 ```sh
 bunx @satyaborg/devloop --help
 ```
 
-The npm package name is `@satyaborg/devloop`, and the binary remains `devloop`.
-
-For source checkout development:
+Install from source:
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
@@ -47,157 +33,73 @@ cd devloop
 bun scripts/install.ts
 ```
 
-This installs dependencies and links `devloop` into `~/.local/bin`. To use another bin directory:
+## Quick Start
+
+Create a spec:
 
 ```sh
-DEVLOOP_BIN_DIR=/path/to/bin bun scripts/install.ts
+devloop spec "add retry behavior to the chat sender"
 ```
 
-## Run
-
-Run `devloop` from the git repository you want it to change:
+Run the loop from the repo you want changed:
 
 ```sh
 devloop .specs/change.md
 ```
 
-Full form:
+Open a PR after an accepted run:
 
 ```sh
-devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] spec.md [max=5]
-```
-
-Common examples:
-
-```sh
-devloop .specs/change.md
-devloop --plain .specs/change.md
-devloop --tui .specs/change.md
-devloop --report-format markdown .specs/change.md 3
-devloop --coder claude --reviewer codex .specs/change.md
 devloop --create-pr .specs/change.md
 ```
 
-## Generate A Spec
+## Specs
 
-`devloop` bundles a reusable [`spec` skill](skills/spec/SKILL.md). The skill has two paths: it interviews from a cold start when the user only has a rough idea, or it distills notes, an issue, a file, URL, or pasted context into a devloop spec.
+A good spec is short, concrete, and verifiable. Start from [`templates/spec.md`](templates/spec.md), or generate one:
 
 ```sh
 devloop spec
-devloop spec "add retry behavior to the chat sender"
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
-devloop spec --agent my-agent ./research.md
 ```
 
-`--agent codex` is the default. `--agent claude` uses Claude's stdin mode. Any other `--agent` value is treated as a command that accepts the generated prompt on stdin and returns the markdown spec on stdout. With no context, the prompt tells the selected agent to use the bundled cold-start interview path before writing the final spec.
-
-For agent-native skill systems:
-
-```sh
-devloop spec --skill-path
-devloop spec --print-skill
-```
-
-## Write A Spec
-
-Start with [`templates/spec.md`](templates/spec.md). A good spec is short and concrete:
-
-- what is broken or missing
-- what the finished behavior should look like
-- what is in scope and out of scope
-- examples for happy paths and edge cases
-- acceptance criteria that can be verified
-- the tests or checks that should prove the change works
-
-Strict mode is on by default. In strict mode, the spec must include:
+Strict mode is on by default and requires:
 
 ```md
 ## Acceptance criteria
 1. ...
 ```
 
-## What Happens
-
-By default, `devloop`:
-
-- runs up to 5 passes, clamped between 1 and 10
-- uses Codex as the coder and Claude Code as the reviewer
-- uses the TUI in a terminal and plain output elsewhere
-- writes an HTML report
-- requires the reviewer to pass every acceptance criterion with implementation and test evidence
-- asks the reviewer to flag silent decisions, scope drift, and missing tests
-- creates isolated sibling git worktrees by default and runs agents there
-- creates one conventional commit after each coder pass, before review
-- never pushes or opens a PR
-
-Use `--plain` for CI. Use `--tui` to force the TUI. Use `--coder` and `--reviewer` to choose `codex` or `claude` for either role. Use `--in-place` to opt out of the isolated worktree and run in the current checkout. Use `--create-pr` or `--pr` to push an accepted branch to `origin` and open a GitHub pull request with `gh pr create --fill --base <base> --head <branch>`. If PR creation fails after the push succeeds, the report keeps the pushed branch name so you can open the PR manually. Use `--no-strict` only when you want weaker acceptance gates.
-
-## Output
-
-Each run writes files under `.codex/`:
-
-```text
-.codex/tracks/<slug>.md
-.codex/reviews/<slug>-r<N>.md
-.codex/reports/<slug>.html
-.codex/reports/<slug>.md
-.codex/logs/
-.codex/sessions/<slug>-coder-<agent>.id
-.codex/sessions/<slug>-reviewer-<agent>.id
-.codex/specs/<slug>.md
-```
-
-With the default isolated worktree, these files are written inside the generated sibling worktree named `<repo>-<slug>`. Agents and git commands run against that worktree explicitly. The original checkout is left on its current branch, and uncommitted files in that checkout are not included in the run. The spec is snapshotted into `.codex/specs/<slug>.md` inside the worktree. The final CLI/TUI output prints the worktree path and absolute report/track paths.
-
-Before creating the worktree, `devloop` asks the configured coder to read the spec and repository and return the semantic work item identity. That identity supplies `<slug>`, branch type, and breaking-change status. Explicit spec frontmatter wins when set:
-
-```yaml
-type: fix
-slug: chat-retry
-breaking: true
-```
-
-When `type`, `slug`, and `breaking` are all set, `devloop` skips the naming call.
-
-Before the first review, `devloop` creates or reuses a branch like:
-
-```text
-feat/<slug>
-fix/<slug>
-chore/<slug>
-```
-
-Breaking changes use `!`, for example `feat!/<slug>`.
-
-After each coder pass, `devloop` commits the current eligible diff before handing the work to the reviewer. It commits only files that were clean when the run started and excludes `.codex/`. Commit messages use:
-
-```text
-feat: <slug>
-feat!: <slug>
-fix: <slug>
-```
-
-devloop intentionally keeps generated worktrees and branches for inspection after both successful and failed runs. To remove one when you are done:
+## Common Options
 
 ```sh
-git -C <source-repo> worktree remove <worktree-path>
-git -C <source-repo> branch -D feat/<slug>
-git -C <source-repo> branch -D 'feat!/<slug>'
+devloop [options] <spec.md> [max=5]
 ```
 
-If `worktree remove` reports local modifications, inspect the worktree first or rerun the command with `--force` to discard them.
+| Option | Meaning |
+| --- | --- |
+| `--plain` | Force plain output, useful for CI |
+| `--tui` | Force the terminal UI |
+| `--coder <agent>` | Choose `codex` or `claude` for implementation |
+| `--reviewer <agent>` | Choose `codex` or `claude` for review |
+| `--report-format <format>` | Choose `html` or `markdown` |
+| `--in-place` | Run in the current worktree |
+| `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
+| `--no-strict` | Weaken acceptance gates |
 
-## Security Model
+## What Devloop Does
 
-devloop runs local agent CLIs with broad permissions because the configured coder and reviewer need to inspect and change a checkout. By default it creates isolated sibling git worktrees before running those agents, but the agents still execute on your machine with your local credentials and PATH.
+- Runs up to 5 passes by default, clamped between 1 and 10.
+- Uses isolated sibling git worktrees by default.
+- Commits eligible changes after each coder pass.
+- Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.codex/`.
+- Leaves generated worktrees and branches in place for inspection.
+- Never pushes or opens a PR unless you pass `--create-pr`.
 
-devloop writes `.codex/` artifacts for specs, tracks, reviews, reports, logs, and session ids. devloop does not add telemetry, phone home, or send data anywhere itself. Network access depends on the agent CLIs and commands you configure.
+## Security
 
-CI currently verifies the package on Ubuntu. The maintainer development environment is macOS with Bun; other platforms may work but are not release-gated yet.
+`devloop` runs local agent CLIs against your checkout, so those agents inherit your local credentials, PATH, and machine access. `devloop` itself adds no telemetry and does not send data anywhere; network behavior depends on the agents and commands you configure.
 
 ## Development
-
-Prereqs: `bun`, `git`, and the agents you configure. The defaults require `codex` and `claude`.
 
 ```sh
 bun scripts/install.ts
