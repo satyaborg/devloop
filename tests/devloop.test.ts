@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs, parseCriteria, parseVerdict, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
+import { parseArgs, parseCriteria, parseVerdict, reportFraming, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
 
 const root = await mkdtemp(path.join(tmpdir(), "devloop-test."));
 let oldPath = process.env.PATH ?? "";
@@ -45,6 +45,30 @@ describe("parsing", () => {
     expect(parseCriteria("# Spec")).toEqual([]);
     expect(parseVerdict("Verdict: ACCEPT\n")).toBe("ACCEPT");
     expect(parseVerdict("No verdict here\n")).toBe("");
+  });
+
+  test("derives report framing from the spec", () => {
+    expect(
+      reportFraming(
+        "# Add chat retries\n\n## Problem\nUsers lose messages when the transport flakes.\n\n## Outcome\nFailed sends retry without duplicating messages.\n",
+        "chat-retries",
+      ),
+    ).toEqual({
+      title: "Add chat retries",
+      subtitle: "Failed sends retry without duplicating messages.",
+    });
+    expect(reportFraming("# Config fallback\n\n## Problem\n- Missing config crashes startup.\n", "config-fallback")).toEqual({
+      title: "Config fallback",
+      subtitle: "Missing config crashes startup.",
+    });
+    expect(reportFraming("# <Concise title>\n\n## Acceptance criteria\n1. First useful criterion.\n", "fallback-slug")).toEqual({
+      title: "Fallback Slug",
+      subtitle: "First useful criterion.",
+    });
+    expect(reportFraming("# <Concise title>\n\n## Outcome\n<The observable end state>\n", "fallback-slug")).toEqual({
+      title: "Fallback Slug",
+      subtitle: "Outcome, review findings, and residual risk for Fallback Slug.",
+    });
   });
 
   test("renders a useful default screen", () => {
@@ -92,6 +116,9 @@ describe("loop", () => {
     expect(reportPrompt).toContain(`Worktree: ${worktree}`);
     expect(reportPrompt).toContain(`Local commit: ${result.commit}`);
     expect(reportPrompt).toContain("Commit message: feat: change");
+    expect(reportPrompt).toContain("Title: Fixture spec");
+    expect(reportPrompt).toContain("Subtitle: The loop runs deterministically under test.");
+    expect(reportPrompt).toContain("The subtitle must be specific to this work");
     expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
