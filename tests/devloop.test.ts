@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs, parseCriteria, parseVerdict, reportFraming, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
+import { hasPassingMatrix, parseArgs, parseCriteria, parseVerdict, reportFraming, runDevloop, welcome, type Event, type Options } from "../src/devloop.ts";
 
 const root = await mkdtemp(path.join(tmpdir(), "devloop-test."));
 let oldPath = process.env.PATH ?? "";
@@ -51,6 +51,9 @@ describe("parsing", () => {
     expect(parseCriteria("# Spec")).toEqual([]);
     expect(parseVerdict("Verdict: ACCEPT\n")).toBe("ACCEPT");
     expect(parseVerdict("No verdict here\n")).toBe("");
+    const review = "## Acceptance matrix\n\n| Criterion | Status | Implementation evidence | Test evidence |\n| --- | --- | --- | --- |\n| AC1 | PASS | code path | bun test |\n| AC2 | PASS | behavior | typecheck |\n";
+    expect(hasPassingMatrix(review, 2)).toBe(true);
+    expect(hasPassingMatrix(review.replace("| AC2 | PASS |", "| AC2 | FAIL |"), 2)).toBe(false);
   });
 
   test("derives report framing from the spec", () => {
@@ -111,7 +114,7 @@ describe("loop", () => {
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- coder: codex");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain("- reviewer: claude");
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
-    expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("- AC1: PASS");
+    expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("| AC1 | PASS | mock evidence | mock test |");
     const codexArgs = await readFile(path.join(state, "codex-args.log"), "utf8");
     expect(codexArgs.split(/\r?\n/, 1)[0]).toBe(`exec -s read-only -C ${repo} -`);
     expect(codexArgs).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
@@ -134,6 +137,13 @@ describe("loop", () => {
     expect(reportPrompt).toContain("Haiku topic: Fixture spec - The loop runs deterministically under test.");
     expect(reportPrompt).toContain("rendered immediately after the subtitle before Metadata");
     expect(reportPrompt).toContain("The subtitle must be specific to this work");
+    expect(reportPrompt).toContain("| Criterion | Status | Implementation evidence | Test evidence |");
+    expect(reportPrompt).toContain("## Review flags");
+    expect(reportPrompt).toContain("Silent decision:");
+    expect(reportPrompt).toContain("Scope drift:");
+    expect(reportPrompt).toContain("Missing test:");
+    expect(reportPrompt).toContain("Flag scope drift when the diff changes behavior");
+    expect(reportPrompt).toContain("Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT");
     expect(events).toContainEqual({ type: "done", id: "naming", ok: true, detail: "feat/change" });
     expect(events).toContainEqual({ type: "done", id: "worktree", ok: true, detail: worktree });
     expect(events.some((event) => event.type === "gate" && event.name === "acceptance criteria" && event.ok)).toBe(true);
@@ -521,8 +531,11 @@ if [[ "$prompt" == *"Output path:"* ]]; then
     [[ -n "\${DEVLOOP_TEST_NO_VERDICT:-}" ]] || printf 'Verdict: %s\\n\\n' "$verdict"
     if [[ -z "\${DEVLOOP_TEST_NO_MATRIX:-}" ]]; then
       printf '## Acceptance matrix\\n\\n'
-      printf -- '- AC1: PASS - mock evidence\\n\\n'
+      printf '| Criterion | Status | Implementation evidence | Test evidence |\\n'
+      printf '| --- | --- | --- | --- |\\n'
+      printf '| AC1 | PASS | mock evidence | mock test |\\n\\n'
     fi
+    printf '## Review flags\\n\\n- Silent decision: absent - None\\n- Scope drift: absent - None\\n- Missing test: absent - None\\n\\n'
     printf '## Findings\\n\\n'
     if [[ "$verdict" == "ACCEPT" ]]; then printf 'None\\n\\n'; else printf '1. [must-fix] devloop.ts:1 - repeated fixture finding. Root cause: mock review. Principle: deterministic retry behavior.\\n\\n'; fi
     printf '## Missing tests\\n\\n- None\\n\\n## Fix instructions\\n\\n'
@@ -583,8 +596,11 @@ if [[ "$prompt" == *"Output path:"* ]]; then
     [[ -n "\${DEVLOOP_TEST_NO_VERDICT:-}" ]] || printf 'Verdict: %s\\n\\n' "$verdict"
     if [[ -z "\${DEVLOOP_TEST_NO_MATRIX:-}" ]]; then
       printf '## Acceptance matrix\\n\\n'
-      printf -- '- AC1: PASS - mock evidence\\n\\n'
+      printf '| Criterion | Status | Implementation evidence | Test evidence |\\n'
+      printf '| --- | --- | --- | --- |\\n'
+      printf '| AC1 | PASS | mock evidence | mock test |\\n\\n'
     fi
+    printf '## Review flags\\n\\n- Silent decision: absent - None\\n- Scope drift: absent - None\\n- Missing test: absent - None\\n\\n'
     printf '## Findings\\n\\n'
     if [[ "$verdict" == "ACCEPT" ]]; then printf 'None\\n\\n'; else printf '1. [must-fix] devloop.ts:1 - repeated fixture finding. Root cause: mock review. Principle: deterministic retry behavior.\\n\\n'; fi
     printf '## Missing tests\\n\\n- None\\n\\n## Fix instructions\\n\\n'
