@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { CLAUDE_EFFORT_ARGS, CODEX_REASONING_ARGS } from "./agent-options.ts";
 
 export type ReportFormat = "html" | "markdown";
 export type Agent = "codex" | "claude";
@@ -992,14 +993,20 @@ async function runAgentOnce(
   return agent === "codex"
     ? runner(
         "codex",
-        ["exec", "-s", "read-only", "-C", repo, "-"],
+        ["exec", ...CODEX_REASONING_ARGS, "-s", "read-only", "-C", repo, "-"],
         prompt,
         log,
         id,
       )
     : runner(
         "claude",
-        ["-p", "--dangerously-skip-permissions", "--add-dir", repo],
+        [
+          "-p",
+          ...CLAUDE_EFFORT_ARGS,
+          "--dangerously-skip-permissions",
+          "--add-dir",
+          repo,
+        ],
         prompt,
         log,
         id,
@@ -1019,11 +1026,19 @@ async function runCodex(
     ? [
         "exec",
         "resume",
+        ...CODEX_REASONING_ARGS,
         "--dangerously-bypass-approvals-and-sandbox",
         session,
         "-",
       ]
-    : ["exec", "--dangerously-bypass-approvals-and-sandbox", "-C", repo, "-"];
+    : [
+        "exec",
+        ...CODEX_REASONING_ARGS,
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-C",
+        repo,
+        "-",
+      ];
   const result = await runner("codex", args, prompt, log, id);
   if (result.code !== 0) return false;
   if (!session) {
@@ -1049,6 +1064,7 @@ async function runClaude(
         "-p",
         "--resume",
         session,
+        ...CLAUDE_EFFORT_ARGS,
         "--dangerously-skip-permissions",
         "--add-dir",
         repo,
@@ -1057,6 +1073,7 @@ async function runClaude(
         "-p",
         "--session-id",
         next,
+        ...CLAUDE_EFFORT_ARGS,
         "--dangerously-skip-permissions",
         "--add-dir",
         repo,

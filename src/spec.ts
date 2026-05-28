@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLAUDE_EFFORT_ARGS, CODEX_REASONING_ARGS } from "./agent-options.ts";
 
 export type GenerateSpecOptions = {
   agent: string;
@@ -138,8 +139,16 @@ export async function generateSpec(
 }
 
 export function agentInvocation(agent: string, cwd: string) {
-  if (agent === "codex") return { cmd: "codex", args: ["exec", "-s", "read-only", "-C", cwd, "-"] };
-  if (agent === "claude") return { cmd: "claude", args: ["-p", "--add-dir", cwd] };
+  if (agent === "codex")
+    return {
+      cmd: "codex",
+      args: ["exec", ...CODEX_REASONING_ARGS, "-s", "read-only", "-C", cwd, "-"],
+    };
+  if (agent === "claude")
+    return {
+      cmd: "claude",
+      args: ["-p", ...CLAUDE_EFFORT_ARGS, "--add-dir", cwd],
+    };
   return { cmd: agent, args: [] };
 }
 

@@ -125,8 +125,10 @@ describe("loop", () => {
     expect(await readFile(path.join(worktree, ".codex/tracks/change.md"), "utf8")).toContain(`- source-repo: ${repo}`);
     expect(await readFile(path.join(worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("| AC1 | PASS | mock evidence | mock test |");
     const codexArgs = await readFile(path.join(state, "codex-args.log"), "utf8");
-    expect(codexArgs.split(/\r?\n/, 1)[0]).toBe(`exec -s read-only -C ${repo} -`);
-    expect(codexArgs).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
+    expect(codexArgs.split(/\r?\n/, 1)[0]).toBe(`exec -c model_reasoning_effort="xhigh" -s read-only -C ${repo} -`);
+    expect(codexArgs).toContain(`exec -c model_reasoning_effort="xhigh" --dangerously-bypass-approvals-and-sandbox -C ${worktree} -`);
+    const claudeArgs = await readFile(path.join(state, "claude-args.log"), "utf8");
+    expect(claudeArgs).toContain(`--effort max --dangerously-skip-permissions --add-dir ${worktree}`);
     expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("main");
     expect((await Bun.$`git -C ${worktree} branch --show-current`.text()).trim()).toBe("feat/change");
     expect((await Bun.$`git -C ${worktree} log -1 --format=%s`.text()).trim()).toBe("feat: change");
@@ -173,7 +175,7 @@ describe("loop", () => {
     expect(result.commits.map((item) => item.message)).toEqual(["feat: change", "fix: change"]);
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r1.md"), "utf8")).toContain("Verdict: REJECT");
     expect(await readFile(path.join(result.worktree, ".codex/reviews/change-r2.md"), "utf8")).toContain("Verdict: ACCEPT");
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume -c model_reasoning_effort=\"xhigh\" --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
   });
 
   test("supports swapping coder and reviewer agents", async () => {
@@ -193,7 +195,7 @@ describe("loop", () => {
     expect(codexPrompts).toContain("You are reviewing a Claude Code implementation.");
     expect(codexPrompts).toContain("Coder: Claude Code");
     expect(codexPrompts).toContain("Reviewer: Codex");
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain("exec resume -c model_reasoning_effort=\"xhigh\" --dangerously-bypass-approvals-and-sandbox 00000000-0000-4000-8000-000000000001 -");
     expect(events).toContainEqual({ type: "log", id: "coder-1", line: "claude-tail" });
   });
 
@@ -249,7 +251,7 @@ describe("loop", () => {
     expect(result.status).toBe("accepted");
     expect(result.worktree).toBe(repo);
     expect(result.sourceRepo).toBe(repo);
-    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec --dangerously-bypass-approvals-and-sandbox -C ${repo} -`);
+    expect(await readFile(path.join(state, "codex-args.log"), "utf8")).toContain(`exec -c model_reasoning_effort="xhigh" --dangerously-bypass-approvals-and-sandbox -C ${repo} -`);
     expect((await Bun.$`git -C ${repo} branch --show-current`.text()).trim()).toBe("feat/change");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).toContain("feature.txt");
     expect(await Bun.$`git -C ${repo} show --name-only --format= HEAD`.text()).not.toContain("dirty.txt");
