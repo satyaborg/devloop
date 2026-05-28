@@ -14,9 +14,9 @@ describe("npm package readiness", () => {
 
     expect(pkg.name).toBe("@satyaborg/devloop");
     expect(pkg.bin).toEqual({ devloop: "./src/cli.ts" });
-    expect(pkg.description).toBe("Codex and Claude Code implementation review loop CLI.");
+    expect(pkg.description).toBe("Spec-driven code and review loop with Codex and Claude Code.");
     expect(pkg.license).toBe("MIT");
-    expect(pkg.author).toEqual({ name: "Satya Borg", url: "https://satyaborg.com" });
+    expect(pkg.author).toEqual({ name: "@satyaborg", url: "https://satyaborg.com" });
     expect(pkg.repository).toEqual({ type: "git", url: "git+https://github.com/satyaborg/devloop.git" });
     expect(pkg.bugs).toEqual({ url: "https://github.com/satyaborg/devloop/issues" });
     expect(pkg.homepage).toBe("https://github.com/satyaborg/devloop#readme");
@@ -78,14 +78,14 @@ describe("release readiness documentation", () => {
     expect(readme).toContain("[![npm downloads](https://img.shields.io/npm/dm/@satyaborg/devloop.svg)]");
     expect(readme).toContain("npm install -g @satyaborg/devloop");
     expect(readme).toContain("bunx @satyaborg/devloop");
-    expect(readme).toContain("the binary remains `devloop`");
-    expect(readme).toContain("Prerequisites");
+    expect(readme).toContain("`devloop` runs a local implementation and review loop");
+    expect(readme).toContain("Prereqs:");
     expect(readme).toContain("Bun");
     expect(readme).toContain("bun scripts/install.ts");
-    expect(readme).toContain("runs local agent CLIs with broad permissions");
-    expect(readme).toContain("creates isolated sibling git worktrees by default");
-    expect(readme).toContain("writes `.codex/` artifacts");
-    expect(readme).toContain("does not add telemetry");
+    expect(readme).toContain("runs local agent CLIs against your checkout");
+    expect(readme).toContain("Uses isolated sibling git worktrees by default");
+    expect(readme).toContain("Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.codex/`");
+    expect(readme).toContain("adds no telemetry");
   });
 
   test("documents release automation and first publish setup", async () => {
