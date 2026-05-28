@@ -45,6 +45,8 @@ describe("tui view", () => {
       branch: "feat/change",
       commit: "",
       commitMessage: "",
+      commits: [],
+      pullRequest: "https://github.com/example/repo/pull/42",
       worktree: "/tmp/repo-change",
       sourceRepo: "/tmp/repo",
       coder: "codex",
@@ -57,6 +59,7 @@ describe("tui view", () => {
     expect(output).toContain("result:   commit-error");
     expect(output).toContain("reviewer: claude");
     expect(output).toContain("commit:   none");
+    expect(output).toContain("pr:       https://github.com/example/repo/pull/42");
     expect(output).toContain("worktree: /tmp/repo-change");
     expect(output).toContain("report:   /tmp/repo-change/.codex/reports/change.html");
     expect(output).toContain("track:    /tmp/repo-change/.codex/tracks/change.md");
@@ -72,6 +75,7 @@ describe("tui view", () => {
       branch: "feat/change",
       commit: "abc123",
       commitMessage: "feat: change",
+      commits: [{ pass: 1, commit: "abc123", message: "feat: change", paths: ["feature.txt"] }],
       worktree: "/tmp/repo",
       sourceRepo: "/tmp/repo",
       coder: "codex",
