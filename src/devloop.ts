@@ -192,6 +192,18 @@ export function hasPassingMatrix(review: string, count: number) {
   ).every((r) => r.test(review));
 }
 
+export function reportFraming(specText: string, slug: string) {
+  const title = reportTitle(specText) ?? titleFromSlug(slug);
+  return {
+    title,
+    subtitle:
+      sectionLead(specText, "Outcome") ??
+      sectionLead(specText, "Problem") ??
+      sectionLead(specText, "Acceptance criteria") ??
+      `Outcome, review findings, and residual risk for ${title}.`,
+  };
+}
+
 export function findingsHash(review: string) {
   const body =
     review.match(/^## Findings\s*\n([\s\S]*?)(?:\n##\s+|$)/m)?.[1] ?? "";
@@ -505,6 +517,7 @@ export async function runDevloop(
   await synthesizeReport(runner, repo, {
     slug,
     spec: runSpec,
+    specText,
     sourceSpec: spec,
     sourceRepo,
     worktree: repo,
@@ -937,6 +950,7 @@ async function synthesizeReport(
   input: {
     slug: string;
     spec: string;
+    specText: string;
     sourceSpec: string;
     sourceRepo: string;
     worktree: string;
@@ -956,6 +970,7 @@ async function synthesizeReport(
     reviews: string;
   },
 ) {
+  const framing = reportFraming(input.specText, input.slug);
   const metadata = `Result: ${input.status}
 Passes: ${input.pass} / ${input.max}
 Repository: ${repo}
@@ -975,8 +990,8 @@ Reviews:
 ${input.reviews}`;
   const body =
     input.format === "html"
-      ? `Write the report to ${input.report} as valid standalone HTML. Use a readable document layout with embedded CSS, a compact metadata table at the top, and substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`
-      : `Write the report to ${input.report} in markdown with these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`;
+      ? `Write the report to ${input.report} as valid standalone HTML. Use a readable document layout with embedded CSS, set the HTML <title> to the report title, render the report title and subtitle before Metadata, render a topical three-line haiku immediately after the subtitle, use a compact metadata table, and add substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`
+      : `Write the report to ${input.report} in markdown. Start with the report title as the H1, put the subtitle directly below it, put a topical three-line haiku immediately after the subtitle, then include these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run.`;
   const sessionFile = path.join(
     repo,
     `.codex/sessions/${input.slug}-claude.id`,
@@ -1002,11 +1017,52 @@ ${input.reviews}`;
           "--add-dir",
           repo,
         ],
-    `You are writing a learning-oriented post-mortem for a developer who just ran a Codex/Claude devloop.\n\nMetadata to render at the top exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
+    `You are writing a learning-oriented post-mortem for a developer who just ran a Codex/Claude devloop.\n\nReport framing to render visibly near the top, before Metadata:\nTitle: ${framing.title}\nSubtitle: ${framing.subtitle}\nHaiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.\nHaiku topic: ${framing.title} - ${framing.subtitle}\n\nUse that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.\n\nMetadata to render exactly and visibly:\n${metadata}\n\nInputs:\n- spec: ${input.spec}\n- track: ${input.track}\nReview files:\n${input.reviews}\n- final status: ${input.status}\n- passes used: ${input.pass} / ${input.max}\n- base: ${input.base}, starting branch: ${input.initialBranch}, final branch: ${input.branch}, local commit: ${input.commit || "none"}\n\n${body}\n\nStyle:\n- Human readable, not ornamental.\n- Preserve useful substance over brevity.\n- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.\n- No emoji.\n`,
     path.join(repo, `.codex/logs/${input.slug}-report.log`),
     "report",
   );
   if (!session) await writeLine(sessionFile, next);
+}
+
+function reportTitle(specText: string) {
+  for (const line of specText.split(/\r?\n/)) {
+    const match = line.match(/^#\s+(.+)$/);
+    const title = cleanReportText(match?.[1] ?? "");
+    if (title) return title;
+  }
+  return undefined;
+}
+
+function sectionLead(
+  specText: string,
+  heading: "Outcome" | "Problem" | "Acceptance criteria",
+) {
+  const lines = specText.split(/\r?\n/);
+  const headingPattern = new RegExp(`^##\\s+${heading}\\s*$`, "i");
+  const start = lines.findIndex((line) => headingPattern.test(line.trim()));
+  if (start < 0) return undefined;
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s+/.test(line)) return undefined;
+    const text = cleanReportText(line.replace(/^([-*]|\d+[.)])\s+/, ""));
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function cleanReportText(value: string) {
+  const text = value.trim().replace(/\s+/g, " ");
+  if (!text || text === "..." || /^<.*>$/.test(text)) return undefined;
+  return text;
+}
+
+function titleFromSlug(slug: string) {
+  return (
+    slug
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part[0]!.toUpperCase() + part.slice(1))
+      .join(" ") || "Devloop Report"
+  );
 }
 
 function clamp(value: number, min: number, max: number) {
