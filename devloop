@@ -20,6 +20,14 @@ source "$ROOT_DIR/skill_helpers.sh"
 
 USE_TUI=false
 if [ -t 1 ]; then USE_TUI=true; fi
+ENTER_WORKTREE=false
+if [ -t 0 ] && [ -t 1 ]; then ENTER_WORKTREE=true; fi
+
+UI_STEP_TITLE=""
+
+EVENT_IDS=()
+EVENT_TITLES=()
+EVENT_STARTS=()
 
 RUN_CODE=0
 RUN_STDOUT=""
@@ -42,6 +50,7 @@ CODER_SESSION_ID=""
 REVIEWER_SESSION_ID=""
 PULL_REQUEST=""
 PULL_REQUEST_ERROR=""
+RUN_START_PASS=1
 
 COMMIT_PASSES=()
 COMMIT_HASHES=()
@@ -52,6 +61,24 @@ main() {
   if [ "${1:-}" = "spec" ]; then
     shift
     spec_command "$@"
+    return $?
+  fi
+
+  if [ "${1:-}" = "menu" ]; then
+    shift
+    interactive_menu "$@"
+    return $?
+  fi
+
+  if [ "${1:-}" = "reports" ]; then
+    shift
+    reports_command "$@"
+    return $?
+  fi
+
+  if [ "${1:-}" = "continue" ]; then
+    shift
+    continue_command "$@"
     return $?
   fi
 
@@ -66,6 +93,10 @@ main() {
   fi
 
   if [ "$#" -eq 0 ] || has_arg "-h" "$@" || has_arg "--help" "$@"; then
+    if [ "$#" -eq 0 ] && [ "$USE_TUI" = true ]; then
+      interactive_menu
+      return $?
+    fi
     welcome
     return 0
   fi
@@ -89,6 +120,9 @@ Usage:
 
 Common commands:
   devloop doctor
+  devloop reports
+  devloop continue
+  devloop menu
   devloop spec "add retry behavior to the chat sender"
   devloop .specs/change.md
   devloop --tui .specs/change.md
@@ -106,12 +140,14 @@ Options:
   --no-strict                   weaken strict review gates
   --in-place                    run in the current worktree
   --create-pr, --pr             push accepted branch and open a PR
+  --no-shell, --stay            do not open a shell in the run worktree after completion
+  --shell, --enter-worktree     open a shell in the run worktree after completion
   -h, --help                    show this screen
 EOF
 }
 
 usage() {
-  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
 }
 
 spec_usage() {
@@ -132,6 +168,620 @@ has_arg() {
     if [ "$item" = "$needle" ]; then return 0; fi
   done
   return 1
+}
+
+ui_has_gum() {
+  [ "$USE_TUI" = true ] && command -v gum >/dev/null 2>&1
+}
+
+ui_has_fzf() {
+  [ "$USE_TUI" = true ] && command -v fzf >/dev/null 2>&1
+}
+
+ui_color() {
+  local color="$1"
+  local text="$2"
+  local code=""
+  case "$color" in
+    green) code="32" ;;
+    red) code="31" ;;
+    yellow) code="33" ;;
+    cyan) code="36" ;;
+    dim) code="2" ;;
+    bold) code="1" ;;
+  esac
+  if [ "$USE_TUI" = true ] && [ -n "$code" ] && [ -t 2 ]; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+ui_header() {
+  local title="$1"
+  local subtitle="${2:-}"
+  if ui_has_gum; then
+    gum style --border normal --padding "0 2" --margin "1 0 1 0" --foreground 212 "$title" >&2
+    if [ -n "$subtitle" ]; then
+      gum style --foreground 244 "$subtitle" >&2
+    fi
+  else
+    printf '\n%s\n' "$title" >&2
+    if [ -n "$subtitle" ]; then printf '%s\n' "$subtitle" >&2; fi
+  fi
+}
+
+ui_print_key_values() {
+  local label value max width pairs=("$@")
+  max=0
+  while [ "$#" -gt 0 ]; do
+    label="$1"
+    shift 2
+    if [ "${#label}" -gt "$max" ]; then max="${#label}"; fi
+  done
+  width=$((max + 2))
+  set -- "${pairs[@]}"
+  while [ "$#" -gt 0 ]; do
+    label="$1"
+    value="$2"
+    shift 2
+    printf "  %-*s%s\n" "$width" "$label" "$value" >&2
+  done
+}
+
+ui_choose() {
+  local header="$1"
+  shift
+  local choices=("$@")
+  local index answer
+  if ui_has_gum; then
+    gum choose --header "$header" "${choices[@]}"
+    return $?
+  fi
+  if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    printf '\n%s\n' "$header" >&2
+    index=1
+    for answer in "${choices[@]}"; do
+      printf '  %s. %s\n' "$index" "$answer" >&2
+      index=$((index + 1))
+    done
+    printf '> ' >&2
+    read -r answer || return 1
+    case "$answer" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "$answer" -lt 1 ] || [ "$answer" -gt "${#choices[@]}" ]; then return 1; fi
+    printf '%s\n' "${choices[$((answer - 1))]}"
+    return 0
+  fi
+  printf '%s\n' "${choices[0]}"
+}
+
+ui_confirm() {
+  local prompt="$1"
+  local answer
+  if ui_has_gum; then
+    gum confirm "$prompt"
+    return $?
+  fi
+  if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    printf '%s [y/N] ' "$prompt" >&2
+    read -r answer || return 1
+    case "$answer" in
+      y|Y|yes|YES) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+ui_input() {
+  local prompt="$1"
+  local default="${2:-}"
+  local answer
+  if ui_has_gum; then
+    gum input --placeholder "$prompt" --value "$default"
+    return $?
+  fi
+  if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    if [ -n "$default" ]; then
+      printf '%s [%s]: ' "$prompt" "$default" >&2
+    else
+      printf '%s: ' "$prompt" >&2
+    fi
+    read -r answer || return 1
+    if [ -z "$answer" ]; then answer="$default"; fi
+    printf '%s\n' "$answer"
+    return 0
+  fi
+  printf '%s\n' "$default"
+}
+
+ui_numbered_pick() {
+  local file="$1"
+  local header="$2"
+  local line answer count
+  printf '\n%s\n' "$header" >&2
+  count=0
+  while IFS= read -r line; do
+    count=$((count + 1))
+    printf '  %s. %s\n' "$count" "$line" >&2
+  done < "$file"
+  if [ "$count" -eq 0 ]; then return 1; fi
+  printf '> ' >&2
+  read -r answer || return 1
+  case "$answer" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ "$answer" -lt 1 ] || [ "$answer" -gt "$count" ]; then return 1; fi
+  sed -n "${answer}p" "$file"
+}
+
+ui_pick_from_file() {
+  local file="$1"
+  local header="$2"
+  if [ ! -s "$file" ]; then return 1; fi
+  if ui_has_fzf; then
+    fzf --height 70% --layout reverse --border --prompt "$header > " --preview 'sed -n "1,80p" {} 2>/dev/null' < "$file"
+    return $?
+  fi
+  if ui_has_gum; then
+    gum filter --placeholder "$header" < "$file"
+    return $?
+  fi
+  if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    ui_numbered_pick "$file" "$header"
+    return $?
+  fi
+  sed -n '1p' "$file"
+}
+
+ui_status_line() {
+  local status="$1"
+  local label="$2"
+  local detail="$3"
+  local badge color
+  case "$status" in
+    ok) badge="[ok]"; color="green" ;;
+    run) badge="[run]"; color="cyan" ;;
+    warn) badge="[warn]"; color="yellow" ;;
+    fail) badge="[fail]"; color="red" ;;
+    skip) badge="[skip]"; color="dim" ;;
+    *) badge="[$status]"; color="dim" ;;
+  esac
+  if [ "$USE_TUI" = true ]; then
+    printf '%s  %-28s %s\n' "$(ui_color "$color" "$badge")" "$label" "$detail" >&2
+  else
+    printf '[devloop] %s: %s\n' "$label" "$detail" >&2
+  fi
+}
+
+ui_spinner_wait() {
+  local pid="$1"
+  local done_file="$2"
+  local title="${3:-working}"
+  local frames='|/-\'
+  local index=0
+  local elapsed frame minutes seconds
+  if [ "$USE_TUI" != true ] || [ ! -t 2 ]; then
+    while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; done
+    return
+  fi
+  while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+    frame="${frames:$((index % 4)):1}"
+    elapsed="$SECONDS"
+    if [ "${UI_STEP_STARTED:-0}" -gt 0 ]; then elapsed=$((SECONDS - UI_STEP_STARTED)); fi
+    minutes=$((elapsed / 60))
+    seconds=$((elapsed % 60))
+    printf '\r\033[K%s %s %02d:%02d' "$(ui_color cyan "$frame")" "$title" "$minutes" "$seconds" >&2
+    sleep 0.2
+    index=$((index + 1))
+  done
+  printf '\r\033[K' >&2
+}
+
+event_store_start() {
+  local id="$1"
+  local title="$2"
+  local i
+  i=0
+  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
+    if [ "${EVENT_IDS[$i]}" = "$id" ]; then
+      EVENT_TITLES[$i]="$title"
+      EVENT_STARTS[$i]="$SECONDS"
+      return
+    fi
+    i=$((i + 1))
+  done
+  EVENT_IDS+=("$id")
+  EVENT_TITLES+=("$title")
+  EVENT_STARTS+=("$SECONDS")
+}
+
+event_title() {
+  local id="$1"
+  local i=0
+  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
+    if [ "${EVENT_IDS[$i]}" = "$id" ]; then
+      printf '%s\n' "${EVENT_TITLES[$i]}"
+      return
+    fi
+    i=$((i + 1))
+  done
+  printf '%s\n' "$id"
+}
+
+event_elapsed() {
+  local id="$1"
+  local i=0
+  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
+    if [ "${EVENT_IDS[$i]}" = "$id" ]; then
+      printf '%s\n' "$((SECONDS - EVENT_STARTS[$i]))"
+      return
+    fi
+    i=$((i + 1))
+  done
+  printf '%s\n' "0"
+}
+
+format_elapsed() {
+  local elapsed="$1"
+  printf '%02d:%02d\n' "$((elapsed / 60))" "$((elapsed % 60))"
+}
+
+run_header() {
+  local spec="$1"
+  local max="$2"
+  local report_format="$3"
+  local strict="$4"
+  local use_worktree="$5"
+  local coder="$6"
+  local reviewer="$7"
+  local create_pr="$8"
+  if [ "$USE_TUI" != true ]; then return; fi
+  ui_header "devloop" "$spec"
+  ui_print_key_values \
+    "mode" "$(if [ "$use_worktree" = true ]; then printf '%s' "isolated worktree"; else printf '%s' "current worktree"; fi)" \
+    "coder" "$(agent_label "$coder")" \
+    "reviewer" "$(agent_label "$reviewer")" \
+    "passes" "$max" \
+    "strict" "$strict" \
+    "report" "$report_format" \
+    "pr" "$create_pr"
+}
+
+interactive_menu() {
+  if [ "$#" -gt 0 ]; then
+    printf '%s\n' "usage: devloop menu" >&2
+    return 2
+  fi
+
+  local choice
+  while true; do
+    ui_header "devloop" "Spec-driven code and review loop"
+    choice="$(ui_choose "What do you want to do?" \
+      "Run a spec" \
+      "Create a spec" \
+      "Continue a run" \
+      "Open reports" \
+      "Doctor" \
+      "Quit")" || return 130
+    case "$choice" in
+      "Run a spec") interactive_run_spec; return $? ;;
+      "Create a spec") interactive_create_spec; return $? ;;
+      "Continue a run") continue_command; return $? ;;
+      "Open reports") reports_command; return $? ;;
+      "Doctor") devloop_doctor "$ROOT_DIR"; return $? ;;
+      "Quit") return 0 ;;
+    esac
+  done
+}
+
+interactive_run_spec() {
+  local spec
+  if ! spec="$(select_spec_file)"; then
+    printf '%s\n' "no specs found under .specs" >&2
+    if ui_confirm "Create a spec now?"; then
+      interactive_create_spec
+      return $?
+    fi
+    return 1
+  fi
+  interactive_run_setup "$spec"
+}
+
+interactive_create_spec() {
+  local agent context
+  agent="$(ui_choose "Spec agent" "codex" "claude")" || return 130
+  context="$(ui_input "Describe the change, or leave blank for interview mode" "")" || return 130
+  if [ -n "$context" ]; then
+    spec_command --agent "$agent" "$context"
+  else
+    spec_command --agent "$agent"
+  fi
+}
+
+interactive_run_setup() {
+  local spec="$1"
+  local report_format="html"
+  local strict=true
+  local use_worktree=true
+  local coder="codex"
+  local reviewer="claude"
+  local create_pr=false
+  local max="5"
+  local choice value code
+
+  while true; do
+    ui_header "Run setup" "$spec"
+    ui_print_key_values \
+      "mode" "$(if [ "$use_worktree" = true ]; then printf '%s' "isolated worktree"; else printf '%s' "current worktree"; fi)" \
+      "coder" "$(agent_label "$coder")" \
+      "reviewer" "$(agent_label "$reviewer")" \
+      "passes" "$max" \
+      "strict" "$strict" \
+      "report" "$report_format" \
+      "pr" "$create_pr"
+    choice="$(ui_choose "Change settings or start" \
+      "Start run" \
+      "Change coder" \
+      "Change reviewer" \
+      "Change pass limit" \
+      "Toggle strict mode" \
+      "Toggle worktree mode" \
+      "Toggle PR creation" \
+      "Change report format" \
+      "Cancel")" || return 130
+    case "$choice" in
+      "Start run")
+        if [ "$create_pr" = true ] && ! ui_confirm "Push the accepted branch and open a PR after acceptance?"; then
+          continue
+        fi
+        run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
+        run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
+        code=$?
+        maybe_enter_worktree
+        return "$code"
+        ;;
+      "Change coder")
+        value="$(ui_choose "Implementation agent" "codex" "claude")" || return 130
+        coder="$value"
+        ;;
+      "Change reviewer")
+        value="$(ui_choose "Review agent" "claude" "codex")" || return 130
+        reviewer="$value"
+        ;;
+      "Change pass limit")
+        value="$(ui_input "Pass limit, 1-10" "$max")" || return 130
+        if printf '%s\n' "$value" | grep -Eq '^[0-9]+$' && [ "$value" -ge 1 ] && [ "$value" -le 10 ]; then
+          max="$value"
+        else
+          printf '%s\n' "pass limit must be an integer between 1 and 10" >&2
+        fi
+        ;;
+      "Toggle strict mode")
+        if [ "$strict" = true ]; then strict=false; else strict=true; fi
+        ;;
+      "Toggle worktree mode")
+        if [ "$use_worktree" = true ]; then use_worktree=false; else use_worktree=true; fi
+        ;;
+      "Toggle PR creation")
+        if [ "$create_pr" = true ]; then create_pr=false; else create_pr=true; fi
+        ;;
+      "Change report format")
+        value="$(ui_choose "Report format" "html" "markdown")" || return 130
+        report_format="$value"
+        ;;
+      "Cancel") return 130 ;;
+    esac
+  done
+}
+
+select_spec_file() {
+  local list selected
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-specs.XXXXXX")"
+  if [ -d ".specs" ]; then
+    find ".specs" -type f -name '*.md' | LC_ALL=C sort > "$list"
+  fi
+  selected="$(ui_pick_from_file "$list" "Select spec")"
+  local code=$?
+  rm -f "$list"
+  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 1; fi
+  printf '%s\n' "$selected"
+}
+
+reports_command() {
+  if [ "$#" -gt 0 ]; then
+    printf '%s\n' "usage: devloop reports" >&2
+    return 2
+  fi
+  local list selected
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-reports.XXXXXX")"
+  list_artifact_files ".codex/reports" > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    printf '%s\n' "no reports found" >&2
+    return 1
+  fi
+  if [ "$USE_TUI" != true ] || [ ! -t 0 ]; then
+    cat "$list"
+    rm -f "$list"
+    return 0
+  fi
+  selected="$(ui_pick_from_file "$list" "Open report")"
+  local code=$?
+  rm -f "$list"
+  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 130; fi
+  view_file "$selected"
+}
+
+continue_command() {
+  if [ "$#" -gt 1 ]; then
+    printf '%s\n' "usage: devloop continue [track.md]" >&2
+    return 2
+  fi
+  local track list selected
+  if [ "$#" -eq 1 ]; then
+    track="$1"
+  else
+    list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
+    list_artifact_files ".codex/tracks" > "$list"
+    if [ ! -s "$list" ]; then
+      rm -f "$list"
+      printf '%s\n' "no devloop tracks found" >&2
+      return 1
+    fi
+    if [ "$USE_TUI" != true ] || [ ! -t 0 ]; then
+      cat "$list"
+      rm -f "$list"
+      return 0
+    fi
+    selected="$(ui_pick_from_file "$list" "Continue run")"
+    local code=$?
+    rm -f "$list"
+    if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 130; fi
+    track="$selected"
+  fi
+  run_from_track "$track"
+}
+
+list_worktree_roots() {
+  local repo root
+  if repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+    git -C "$repo" worktree list --porcelain |
+      while IFS= read -r line; do
+        case "$line" in
+          worktree\ *) printf '%s\n' "${line#worktree }" ;;
+        esac
+      done
+  else
+    printf '%s\n' "$PWD"
+  fi
+}
+
+list_artifact_files() {
+  local subdir="$1"
+  local root dir
+  list_worktree_roots |
+    while IFS= read -r root; do
+      dir="$root/$subdir"
+      if [ -d "$dir" ]; then
+        find "$dir" -type f | LC_ALL=C sort
+      fi
+    done
+}
+
+view_file() {
+  local file="$1"
+  case "$file" in
+    *.html|*.htm)
+      if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+        if command -v open >/dev/null 2>&1 && open "$file" >/dev/null 2>&1; then return 0; fi
+        if command -v xdg-open >/dev/null 2>&1 && xdg-open "$file" >/dev/null 2>&1; then return 0; fi
+      fi
+      ;;
+  esac
+  if ui_has_gum; then
+    gum pager < "$file"
+    return $?
+  fi
+  if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    "${PAGER:-less}" "$file"
+    return $?
+  fi
+  cat "$file"
+}
+
+track_value() {
+  local key="$1"
+  local file="$2"
+  sed -nE "s/^- ${key}: //p" "$file" | head -n 1
+}
+
+run_from_track() {
+  local track="$1"
+  local worktree spec max report_format strict coder reviewer create_pr old_pwd code next_pass
+  track="$(absolute_existing_file "$track")" || {
+    printf 'track not found: %s\n' "$track" >&2
+    return 2
+  }
+  worktree="$(track_value "worktree" "$track")"
+  spec="$(track_value "spec" "$track")"
+  max="$(track_value "max" "$track")"
+  report_format="$(track_value "report-format" "$track")"
+  strict="$(track_value "strict" "$track")"
+  coder="$(track_value "coder" "$track")"
+  reviewer="$(track_value "reviewer" "$track")"
+  create_pr="$(track_value "create-pr" "$track")"
+
+  if [ -z "$worktree" ]; then worktree="$(cd "$(dirname "$track")/../.." >/dev/null 2>&1 && pwd -P)"; fi
+  if [ -z "$spec" ]; then spec="$(track_value "source-spec" "$track")"; fi
+  if [ -z "$max" ]; then max=5; fi
+  if [ -z "$report_format" ]; then report_format="html"; fi
+  if [ -z "$strict" ]; then strict=true; fi
+  if [ -z "$coder" ]; then coder="codex"; fi
+  if [ -z "$reviewer" ]; then reviewer="claude"; fi
+  if [ -z "$create_pr" ]; then create_pr=false; fi
+  next_pass="$(next_pass_from_track "$track")"
+  if [ "$next_pass" -gt "$max" ]; then max="$next_pass"; fi
+
+  if [ ! -d "$worktree" ]; then
+    printf 'worktree not found: %s\n' "$worktree" >&2
+    return 2
+  fi
+  if [ ! -f "$spec" ]; then
+    printf 'spec not found: %s\n' "$spec" >&2
+    return 2
+  fi
+
+  old_pwd="$PWD"
+  cd "$worktree" || return 2
+  RUN_START_PASS="$next_pass"
+  run_header "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr"
+  run_devloop "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr"
+  code=$?
+  RUN_START_PASS=1
+  maybe_enter_worktree
+  cd "$old_pwd" || return "$code"
+  return "$code"
+}
+
+next_pass_from_track() {
+  local track="$1"
+  local dir slug latest
+  dir="$(cd "$(dirname "$track")/.." >/dev/null 2>&1 && pwd -P)/reviews"
+  slug="$(basename "$track" .md)"
+  if [ ! -d "$dir" ]; then
+    printf '%s\n' "1"
+    return
+  fi
+  latest="$(find "$dir" -type f -name "$slug-r*.md" |
+    sed -nE 's/.*-r([0-9]+)\.md$/\1/p' |
+    LC_ALL=C sort -n |
+    tail -n 1)"
+  if [ -z "$latest" ]; then
+    printf '%s\n' "1"
+  else
+    printf '%s\n' "$((latest + 1))"
+  fi
+}
+
+maybe_enter_worktree() {
+  local shell_path old_pwd
+  if [ "$ENTER_WORKTREE" != true ]; then return; fi
+  if [ "$USE_TUI" != true ]; then return; fi
+  if [ ! -t 0 ] || [ ! -t 1 ]; then return; fi
+  if [ -z "$WORKTREE_REPO" ] || [ -z "$SOURCE_REPO" ]; then return; fi
+  if [ "$WORKTREE_REPO" = "$SOURCE_REPO" ]; then return; fi
+  if [ ! -d "$WORKTREE_REPO" ]; then return; fi
+
+  shell_path="${SHELL:-/bin/sh}"
+  old_pwd="$PWD"
+  printf '\n' >&2
+  ui_status_line "ok" "worktree shell" "$WORKTREE_REPO"
+  printf '%s\n' "exit the shell to return to devloop's final status" >&2
+  cd "$WORKTREE_REPO" || return
+  "$shell_path" -i
+  cd "$old_pwd" || return
 }
 
 run_command() {
@@ -180,6 +830,8 @@ run_command() {
       --strict) strict=true ;;
       --in-place) use_worktree=false ;;
       --create-pr|--pr) create_pr=true ;;
+      --no-shell|--stay) ENTER_WORKTREE=false ;;
+      --shell|--enter-worktree) ENTER_WORKTREE=true ;;
       --plain) USE_TUI=false ;;
       --tui) USE_TUI=true ;;
       -h|--help) usage; return 0 ;;
@@ -212,8 +864,10 @@ run_command() {
   if [ "$max" -lt 1 ]; then max=1; fi
   if [ "$max" -gt 10 ]; then max=10; fi
 
+  run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
   run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
   local code=$?
+  maybe_enter_worktree
   case "$STATUS" in
     accepted) return 0 ;;
     stalled|max-turns|unclear) return 1 ;;
@@ -244,6 +898,10 @@ run_devloop() {
   COMMIT_HASHES=()
   COMMIT_MESSAGES=()
   COMMIT_PATHS=()
+  local start_pass="$RUN_START_PASS"
+  if ! printf '%s\n' "$start_pass" | grep -Eq '^[0-9]+$'; then start_pass=1; fi
+  if [ "$start_pass" -lt 1 ]; then start_pass=1; fi
+  if [ "$start_pass" -gt "$max" ]; then start_pass="$max"; fi
 
   local spec
   spec="$(absolute_existing_file "$spec_arg")" || { usage >&2; return 2; }
@@ -334,7 +992,10 @@ run_devloop() {
 
   local pass prior_hash
   prior_hash=""
-  for pass in $(seq 1 "$max"); do
+  if [ "$start_pass" -gt 1 ] && [ -f "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md" ]; then
+    prior_hash="$(findings_hash "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md")"
+  fi
+  for pass in $(seq "$start_pass" "$max"); do
     PASSES="$pass"
     local coder_log=".codex/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
@@ -442,31 +1103,40 @@ run_devloop() {
 event_step() {
   local id="$1"
   local title="$2"
-  if [ "$USE_TUI" = true ]; then
-    printf '\033[1m[devloop]\033[0m %s\n' "$title" >&2
-  else
-    printf '[devloop] %s\n' "$title" >&2
-  fi
+  UI_STEP_TITLE="$title"
+  UI_STEP_STARTED="$SECONDS"
+  event_store_start "$id" "$title"
+  ui_status_line "run" "$title" "started"
 }
 
 event_done() {
   local id="$1"
   local ok="$2"
   local detail="$3"
-  printf '[devloop] %s\n' "$detail" >&2
+  local title elapsed status
+  title="$(event_title "$id")"
+  elapsed="$(format_elapsed "$(event_elapsed "$id")")"
+  if [ "$ok" = true ]; then status="ok"; else status="fail"; fi
+  ui_status_line "$status" "$title" "$detail $elapsed"
 }
 
 event_gate() {
   local name="$1"
   local ok_value="$2"
   local detail="$3"
-  printf '[devloop] %s: %s\n' "$name" "$detail" >&2
+  local status="ok"
+  if [ "${ok_value:-0}" -eq 0 ] 2>/dev/null; then status="warn"; fi
+  ui_status_line "$status" "$name" "$detail"
 }
 
 event_log() {
   local id="$1"
   local line="$2"
-  printf '[devloop] %s\n' "$line" >&2
+  if [ "$USE_TUI" = true ]; then
+    printf '       %s\n' "$line" >&2
+  else
+    printf '[devloop] %s\n' "$line" >&2
+  fi
 }
 
 normalize_agent() {
@@ -984,14 +1654,34 @@ run_with_prompt() {
   local id="$3"
   local prompt="$4"
   shift 4
-  local prompt_file stdout_file stderr_file output_file line
+  local prompt_file stdout_file stderr_file output_file code_file line pid
   prompt_file="$(mktemp "${TMPDIR:-/tmp}/devloop-prompt.XXXXXX")"
   stdout_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stdout.XXXXXX")"
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stderr.XXXXXX")"
   output_file="$(mktemp "${TMPDIR:-/tmp}/devloop-output.XXXXXX")"
+  code_file="$(mktemp "${TMPDIR:-/tmp}/devloop-code.XXXXXX")"
   printf '%s' "$prompt" > "$prompt_file"
-  (cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file")
-  RUN_CODE=$?
+  rm -f "$code_file"
+  if [ "$USE_TUI" = true ] && [ -t 2 ]; then
+    (
+      cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file"
+      printf '%s\n' "$?" > "$code_file"
+    ) &
+    pid=$!
+    ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}"
+    wait "$pid" >/dev/null 2>&1 || true
+    if [ -f "$code_file" ]; then
+      RUN_CODE="$(cat "$code_file")"
+    else
+      RUN_CODE=1
+    fi
+  else
+    (cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file")
+    RUN_CODE=$?
+  fi
+  case "$RUN_CODE" in
+    ''|*[!0-9]*) RUN_CODE=1 ;;
+  esac
   RUN_STDOUT="$(cat "$stdout_file")"
   RUN_STDERR="$(cat "$stderr_file")"
   cat "$stdout_file" "$stderr_file" > "$output_file"
@@ -1005,7 +1695,7 @@ run_with_prompt() {
       if [ -n "$line" ]; then event_log "$id" "$line"; fi
     done < "$output_file"
   fi
-  rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file"
+  rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file" "$code_file"
 }
 
 new_uuid() {
@@ -1659,6 +2349,7 @@ spec_command() {
   context="$(resolve_spec_context "${context_items[@]}")"
   today="$(date +%F)"
   prompt="$(spec_prompt "$context" "$output" "$skill" "$today")"
+  if [ "$USE_TUI" = true ]; then event_step "spec" "generate spec with $agent"; fi
   if [ "$agent" = "codex" ]; then
     run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
   elif [ "$agent" = "claude" ]; then
@@ -1667,22 +2358,26 @@ spec_command() {
     run_with_prompt "$PWD" "" "" "$prompt" "$agent"
   fi
   if [ "$RUN_CODE" -ne 0 ]; then
+    if [ "$USE_TUI" = true ]; then event_done "spec" false "failed"; fi
     if [ -n "$RUN_STDERR" ]; then printf '%s\n' "$RUN_STDERR" >&2; else printf '%s\n' "${RUN_STDOUT:-spec agent failed}" >&2; fi
     return 2
   fi
 
   local markdown file
   if ! markdown="$(extract_generated_spec "$RUN_STDOUT$RUN_STDERR")"; then
+    if [ "$USE_TUI" = true ]; then event_done "spec" false "invalid output"; fi
     printf '%s\n' "agent output must include spec frontmatter" >&2
     return 2
   fi
   file="$(generated_spec_path "$markdown" "$output" "$today" "$force")"
   if [ -f "$file" ] && [ "$force" = false ]; then
+    if [ "$USE_TUI" = true ]; then event_done "spec" false "already exists"; fi
     printf 'spec already exists: %s\n' "$file" >&2
     return 2
   fi
   mkdir -p "$(dirname "$file")"
   printf '%s\n' "$markdown" > "$file"
+  if [ "$USE_TUI" = true ]; then event_done "spec" true "$file"; fi
   printf 'spec:  %s\n' "$file"
   printf 'agent: %s\n' "$agent"
 }
