@@ -211,25 +211,28 @@ contains "$uuid_one" "00000000-0000-4000-8000-" "new_uuid fallback format"
 ok "pure helpers"
 
 bin_dir="$work/bin"
-skills_dir="$work/skills"
-DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-test.out
+install_home="$work/install-home"
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-test.out
 [[ -x "$ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
-[[ -f "$skills_dir/devloop-spec/SKILL.md" ]] || fail "installer did not install spec skill"
-[[ -f "$skills_dir/devloop-spec/references/spec-template.md" ]] || fail "installer did not install spec template reference"
-[[ -f "$skills_dir/devloop-review/SKILL.md" ]] || fail "installer did not install review skill"
-[[ -f "$skills_dir/devloop-review/.devloop-checksum" ]] || fail "installer did not write checksum"
+[[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
+[[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
+[[ -f "$install_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Codex review skill"
+[[ -f "$install_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Codex checksum"
+[[ -f "$install_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Claude spec skill"
+[[ -f "$install_home/.claude/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Claude review skill"
+[[ -f "$install_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Claude checksum"
 "$bin_dir/devloop" --help >/tmp/devloop-help-test.out
 contains "$(cat /tmp/devloop-help-test.out)" "Spec-driven code and review loop." "installed help"
 ok "installer"
 
-printf '%s\n' "user edit" >> "$skills_dir/devloop-review/SKILL.md"
-DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
+printf '%s\n' "user edit" >> "$install_home/.agents/skills/devloop-review/SKILL.md"
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
 contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
 contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
-contains "$(cat "$skills_dir/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
-DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-force.out
-if grep -q "user edit" "$skills_dir/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
+contains "$(cat "$install_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
+DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-force.out
+if grep -q "user edit" "$install_home/.agents/skills/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
 ok "installer skill updates"
 
 fake_bin="$work/fake-bin"
@@ -237,10 +240,12 @@ mkdir -p "$fake_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/claude"
 chmod +x "$fake_bin/codex" "$fake_bin/claude"
-doctor_output="$(DEVLOOP_SKILLS_DIR="$skills_dir" PATH="$bin_dir:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
+doctor_output="$(HOME="$install_home" PATH="$bin_dir:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
 contains "$doctor_output" "devloop doctor: ready" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
 contains "$doctor_output" "Optional UI" "doctor"
+contains "$doctor_output" "$install_home/.agents/skills/devloop-spec" "doctor Codex skill"
+contains "$doctor_output" "$install_home/.claude/skills/devloop-spec" "doctor Claude skill"
 ok "doctor"
 
 agent="$work/spec-agent"

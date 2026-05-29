@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-devloop_skills_dir() {
-  printf '%s\n' "${DEVLOOP_SKILLS_DIR:-$HOME/.agents/skills}"
+devloop_skills_dirs() {
+  printf '%s\n' "$HOME/.agents/skills"
+  printf '%s\n' "$HOME/.claude/skills"
 }
 
 devloop_checksum_file() {
@@ -59,8 +60,7 @@ devloop_can_replace_skill() {
 
 devloop_install_skills() {
   local root="$1"
-  local skills_dir mode source name dest checksum status
-  skills_dir="$(devloop_skills_dir)"
+  local skills_dir mode status
   mode="${DEVLOOP_SKILL_INSTALL:-copy}"
   status=0
 
@@ -71,6 +71,23 @@ devloop_install_skills() {
       return 2
       ;;
   esac
+
+  while IFS= read -r skills_dir; do
+    if [ -z "$skills_dir" ]; then continue; fi
+    devloop_install_skills_to_dir "$root" "$skills_dir" "$mode" || status=1
+  done <<EOF
+$(devloop_skills_dirs)
+EOF
+
+  return "$status"
+}
+
+devloop_install_skills_to_dir() {
+  local root="$1"
+  local skills_dir="$2"
+  local mode="$3"
+  local source name dest checksum status
+  status=0
 
   if ! mkdir -p "$skills_dir"; then
     printf 'failed to create skills directory: %s\n' "$skills_dir" >&2
@@ -153,8 +170,23 @@ devloop_doctor_optional_command() {
 
 devloop_doctor_skills() {
   local root="$1"
-  local skills_dir source name dest declared bundled installed status
-  skills_dir="$(devloop_skills_dir)"
+  local skills_dir status
+  status=0
+
+  while IFS= read -r skills_dir; do
+    if [ -z "$skills_dir" ]; then continue; fi
+    devloop_doctor_skills_in_dir "$root" "$skills_dir" || status=1
+  done <<EOF
+$(devloop_skills_dirs)
+EOF
+
+  return "$status"
+}
+
+devloop_doctor_skills_in_dir() {
+  local root="$1"
+  local skills_dir="$2"
+  local source name dest declared bundled installed status
   status=0
 
   for source in "$root"/skills/*; do
