@@ -9,6 +9,7 @@ By default, Codex makes the change, Claude Code reviews it, and Codex retries un
 ## Install
 
 Prereqs: Bash, git, and the agent CLIs you want to use. The default pairing requires `codex` and `claude`.
+For the full interactive UI, install [`gum`](https://github.com/charmbracelet/gum) and [`fzf`](https://github.com/junegunn/fzf). They are optional; `devloop` falls back to plain terminal output when they are missing.
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
@@ -37,11 +38,19 @@ Create a spec:
 devloop spec "add retry behavior to the chat sender"
 ```
 
+Start the guided UI:
+
+```sh
+devloop
+```
+
 Run the loop from the repo you want changed:
 
 ```sh
 devloop .specs/change.md
 ```
+
+In an interactive terminal, `devloop` opens a shell in the generated worktree after the run finishes. Use `--no-shell` when you want the command to return to the original shell instead.
 
 Open a PR after an accepted run:
 
@@ -82,6 +91,19 @@ devloop [options] <spec.md> [max=5]
 | `--in-place` | Run in the current worktree |
 | `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
 | `--no-strict` | Weaken strict review gates |
+| `--no-shell`, `--stay` | Do not open a shell in the generated worktree after completion |
+
+## Interactive UI
+
+When stdout is a terminal, running `devloop` without arguments opens a menu:
+
+- `Run a spec`: pick a `.specs/*.md` file, review run settings, then start.
+- `Create a spec`: choose the spec agent and provide source context.
+- `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
+- `Open reports`: pick a prior report from any registered worktree.
+- `Doctor`: verify required commands, optional UI tools, and installed skills.
+
+`gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
 
 ## What Devloop Does
 
@@ -90,6 +112,7 @@ devloop [options] <spec.md> [max=5]
 - Commits eligible changes after each coder pass.
 - Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.codex/`.
 - Leaves generated worktrees and branches in place for inspection.
+- Drops you into the generated worktree shell after interactive runs, unless `--no-shell` is set.
 - Never pushes or opens a PR unless you pass `--create-pr`.
 
 ## Security

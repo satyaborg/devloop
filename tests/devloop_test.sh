@@ -38,7 +38,9 @@ equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
 help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
 contains "$help" "devloop doctor" "help"
+contains "$help" "devloop reports" "help"
 contains "$help" "--create-pr" "help"
+contains "$help" "--no-shell" "help"
 ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"
@@ -168,12 +170,33 @@ git -C "$branch_repo" add file.txt
 git -C "$branch_repo" commit -q -m init
 git -C "$branch_repo" branch feat/chat-retry
 equals "$(next_branch "$branch_repo" feat false chat-retry "")" "feat/chat-retry-2" "next_branch suffix"
+mkdir -p "$branch_repo/.codex/reports" "$branch_repo/.codex/tracks" "$branch_repo/.codex/reviews"
+printf '%s\n' "# Report" > "$branch_repo/.codex/reports/chat-retry.md"
+branch_repo_real="$(cd "$branch_repo" && pwd -P)"
+cat > "$branch_repo/.codex/tracks/chat-retry.md" <<MARKDOWN
+# Track
+
+- spec: $branch_repo_real/.specs/chat-retry.md
+- worktree: $branch_repo_real
+- max: 3
+MARKDOWN
+equals "$(cd "$branch_repo" && list_artifact_files ".codex/reports")" "$branch_repo_real/.codex/reports/chat-retry.md" "artifact listing"
+equals "$(track_value max "$branch_repo/.codex/tracks/chat-retry.md")" "3" "track value"
+touch "$branch_repo/.codex/reviews/chat-retry-r1.md" "$branch_repo/.codex/reviews/chat-retry-r3.md"
+equals "$(next_pass_from_track "$branch_repo/.codex/tracks/chat-retry.md")" "4" "track next pass"
 
 spec_output=$'preface\n---\nstatus: draft\n---\n\n# Generated'
 equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n# Generated' "extract_generated_spec"
 
 session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue this session, run codex exec resume 22222222-2222-4222-8222-222222222222'
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
+
+picker_file="$work/picker.txt"
+printf '%s\n' "alpha" "beta" > "$picker_file"
+old_use_tui="$USE_TUI"
+USE_TUI=false
+equals "$(ui_pick_from_file "$picker_file" "Pick")" "alpha" "non-tui picker fallback"
+USE_TUI="$old_use_tui"
 
 old_path="$PATH"
 no_uuid_path="$work/no-uuid"
@@ -216,6 +239,7 @@ chmod +x "$fake_bin/codex" "$fake_bin/claude"
 doctor_output="$(DEVLOOP_SKILLS_DIR="$skills_dir" PATH="$bin_dir:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
 contains "$doctor_output" "devloop doctor: ready" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
+contains "$doctor_output" "Optional UI" "doctor"
 ok "doctor"
 
 agent="$work/spec-agent"

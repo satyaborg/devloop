@@ -139,6 +139,18 @@ devloop_doctor_command() {
   return 1
 }
 
+devloop_doctor_optional_command() {
+  local command="$1"
+  local detail="$2"
+  local resolved
+  resolved="$(command -v "$command" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    printf '[ok] optional %s: %s (%s)\n' "$command" "$resolved" "$detail"
+    return 0
+  fi
+  printf '[skip] optional %s: %s\n' "$command" "$detail"
+}
+
 devloop_doctor_skills() {
   local root="$1"
   local skills_dir source name dest declared bundled installed status
@@ -197,10 +209,15 @@ devloop_doctor() {
   local status=0
 
   printf 'devloop doctor\n'
+  printf 'Required\n'
   devloop_doctor_command devloop || status=1
   devloop_doctor_command git || status=1
   devloop_doctor_command codex || status=1
   devloop_doctor_command claude || status=1
+  printf '\nOptional UI\n'
+  devloop_doctor_optional_command gum "rich prompts, confirmations, status, and paging"
+  devloop_doctor_optional_command fzf "searchable spec, track, and report pickers"
+  printf '\nSkills\n'
   devloop_doctor_skills "$root" || status=1
 
   if [ "$status" -eq 0 ]; then
