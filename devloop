@@ -234,15 +234,6 @@ devloop_config_value() {
   return 1
 }
 
-config_display_value() {
-  local value="$1"
-  if [ -n "$value" ]; then
-    printf '%s\n' "$value"
-  else
-    printf '%s\n' "(unset)"
-  fi
-}
-
 normalize_spec_dir() {
   local dir="$1"
   dir="$(trim_string "$dir")"
@@ -284,6 +275,40 @@ devloop_spec_dir() {
   else
     printf '%s\n' ".specs"
   fi
+}
+
+is_default_spec_dir() {
+  case "$1" in
+    ".specs"|".devloop/specs") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configured_spec_dir() {
+  local value normalized
+  value="$(devloop_config_value spec_dir || true)"
+  [ -n "$value" ] || return 1
+  normalized="$(normalize_spec_dir "$value")" || return 1
+  is_default_spec_dir "$normalized" && return 1
+  printf '%s\n' "$normalized"
+}
+
+configured_spec_dir_scope() {
+  local file value normalized
+  file="$(devloop_local_config_file)"
+  if value="$(config_file_value spec_dir "$file")" && [ -n "$value" ]; then
+    normalized="$(normalize_spec_dir "$value")" || return 1
+    is_default_spec_dir "$normalized" && return 1
+    printf '%s\n' "local"
+    return 0
+  fi
+  if file="$(devloop_global_config_file 2>/dev/null)" && value="$(config_file_value spec_dir "$file")" && [ -n "$value" ]; then
+    normalized="$(normalize_spec_dir "$value")" || return 1
+    is_default_spec_dir "$normalized" && return 1
+    printf '%s\n' "global"
+    return 0
+  fi
+  return 1
 }
 
 spec_search_dirs() {
@@ -356,6 +381,17 @@ write_config_spec_dir() {
   printf 'spec_dir=%s\n' "$normalized" >> "$tmp"
   mv "$tmp" "$file"
   printf '%s\n' "$normalized"
+}
+
+remove_config_spec_dir() {
+  local scope="local"
+  local file tmp
+  if [ "$#" -eq 1 ]; then scope="$1"; fi
+  file="$(devloop_config_file_for_scope "$scope")" || return $?
+  [ -f "$file" ] || return 0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-config.XXXXXX")"
+  sed -E '/^[[:space:]]*spec_dir[[:space:]]*=/d' "$file" > "$tmp"
+  mv "$tmp" "$file"
 }
 
 ui_has_gum() {
@@ -692,42 +728,38 @@ interactive_create_spec() {
 }
 
 interactive_settings() {
-  local choice value saved spec_dir local_spec_dir global_spec_dir global_config
+  local choice custom_spec_dir scope saved value
+  local choices=()
   while true; do
-    spec_dir="$(devloop_spec_dir)"
-    local_spec_dir="$(config_file_value spec_dir "$(devloop_local_config_file)" 2>/dev/null || true)"
-    global_spec_dir=""
-    if global_config="$(devloop_global_config_file 2>/dev/null)"; then
-      global_spec_dir="$(config_file_value spec_dir "$global_config" 2>/dev/null || true)"
+    custom_spec_dir="$(configured_spec_dir || true)"
+    ui_header "Settings" "Spec paths"
+    if [ -n "$custom_spec_dir" ]; then
+      ui_print_key_values \
+        "custom" "$custom_spec_dir" \
+        "default" ".specs" \
+        "" ".devloop/specs"
+      choices=("Remove spec path" "Back")
+    else
+      ui_print_key_values \
+        "default" ".specs" \
+        "" ".devloop/specs"
+      choices=("Add spec path" "Back")
     fi
-    ui_header "Settings" "Devloop config"
-    ui_print_key_values \
-      "global config" "$(devloop_global_config_file 2>/dev/null || printf '%s' "(unavailable)")" \
-      "local config" "$(devloop_local_config_file)" \
-      "global spec dir" "$(config_display_value "$global_spec_dir")" \
-      "local spec dir" "$(config_display_value "$local_spec_dir")" \
-      "effective spec dir" "$spec_dir" \
-      "spec dir status" "$(spec_dir_status "$spec_dir")" \
-      "searched spec dirs" "$(spec_search_label)"
-    choice="$(ui_choose "Edit settings" \
-      "Change local spec directory" \
-      "Change global spec directory" \
-      "Back")" || return 130
+    choice="$(ui_choose "Spec paths" "${choices[@]}")" || return 130
     case "$choice" in
-      "Change local spec directory")
-        value="$(ui_input "Local spec directory" "$spec_dir")" || return 130
+      "Add spec path")
+        value="$(ui_input "Spec path" "")" || return 130
         if saved="$(write_config_spec_dir local "$value")"; then
-          printf 'settings saved: %s spec_dir=%s\n' "$(devloop_local_config_file)" "$saved" >&2
+          printf 'spec path saved: %s\n' "$saved" >&2
         else
-          printf '%s\n' "settings not saved" >&2
+          printf '%s\n' "spec path not saved" >&2
         fi
         ;;
-      "Change global spec directory")
-        value="$(ui_input "Global spec directory" "$spec_dir")" || return 130
-        if saved="$(write_config_spec_dir global "$value")"; then
-          printf 'settings saved: %s spec_dir=%s\n' "$(devloop_global_config_file)" "$saved" >&2
-        else
-          printf '%s\n' "settings not saved" >&2
+      "Remove spec path")
+        scope="$(configured_spec_dir_scope || true)"
+        if [ -n "$scope" ]; then
+          remove_config_spec_dir "$scope"
+          printf '%s\n' "spec path removed" >&2
         fi
         ;;
       "Back") return 0 ;;
