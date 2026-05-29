@@ -4,9 +4,7 @@
 
 ## Verification
 
-- [ ] `bun run typecheck`
-- [ ] `bun test`
-- [ ] `bun run package:smoke` when packaging, install docs, or release automation changes
+- [ ] `bash tests/devloop_test.sh`
 
 ## Notes
 
