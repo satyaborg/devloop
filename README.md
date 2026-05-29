@@ -50,7 +50,7 @@ Run the loop from the repo you want changed:
 devloop .specs/change.md
 ```
 
-In an interactive terminal, `devloop` opens a shell in the generated worktree after the run finishes. Use `--no-shell` when you want the command to return to the original shell instead.
+In an interactive terminal, `devloop` opens a shell in the generated worktree after the run finishes. Exiting that shell returns `devloop`'s final accepted/stalled/failure status. Use `--no-shell` when you want the command to return immediately instead.
 
 Open a PR after an accepted run:
 
@@ -92,6 +92,7 @@ devloop [options] <spec.md> [max=5]
 | `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
 | `--no-strict` | Weaken strict review gates |
 | `--no-shell`, `--stay` | Do not open a shell in the generated worktree after completion |
+| `--shell`, `--enter-worktree` | Open a shell in the generated worktree after completion |
 
 ## Interactive UI
 

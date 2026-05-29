@@ -41,6 +41,7 @@ contains "$help" "devloop doctor" "help"
 contains "$help" "devloop reports" "help"
 contains "$help" "--create-pr" "help"
 contains "$help" "--no-shell" "help"
+contains "$help" "--enter-worktree" "help"
 ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"

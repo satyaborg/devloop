@@ -141,12 +141,13 @@ Options:
   --in-place                    run in the current worktree
   --create-pr, --pr             push accepted branch and open a PR
   --no-shell, --stay            do not open a shell in the run worktree after completion
+  --shell, --enter-worktree     open a shell in the run worktree after completion
   -h, --help                    show this screen
 EOF
 }
 
 usage() {
-  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
 }
 
 spec_usage() {
@@ -671,6 +672,14 @@ list_artifact_files() {
 
 view_file() {
   local file="$1"
+  case "$file" in
+    *.html|*.htm)
+      if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+        if command -v open >/dev/null 2>&1 && open "$file" >/dev/null 2>&1; then return 0; fi
+        if command -v xdg-open >/dev/null 2>&1 && xdg-open "$file" >/dev/null 2>&1; then return 0; fi
+      fi
+      ;;
+  esac
   if ui_has_gum; then
     gum pager < "$file"
     return $?
@@ -757,7 +766,7 @@ next_pass_from_track() {
 }
 
 maybe_enter_worktree() {
-  local shell_path
+  local shell_path old_pwd
   if [ "$ENTER_WORKTREE" != true ]; then return; fi
   if [ "$USE_TUI" != true ]; then return; fi
   if [ ! -t 0 ] || [ ! -t 1 ]; then return; fi
@@ -766,11 +775,13 @@ maybe_enter_worktree() {
   if [ ! -d "$WORKTREE_REPO" ]; then return; fi
 
   shell_path="${SHELL:-/bin/sh}"
+  old_pwd="$PWD"
   printf '\n' >&2
   ui_status_line "ok" "worktree shell" "$WORKTREE_REPO"
-  printf '%s\n' "exit the shell to return to your previous terminal session" >&2
+  printf '%s\n' "exit the shell to return to devloop's final status" >&2
   cd "$WORKTREE_REPO" || return
-  exec "$shell_path" -i
+  "$shell_path" -i
+  cd "$old_pwd" || return
 }
 
 run_command() {
@@ -1668,6 +1679,9 @@ run_with_prompt() {
     (cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file")
     RUN_CODE=$?
   fi
+  case "$RUN_CODE" in
+    ''|*[!0-9]*) RUN_CODE=1 ;;
+  esac
   RUN_STDOUT="$(cat "$stdout_file")"
   RUN_STDERR="$(cat "$stderr_file")"
   cat "$stdout_file" "$stderr_file" > "$output_file"
