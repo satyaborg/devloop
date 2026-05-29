@@ -32,6 +32,8 @@ ok "bash syntax"
 DEVLOOP_LIB=1
 source "$ROOT/devloop"
 unset DEVLOOP_LIB
+equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.5" "codex model args"
+equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
 
 help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"

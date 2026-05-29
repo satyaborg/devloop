@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+CODEX_MODEL_ARGS=(-m gpt-5.5)
 CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
+CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort max)
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
@@ -910,10 +912,10 @@ run_agent_once() {
   local id="$5"
   case "$agent" in
     codex)
-      run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$repo" -
+      run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$repo" -
       ;;
     claude)
-      run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+      run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
       ;;
   esac
   [ "$RUN_CODE" -eq 0 ]
@@ -941,9 +943,9 @@ run_codex() {
   local session
   session="$(read_first_line "$session_file")"
   if [ -n "$session" ]; then
-    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec resume "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox "$session" -
+    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec resume "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox "$session" -
   else
-    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox -C "$repo" -
+    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox -C "$repo" -
   fi
   if [ "$RUN_CODE" -ne 0 ]; then return 1; fi
   if [ -z "$session" ]; then
@@ -964,10 +966,10 @@ run_claude() {
   local session next
   session="$(read_first_line "$session_file")"
   if [ -n "$session" ]; then
-    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --resume "$session" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --resume "$session" "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
   else
     next="$(new_uuid)"
-    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --session-id "$next" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --session-id "$next" "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
   fi
   if [ "$RUN_CODE" -ne 0 ]; then return 1; fi
   if [ -z "$session" ]; then
@@ -1658,9 +1660,9 @@ spec_command() {
   today="$(date +%F)"
   prompt="$(spec_prompt "$context" "$output" "$skill" "$today")"
   if [ "$agent" = "codex" ]; then
-    run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
+    run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
   elif [ "$agent" = "claude" ]; then
-    run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
+    run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
   else
     run_with_prompt "$PWD" "" "" "$prompt" "$agent"
   fi
