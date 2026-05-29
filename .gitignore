@@ -1,5 +1,6 @@
 .codex/
 .claude/
+.devloop/
 .specs/
 .DS_Store
 coverage/

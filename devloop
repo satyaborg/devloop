@@ -134,8 +134,8 @@ Common commands:
 Options:
   --tui                         force simple terminal progress output
   --plain                       force plain output
-  --coder codex|claude          choose the implementation agent
-  --reviewer codex|claude       choose the review agent
+  --coder codex|claude          choose Codex or Claude Code for implementation
+  --reviewer codex|claude       choose Codex or Claude Code for review
   --report-format html|markdown choose report format
   --no-strict                   weaken strict review gates
   --in-place                    run in the current worktree
@@ -148,6 +148,7 @@ EOF
 
 usage() {
   printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+  printf '%s\n' "agents: Codex or Claude Code"
 }
 
 spec_usage() {
@@ -155,6 +156,8 @@ spec_usage() {
 usage: devloop spec [--agent codex|claude|<cmd>] [--output spec.md] [--force] [context...]
        devloop spec --print-skill
        devloop spec --skill-path
+
+Agents: Codex or Claude Code. Custom commands are also supported.
 
 Without context, the bundled skill uses its interview path before writing a spec.
 EOF
@@ -174,14 +177,35 @@ trim_string() {
   printf '%s\n' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
-devloop_config_file() {
+devloop_local_config_file() {
   printf '%s\n' ".devloop/config"
 }
 
-devloop_config_value() {
+devloop_global_config_file() {
+  if [ -z "${HOME:-}" ]; then return 1; fi
+  printf '%s\n' "${HOME%/}/.devloop/config"
+}
+
+devloop_config_file() {
+  devloop_local_config_file
+}
+
+devloop_config_file_for_scope() {
+  local scope="$1"
+  case "$scope" in
+    global) devloop_global_config_file ;;
+    local) devloop_local_config_file ;;
+    *)
+      printf 'unknown config scope: %s\n' "$scope" >&2
+      return 2
+      ;;
+  esac
+}
+
+config_file_value() {
   local key="$1"
-  local file line value
-  file="$(devloop_config_file)"
+  local file="$2"
+  local line value
   [ -f "$file" ] || return 1
   while IFS= read -r line; do
     value="$(printf '%s\n' "$line" | sed -nE "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*(.*)$/\1/p")"
@@ -193,6 +217,30 @@ devloop_config_value() {
     esac
     printf '%s\n' "$value"
   done < "$file" | tail -n 1
+}
+
+devloop_config_value() {
+  local key="$1"
+  local file value
+  file="$(devloop_local_config_file)"
+  if value="$(config_file_value "$key" "$file")" && [ -n "$value" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if file="$(devloop_global_config_file 2>/dev/null)" && value="$(config_file_value "$key" "$file")" && [ -n "$value" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  return 1
+}
+
+config_display_value() {
+  local value="$1"
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "(unset)"
+  fi
 }
 
 normalize_spec_dir() {
@@ -282,8 +330,15 @@ spec_dir_status() {
 }
 
 write_config_spec_dir() {
-  local dir="$1"
+  local scope="local"
+  local dir
   local expanded normalized file tmp
+  if [ "$#" -eq 2 ]; then
+    scope="$1"
+    dir="$2"
+  else
+    dir="$1"
+  fi
   expanded="$(expand_spec_dir_input "$dir")" || {
     printf '%s\n' "spec directory could not be expanded" >&2
     return 2
@@ -292,7 +347,7 @@ write_config_spec_dir() {
     printf '%s\n' "spec directory must be absolute, or relative without '..'" >&2
     return 2
   }
-  file="$(devloop_config_file)"
+  file="$(devloop_config_file_for_scope "$scope")" || return $?
   mkdir -p "$(dirname "$file")" "$normalized" || return 1
   tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-config.XXXXXX")"
   if [ -f "$file" ]; then
@@ -626,7 +681,8 @@ interactive_run_spec() {
 
 interactive_create_spec() {
   local agent context
-  agent="$(ui_choose "Spec agent" "codex" "claude")" || return 130
+  agent="$(ui_choose "Spec agent" "Codex" "Claude Code")" || return 130
+  agent="$(agent_choice_value "$agent")"
   context="$(ui_input "Describe the change, or leave blank for interview mode" "")" || return 130
   if [ -n "$context" ]; then
     spec_command --agent "$agent" "$context"
@@ -636,23 +692,40 @@ interactive_create_spec() {
 }
 
 interactive_settings() {
-  local choice value saved spec_dir
+  local choice value saved spec_dir local_spec_dir global_spec_dir global_config
   while true; do
     spec_dir="$(devloop_spec_dir)"
-    ui_header "Settings" "Repo-local devloop config"
+    local_spec_dir="$(config_file_value spec_dir "$(devloop_local_config_file)" 2>/dev/null || true)"
+    global_spec_dir=""
+    if global_config="$(devloop_global_config_file 2>/dev/null)"; then
+      global_spec_dir="$(config_file_value spec_dir "$global_config" 2>/dev/null || true)"
+    fi
+    ui_header "Settings" "Devloop config"
     ui_print_key_values \
-      "config" "$(devloop_config_file)" \
-      "default spec dir" "$spec_dir" \
+      "global config" "$(devloop_global_config_file 2>/dev/null || printf '%s' "(unavailable)")" \
+      "local config" "$(devloop_local_config_file)" \
+      "global spec dir" "$(config_display_value "$global_spec_dir")" \
+      "local spec dir" "$(config_display_value "$local_spec_dir")" \
+      "effective spec dir" "$spec_dir" \
       "spec dir status" "$(spec_dir_status "$spec_dir")" \
       "searched spec dirs" "$(spec_search_label)"
     choice="$(ui_choose "Edit settings" \
-      "Change default spec directory" \
+      "Change local spec directory" \
+      "Change global spec directory" \
       "Back")" || return 130
     case "$choice" in
-      "Change default spec directory")
-        value="$(ui_input "Default spec directory" "$spec_dir")" || return 130
-        if saved="$(write_config_spec_dir "$value")"; then
-          printf 'settings saved: spec_dir=%s\n' "$saved" >&2
+      "Change local spec directory")
+        value="$(ui_input "Local spec directory" "$spec_dir")" || return 130
+        if saved="$(write_config_spec_dir local "$value")"; then
+          printf 'settings saved: %s spec_dir=%s\n' "$(devloop_local_config_file)" "$saved" >&2
+        else
+          printf '%s\n' "settings not saved" >&2
+        fi
+        ;;
+      "Change global spec directory")
+        value="$(ui_input "Global spec directory" "$spec_dir")" || return 130
+        if saved="$(write_config_spec_dir global "$value")"; then
+          printf 'settings saved: %s spec_dir=%s\n' "$(devloop_global_config_file)" "$saved" >&2
         else
           printf '%s\n' "settings not saved" >&2
         fi
@@ -705,12 +778,12 @@ interactive_run_setup() {
         return "$code"
         ;;
       "Change coder")
-        value="$(ui_choose "Implementation agent" "codex" "claude")" || return 130
-        coder="$value"
+        value="$(ui_choose "Implementation agent" "Codex" "Claude Code")" || return 130
+        coder="$(agent_choice_value "$value")"
         ;;
       "Change reviewer")
-        value="$(ui_choose "Review agent" "claude" "codex")" || return 130
-        reviewer="$value"
+        value="$(ui_choose "Review agent" "Claude Code" "Codex")" || return 130
+        reviewer="$(agent_choice_value "$value")"
         ;;
       "Change pass limit")
         value="$(ui_input "Pass limit, 1-10" "$max")" || return 130
@@ -971,17 +1044,17 @@ run_command() {
         esac
         ;;
       --coder)
-        if [ "$#" -eq 0 ]; then printf '%s\n' "coder must be codex or claude" >&2; usage >&2; return 2; fi
+        if [ "$#" -eq 0 ]; then printf '%s\n' "coder must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         value="$(normalize_agent "$1")"
         shift
-        if [ -z "$value" ]; then printf '%s\n' "coder must be codex or claude" >&2; usage >&2; return 2; fi
+        if [ -z "$value" ]; then printf '%s\n' "coder must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         coder="$value"
         ;;
       --reviewer)
-        if [ "$#" -eq 0 ]; then printf '%s\n' "reviewer must be codex or claude" >&2; usage >&2; return 2; fi
+        if [ "$#" -eq 0 ]; then printf '%s\n' "reviewer must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         value="$(normalize_agent "$1")"
         shift
-        if [ -z "$value" ]; then printf '%s\n' "reviewer must be codex or claude" >&2; usage >&2; return 2; fi
+        if [ -z "$value" ]; then printf '%s\n' "reviewer must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         reviewer="$value"
         ;;
       --html) report_format="html" ;;
@@ -1300,14 +1373,19 @@ event_log() {
 }
 
 normalize_agent() {
-  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | awk '$0=="codex" || $0=="claude"{print}'
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[[:space:]_-]+//g' | awk '$0=="codex"{print "codex"} $0=="claude" || $0=="claudecode"{print "claude"}'
 }
 
 agent_label() {
   case "$1" in
     codex) printf '%s' "Codex" ;;
     claude) printf '%s' "Claude Code" ;;
+    *) printf '%s' "$1" ;;
   esac
+}
+
+agent_choice_value() {
+  normalize_agent "$1"
 }
 
 absolute_existing_file() {
@@ -1504,7 +1582,7 @@ resolve_work_item() {
   WORK_ITEM_LOG="$log"
   prompt="$(naming_prompt "$spec" "$spec_text")"
   if ! run_agent_once "$agent" "$repo" "$log" "$prompt" "naming"; then
-    WORK_ITEM_ERROR="${RUN_OUTPUT:-$agent failed}"
+    WORK_ITEM_ERROR="${RUN_OUTPUT:-$(agent_label "$agent") failed}"
     return 1
   fi
   if ! parse_work_item "$RUN_OUTPUT"; then
@@ -2440,8 +2518,8 @@ print_result() {
   printf '\n'
   result_line "result" "$STATUS"
   result_line "passes" "$PASSES / $MAX"
-  result_line "coder" "$CODER"
-  result_line "reviewer" "$REVIEWER"
+  result_line "coder" "$(agent_label "$CODER")"
+  result_line "reviewer" "$(agent_label "$REVIEWER")"
   result_line "branch" "$FINAL_BRANCH"
   result_line "commit" "${FINAL_COMMIT:-none}"
   if [ -n "$PULL_REQUEST" ]; then result_line "pr" "$PULL_REQUEST"; fi
@@ -2478,7 +2556,8 @@ spec_command() {
     case "$arg" in
       --agent)
         if [ "$#" -eq 0 ]; then printf '%s\n' "--agent requires a value" >&2; spec_usage >&2; return 2; fi
-        agent="$1"
+        value="$(normalize_agent "$1")"
+        if [ -n "$value" ]; then agent="$value"; else agent="$1"; fi
         shift
         ;;
       --output|-o)
@@ -2510,7 +2589,7 @@ spec_command() {
   today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
   prompt="$(spec_prompt "$context" "$output" "$skill" "$today" "$spec_dir")"
-  if [ "$USE_TUI" = true ]; then event_step "spec" "generate spec with $agent"; fi
+  if [ "$USE_TUI" = true ]; then event_step "spec" "generate spec with $(agent_label "$agent")"; fi
   if [ "$agent" = "codex" ]; then
     run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
   elif [ "$agent" = "claude" ]; then
@@ -2540,7 +2619,7 @@ spec_command() {
   printf '%s\n' "$markdown" > "$file"
   if [ "$USE_TUI" = true ]; then event_done "spec" true "$file"; fi
   printf 'spec:  %s\n' "$file"
-  printf 'agent: %s\n' "$agent"
+  printf 'agent: %s\n' "$(agent_label "$agent")"
 }
 
 resolve_spec_context() {
