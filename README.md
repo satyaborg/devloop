@@ -23,7 +23,8 @@ Run without installing:
 ./devloop --help
 ```
 
-`install.sh` also installs the bundled Agent Skills globally under `~/.agents/skills`.
+`install.sh` also installs the bundled Agent Skills globally for Codex under `~/.agents/skills`
+and Claude Code under `~/.claude/skills`.
 After install or update, verify the local setup:
 
 ```sh
@@ -126,8 +127,8 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 bash -n devloop install.sh
 ./devloop --help
 tmp="$(mktemp -d)"
-DEVLOOP_BIN_DIR="$tmp/bin" DEVLOOP_SKILLS_DIR="$tmp/skills" ./install.sh
-PATH="$tmp/bin:$PATH" DEVLOOP_SKILLS_DIR="$tmp/skills" devloop doctor
+DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./install.sh
+PATH="$tmp/bin:$PATH" HOME="$tmp/home" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
