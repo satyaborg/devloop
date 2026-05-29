@@ -189,6 +189,47 @@ equals "$(next_pass_from_track "$branch_repo/.codex/tracks/chat-retry.md")" "4" 
 spec_output=$'preface\n---\nstatus: draft\n---\n\n# Generated'
 equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n# Generated' "extract_generated_spec"
 
+config_repo="$work/config-repo"
+mkdir -p "$config_repo/.specs" "$config_repo/.devloop/specs"
+config_repo_real="$(cd "$config_repo" && pwd)"
+printf '%s\n' "# Legacy" > "$config_repo/.specs/legacy.md"
+printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
+config_specs="$(cd "$config_repo" && list_spec_files)"
+contains "$config_specs" ".specs/legacy.md" "default spec search"
+contains "$config_specs" ".devloop/specs/devloop.md" "default spec search"
+equals "$(cd "$config_repo" && spec_search_label)" ".specs, .devloop/specs" "spec search label"
+equals "$(cd "$config_repo" && write_config_spec_dir "custom-specs")" "custom-specs" "write config spec dir"
+equals "$(cd "$config_repo" && devloop_spec_dir)" "custom-specs" "configured spec dir"
+[[ -d "$config_repo/custom-specs" ]] || fail "configured spec dir was not created"
+configured_specs="$(cd "$config_repo" && list_spec_files)"
+contains "$configured_specs" ".specs/legacy.md" "configured spec search includes legacy dir"
+contains "$configured_specs" ".devloop/specs/devloop.md" "configured spec search includes devloop dir"
+equals "$(cd "$config_repo" && generated_spec_path "$spec_output" "" "2026-05-29" false)" "$config_repo_real/custom-specs/2026-05-29-generated.md" "configured generated spec path"
+if (cd "$config_repo" && write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
+
+absolute_specs="$work/shared-specs"
+equals "$(cd "$config_repo" && write_config_spec_dir "$absolute_specs")" "$absolute_specs" "write absolute config spec dir"
+equals "$(cd "$config_repo" && devloop_spec_dir)" "$absolute_specs" "absolute configured spec dir"
+[[ -d "$absolute_specs" ]] || fail "absolute configured spec dir was not created"
+printf '%s\n' "# Shared" > "$absolute_specs/shared.md"
+absolute_configured_specs="$(cd "$config_repo" && list_spec_files)"
+contains "$absolute_configured_specs" "$absolute_specs/shared.md" "configured spec search includes absolute dir"
+contains "$absolute_configured_specs" ".specs/legacy.md" "absolute spec search includes legacy dir"
+equals "$(cd "$config_repo" && generated_spec_path "$spec_output" "" "2026-05-29" false)" "$absolute_specs/2026-05-29-generated.md" "absolute generated spec path"
+equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
+equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
+
+tilde_repo="$work/tilde-repo"
+tilde_home="$work/home"
+mkdir -p "$tilde_repo" "$tilde_home"
+equals "$(cd "$tilde_repo" && HOME="$tilde_home" write_config_spec_dir "~/shared-specs")" "$tilde_home/shared-specs" "tilde input expands when saved"
+equals "$(cat "$tilde_repo/.devloop/config")" "spec_dir=$tilde_home/shared-specs" "tilde input saved as absolute path"
+
+raw_tilde_repo="$work/raw-tilde-repo"
+mkdir -p "$raw_tilde_repo/.devloop"
+printf '%s\n' "spec_dir=~/raw-specs" > "$raw_tilde_repo/.devloop/config"
+equals "$(cd "$raw_tilde_repo" && devloop_spec_dir)" ".specs" "raw tilde config falls back"
+
 session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue this session, run codex exec resume 22222222-2222-4222-8222-222222222222'
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
 
@@ -258,12 +299,15 @@ AGENT
 chmod +x "$agent"
 
 repo="$work/repo"
-mkdir -p "$repo"
+mkdir -p "$repo/.devloop"
+repo_specs="$work/repo-specs"
+printf 'spec_dir=%s\n' "$repo_specs" > "$repo/.devloop/config"
 (
   cd "$repo"
   "$ROOT/devloop" spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
-[[ -f "$repo/.specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec"
+[[ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec under absolute configured dir"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Output path: choose a $repo_specs/" "spec prompt configured output"
 ok "spec generation"

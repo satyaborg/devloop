@@ -124,4 +124,4 @@ Keep every standard section present, remove leftover placeholders, and list the 
 
 ## Output
 
-When a caller provides an output path, write the spec there. Otherwise, write only the markdown spec to stdout or save it under `.specs/YYYY-MM-DD-<slug>.md` in the target repository. Do not wrap the spec in a code fence unless the caller explicitly asks for a fenced snippet.
+When a caller provides an output path, write the spec there. Otherwise, write only the markdown spec to stdout or save it under the caller's requested default spec directory, usually `.specs/YYYY-MM-DD-<slug>.md`. Do not wrap the spec in a code fence unless the caller explicitly asks for a fenced snippet.

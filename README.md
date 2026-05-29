@@ -68,6 +68,16 @@ devloop spec
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
 ```
 
+By default, generated specs are written under `.specs/`. To change that for a repo, open `devloop`, choose `Settings`, and set the default spec directory. The setting is stored in `.devloop/config` and can be repo-relative or absolute:
+
+```ini
+spec_dir=/Users/satya/Projects/specs
+```
+
+The Settings menu expands `~/...` before saving. Absolute paths are machine-local, so avoid committing them as shared project config.
+
+The interactive spec picker searches the configured directory, `.specs/`, and `.devloop/specs/`.
+
 Strict mode is on by default. It requires acceptance criteria and only accepts
 reviews that pass both the spec gate and engineering quality gate:
 
@@ -99,10 +109,11 @@ devloop [options] <spec.md> [max=5]
 
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
-- `Run a spec`: pick a `.specs/*.md` file, review run settings, then start.
+- `Run a spec`: pick a spec from the configured spec directory, `.specs/`, or `.devloop/specs/`.
 - `Create a spec`: choose the spec agent and provide source context.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
+- `Settings`: edit repo-local settings such as the default spec directory.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
 `gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.

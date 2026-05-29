@@ -170,6 +170,139 @@ has_arg() {
   return 1
 }
 
+trim_string() {
+  printf '%s\n' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+devloop_config_file() {
+  printf '%s\n' ".devloop/config"
+}
+
+devloop_config_value() {
+  local key="$1"
+  local file line value
+  file="$(devloop_config_file)"
+  [ -f "$file" ] || return 1
+  while IFS= read -r line; do
+    value="$(printf '%s\n' "$line" | sed -nE "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*(.*)$/\1/p")"
+    [ -n "$value" ] || continue
+    value="${value%%#*}"
+    value="$(trim_string "$value")"
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+    esac
+    printf '%s\n' "$value"
+  done < "$file" | tail -n 1
+}
+
+normalize_spec_dir() {
+  local dir="$1"
+  dir="$(trim_string "$dir")"
+  case "$dir" in
+    ./*)
+      while [ "${dir#./}" != "$dir" ]; do dir="${dir#./}"; done
+      ;;
+  esac
+  while [ "$dir" != "/" ] && [ "$dir" != "." ] && [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
+  case "$dir" in
+    ""|"."|".."|"/"|\~*|../*|*/../*|*/..) return 1 ;;
+  esac
+  printf '%s\n' "$dir"
+}
+
+expand_spec_dir_input() {
+  local dir="$1"
+  dir="$(trim_string "$dir")"
+  case "$dir" in
+    "~")
+      if [ -z "${HOME:-}" ]; then return 1; fi
+      printf '%s\n' "$HOME"
+      ;;
+    "~/"*)
+      if [ -z "${HOME:-}" ]; then return 1; fi
+      printf '%s/%s\n' "${HOME%/}" "${dir#\~/}"
+      ;;
+    *)
+      printf '%s\n' "$dir"
+      ;;
+  esac
+}
+
+devloop_spec_dir() {
+  local value normalized
+  value="$(devloop_config_value spec_dir || true)"
+  if normalized="$(normalize_spec_dir "$value")"; then
+    printf '%s\n' "$normalized"
+  else
+    printf '%s\n' ".specs"
+  fi
+}
+
+spec_search_dirs() {
+  local configured dir seen
+  configured="$(devloop_spec_dir)"
+  seen=""
+  for dir in "$configured" ".specs" ".devloop/specs"; do
+    [ -n "$dir" ] || continue
+    case "$seen" in
+      *"|$dir|"*) continue ;;
+    esac
+    seen="$seen|$dir|"
+    printf '%s\n' "$dir"
+  done
+}
+
+spec_search_label() {
+  local label="" dir
+  while IFS= read -r dir; do
+    if [ -z "$label" ]; then label="$dir"; else label="$label, $dir"; fi
+  done <<EOF
+$(spec_search_dirs)
+EOF
+  printf '%s\n' "$label"
+}
+
+list_spec_files() {
+  local dir
+  spec_search_dirs |
+    while IFS= read -r dir; do
+      if [ -d "$dir" ]; then
+        find "$dir" -type f -name '*.md'
+      fi
+    done | LC_ALL=C sort
+}
+
+spec_dir_status() {
+  local dir="$1"
+  if [ -d "$dir" ]; then
+    printf '%s\n' "exists"
+  else
+    printf '%s\n' "missing"
+  fi
+}
+
+write_config_spec_dir() {
+  local dir="$1"
+  local expanded normalized file tmp
+  expanded="$(expand_spec_dir_input "$dir")" || {
+    printf '%s\n' "spec directory could not be expanded" >&2
+    return 2
+  }
+  normalized="$(normalize_spec_dir "$expanded")" || {
+    printf '%s\n' "spec directory must be absolute, or relative without '..'" >&2
+    return 2
+  }
+  file="$(devloop_config_file)"
+  mkdir -p "$(dirname "$file")" "$normalized" || return 1
+  tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-config.XXXXXX")"
+  if [ -f "$file" ]; then
+    sed -E '/^[[:space:]]*spec_dir[[:space:]]*=/d' "$file" > "$tmp"
+  fi
+  printf 'spec_dir=%s\n' "$normalized" >> "$tmp"
+  mv "$tmp" "$file"
+  printf '%s\n' "$normalized"
+}
+
 ui_has_gum() {
   [ "$USE_TUI" = true ] && command -v gum >/dev/null 2>&1
 }
@@ -463,6 +596,7 @@ interactive_menu() {
       "Create a spec" \
       "Continue a run" \
       "Open reports" \
+      "Settings" \
       "Doctor" \
       "Quit")" || return 130
     case "$choice" in
@@ -470,6 +604,7 @@ interactive_menu() {
       "Create a spec") interactive_create_spec; return $? ;;
       "Continue a run") continue_command; return $? ;;
       "Open reports") reports_command; return $? ;;
+      "Settings") interactive_settings || return $? ;;
       "Doctor") devloop_doctor "$ROOT_DIR"; return $? ;;
       "Quit") return 0 ;;
     esac
@@ -479,7 +614,7 @@ interactive_menu() {
 interactive_run_spec() {
   local spec
   if ! spec="$(select_spec_file)"; then
-    printf '%s\n' "no specs found under .specs" >&2
+    printf 'no specs found under %s\n' "$(spec_search_label)" >&2
     if ui_confirm "Create a spec now?"; then
       interactive_create_spec
       return $?
@@ -498,6 +633,33 @@ interactive_create_spec() {
   else
     spec_command --agent "$agent"
   fi
+}
+
+interactive_settings() {
+  local choice value saved spec_dir
+  while true; do
+    spec_dir="$(devloop_spec_dir)"
+    ui_header "Settings" "Repo-local devloop config"
+    ui_print_key_values \
+      "config" "$(devloop_config_file)" \
+      "default spec dir" "$spec_dir" \
+      "spec dir status" "$(spec_dir_status "$spec_dir")" \
+      "searched spec dirs" "$(spec_search_label)"
+    choice="$(ui_choose "Edit settings" \
+      "Change default spec directory" \
+      "Back")" || return 130
+    case "$choice" in
+      "Change default spec directory")
+        value="$(ui_input "Default spec directory" "$spec_dir")" || return 130
+        if saved="$(write_config_spec_dir "$value")"; then
+          printf 'settings saved: spec_dir=%s\n' "$saved" >&2
+        else
+          printf '%s\n' "settings not saved" >&2
+        fi
+        ;;
+      "Back") return 0 ;;
+    esac
+  done
 }
 
 interactive_run_setup() {
@@ -579,9 +741,7 @@ interactive_run_setup() {
 select_spec_file() {
   local list selected
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-specs.XXXXXX")"
-  if [ -d ".specs" ]; then
-    find ".specs" -type f -name '*.md' | LC_ALL=C sort > "$list"
-  fi
+  list_spec_files > "$list"
   selected="$(ui_pick_from_file "$list" "Select spec")"
   local code=$?
   rm -f "$list"
@@ -2345,10 +2505,11 @@ spec_command() {
     skill-path) printf '%s\n' "$skill"; return ;;
   esac
 
-  local context today prompt cmd_args=()
+  local context today prompt spec_dir cmd_args=()
   context="$(resolve_spec_context "${context_items[@]}")"
   today="$(date +%F)"
-  prompt="$(spec_prompt "$context" "$output" "$skill" "$today")"
+  spec_dir="$(devloop_spec_dir)"
+  prompt="$(spec_prompt "$context" "$output" "$skill" "$today" "$spec_dir")"
   if [ "$USE_TUI" = true ]; then event_step "spec" "generate spec with $agent"; fi
   if [ "$agent" = "codex" ]; then
     run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
@@ -2407,11 +2568,12 @@ spec_prompt() {
   local output="$2"
   local skill="$3"
   local today="$4"
+  local spec_dir="$5"
   local output_line
   if [ -n "$output" ]; then
     output_line="Output path: $output"
   else
-    output_line="Output path: choose a .specs/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."
+    output_line="Output path: choose a $spec_dir/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."
   fi
   cat <<EOF
 Use the installed devloop-spec skill to produce one implementation spec.
@@ -2458,7 +2620,7 @@ generated_spec_path() {
   local output="$2"
   local today="$3"
   local force="$4"
-  local title slug file base ext index
+  local title slug file base ext index spec_dir
   if [ -n "$output" ]; then
     absolute_path "$output"
     return
@@ -2466,7 +2628,11 @@ generated_spec_path() {
   title="$(printf '%s\n' "$markdown" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | head -n 1)"
   slug="$(slugify "${title:-spec}")"
   if [ -z "$slug" ]; then slug="spec"; fi
-  file="$PWD/.specs/$today-$slug.md"
+  spec_dir="$(devloop_spec_dir)"
+  case "$spec_dir" in
+    /*) file="$spec_dir/$today-$slug.md" ;;
+    *) file="$PWD/$spec_dir/$today-$slug.md" ;;
+  esac
   if [ "$force" = true ]; then
     printf '%s\n' "$file"
     return
