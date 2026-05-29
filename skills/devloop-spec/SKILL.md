@@ -1,6 +1,8 @@
 ---
 name: devloop-spec
 description: Use this skill when the user wants a devloop-ready implementation spec from a rough idea, notes, file, URL, issue, research, or conversation context. Interview from a cold start when source material is too thin; otherwise distill the provided material into one concrete spec.
+metadata:
+  devloop-managed: "true"
 ---
 
 # Devloop Spec
@@ -11,6 +13,8 @@ Produce one implementation spec that conforms to the devloop standard. This skil
 - Distill: if the user supplied notes, a file, a URL, research, an issue, or conversation context, compress that material faithfully and flag any remaining gaps.
 
 The output is the spec that `devloop` will use as its implementation input.
+
+When a starter document is needed, read `references/spec-template.md`.
 
 ## Scope Guard
 

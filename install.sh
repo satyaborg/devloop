@@ -12,9 +12,12 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 
 ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+source "$ROOT/skill_helpers.sh"
+
 BIN_DIR="${DEVLOOP_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/devloop"
 SOURCE="$ROOT/devloop"
+SKILL_STATUS=0
 
 if [ ! -f "$SOURCE" ]; then
   echo "missing devloop executable: $SOURCE" >&2
@@ -26,6 +29,7 @@ chmod +x "$SOURCE"
 ln -sfn "$SOURCE" "$TARGET"
 
 echo "installed devloop -> $SOURCE"
+devloop_install_skills "$ROOT" || SKILL_STATUS=$?
 
 case ":${PATH:-}:" in
   *":$BIN_DIR:"*) ;;
@@ -37,4 +41,5 @@ case ":${PATH:-}:" in
 esac
 
 echo
-echo "try: devloop --help"
+echo "try: devloop doctor"
+exit "$SKILL_STATUS"
