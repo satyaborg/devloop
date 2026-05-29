@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Bash CLI project. The active runtime is the root `devloop` executable. `install.sh` links it into a local bin directory, `tests/devloop_test.sh` covers the shell runtime, `skills/spec/SKILL.md` is the spec-generation prompt asset, and `templates/spec.md` is the starter spec. Generated runtime output belongs under `.codex/` in target repositories and should not be committed here.
+This is a Bash CLI project. The active runtime is the root `devloop` executable. `install.sh` links it into a local bin directory, `tests/devloop_test.sh` covers the shell runtime, `skills/devloop-spec/SKILL.md` is the spec-generation prompt asset, `skills/devloop-review/SKILL.md` is the review prompt asset, and `templates/spec.md` is the starter spec. Generated runtime output belongs under `.codex/` in target repositories and should not be committed here.
 
 ## Build, Test, and Development Commands
 

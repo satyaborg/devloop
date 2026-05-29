@@ -1,6 +1,6 @@
 ---
 name: devloop-spec
-description: Interview from a cold start or distill existing material into one devloop-compatible implementation spec. Use when the user wants a concrete spec for devloop, whether they provide notes, a file, a URL, research, conversation context, or only a rough idea.
+description: Use this skill when the user wants a devloop-ready implementation spec from a rough idea, notes, file, URL, issue, research, or conversation context. Interview from a cold start when source material is too thin; otherwise distill the provided material into one concrete spec.
 ---
 
 # Devloop Spec
