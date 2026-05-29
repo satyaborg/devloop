@@ -68,13 +68,20 @@ devloop spec
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
 ```
 
-By default, generated specs are written under `.specs/`. To change that for a repo, open `devloop`, choose `Settings`, and set the default spec directory. The setting is stored in `.devloop/config` and can be repo-relative or absolute:
+By default, generated specs are written under `.specs/`. To change that, open `devloop`, choose `Settings`, and set the default spec directory globally or for the current checkout. Config is merged per key with the local checkout taking precedence:
+
+```text
+~/.devloop/config   # global defaults
+.devloop/config     # checkout-local overrides
+```
+
+Spec directories can be repo-relative or absolute:
 
 ```ini
 spec_dir=/Users/satya/Projects/specs
 ```
 
-The Settings menu expands `~/...` before saving. Absolute paths are machine-local, so avoid committing them as shared project config.
+The Settings menu expands `~/...` before saving. `.devloop/` is ignored by git because absolute paths are machine-local.
 
 The interactive spec picker searches the configured directory, `.specs/`, and `.devloop/specs/`.
 
@@ -96,8 +103,8 @@ devloop [options] <spec.md> [max=5]
 | --- | --- |
 | `--plain` | Force plain output, useful for automation |
 | `--tui` | Force simple terminal progress output |
-| `--coder <agent>` | Choose `codex` or `claude` for implementation |
-| `--reviewer <agent>` | Choose `codex` or `claude` for review |
+| `--coder <agent>` | Choose Codex or Claude Code for implementation (`codex`/`claude`) |
+| `--reviewer <agent>` | Choose Codex or Claude Code for review (`codex`/`claude`) |
 | `--report-format <format>` | Choose `html` or `markdown` |
 | `--in-place` | Run in the current worktree |
 | `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
@@ -113,7 +120,7 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 - `Create a spec`: choose the spec agent and provide source context.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
-- `Settings`: edit repo-local settings such as the default spec directory.
+- `Settings`: edit global or checkout-local settings such as the default spec directory.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
 `gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
