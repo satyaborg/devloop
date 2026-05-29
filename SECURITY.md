@@ -2,7 +2,7 @@
 
 ## Security Model
 
-devloop runs local agent CLIs with broad permissions because the configured coder and reviewer need access to inspect and modify a checkout. By default, devloop creates isolated sibling git worktrees before invoking those agents, but the agents still run on your machine with your local credentials, environment variables, PATH, and filesystem permissions.
+devloop is a Bash harness that runs local agent CLIs with broad permissions because the configured coder and reviewer need access to inspect and modify a checkout. By default, devloop creates isolated sibling git worktrees before invoking those agents, but the agents still run on your machine with your local credentials, environment variables, PATH, and filesystem permissions.
 
 devloop writes `.codex/` artifacts for specs, tracks, reviews, reports, logs, and session ids. Treat those files as local development artifacts that may contain prompts, review text, command output, and repository paths.
 
@@ -18,4 +18,4 @@ If that is not available, open a minimal issue that does not include exploit det
 
 ## Supported Versions
 
-Security fixes target the latest released npm package and the `main` branch.
+Security fixes target the root `devloop` executable on the `main` branch and the latest GitHub release.

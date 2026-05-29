@@ -1,36 +1,28 @@
 [![CI](https://github.com/satyaborg/devloop/actions/workflows/ci.yml/badge.svg)](https://github.com/satyaborg/devloop/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@satyaborg/devloop.svg)](https://www.npmjs.com/package/@satyaborg/devloop)
-[![license](https://img.shields.io/npm/l/@satyaborg/devloop.svg)](LICENSE)
-[![npm downloads](https://img.shields.io/npm/dm/@satyaborg/devloop.svg)](https://www.npmjs.com/package/@satyaborg/devloop)
+[![license](https://img.shields.io/github/license/satyaborg/devloop.svg)](LICENSE)
 
 # Devloop
 
 **Spec in. Reviewed code out.**
 
-`devloop` runs a local implementation and review loop for agent-written code.
+`devloop` is a single Bash executable that runs a local implementation and review loop for agent-written code.
 
 By default, Codex makes the change, Claude Code reviews it, and Codex retries until the work is accepted, stalled, unclear, or out of passes.
 
 ## Install
 
-Prereqs: Bun 1.2+, git, and the agent CLIs you want to use. The default pairing requires `codex` and `claude`.
+Prereqs: Bash, git, and the agent CLIs you want to use. The default pairing requires `codex` and `claude`.
 
 ```sh
-npm install -g @satyaborg/devloop
+git clone https://github.com/satyaborg/devloop.git
+cd devloop
+./install.sh
 ```
 
 Run without installing:
 
 ```sh
-bunx @satyaborg/devloop --help
-```
-
-Install from source:
-
-```sh
-git clone https://github.com/satyaborg/devloop.git
-cd devloop
-bun scripts/install.ts
+./devloop --help
 ```
 
 ## Quick Start
@@ -78,7 +70,7 @@ devloop [options] <spec.md> [max=5]
 | Option | Meaning |
 | --- | --- |
 | `--plain` | Force plain output, useful for CI |
-| `--tui` | Force the terminal UI |
+| `--tui` | Force simple terminal progress output |
 | `--coder <agent>` | Choose `codex` or `claude` for implementation |
 | `--reviewer <agent>` | Choose `codex` or `claude` for review |
 | `--report-format <format>` | Choose `html` or `markdown` |
@@ -102,13 +94,12 @@ devloop [options] <spec.md> [max=5]
 ## Development
 
 ```sh
-bun scripts/install.ts
-bun run typecheck
-bun test
-bun run package:smoke
+bash -n devloop install.sh
+./devloop --help
+DEVLOOP_BIN_DIR="$(mktemp -d)/bin" ./install.sh
 ```
 
-`bun test` enforces 100% line, function, and statement coverage for the TypeScript core.
+The supported runtime is the root [`devloop`](devloop) Bash script.
 
 ## License
 

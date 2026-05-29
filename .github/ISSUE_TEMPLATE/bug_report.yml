@@ -23,12 +23,12 @@ body:
     id: version
     attributes:
       label: devloop version
-      placeholder: "@satyaborg/devloop 0.1.0"
+      placeholder: "Git commit or release tag"
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: Bun version, OS, shell, and configured coder/reviewer agents.
+      description: OS, Bash version, git version, and configured coder/reviewer agents.
   - type: textarea
     id: logs
     attributes:
