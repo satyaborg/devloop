@@ -26,7 +26,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$ROOT/devloop" "$ROOT/install.sh"
+bash -n "$ROOT/devloop" "$ROOT/install.sh" "$ROOT/skill_helpers.sh"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -35,6 +35,7 @@ unset DEVLOOP_LIB
 
 help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
+contains "$help" "devloop doctor" "help"
 contains "$help" "--create-pr" "help"
 ok "help output"
 
@@ -47,10 +48,15 @@ for skill in "$ROOT"/skills/*/SKILL.md; do
   name="$(sed -n 's/^name: *//p' "$skill" | head -n 1)"
   description="$(sed -n 's/^description: *//p' "$skill" | head -n 1)"
   dirname="$(basename "$(dirname "$skill")")"
+  reference_nesting=""
   [[ "$name" == "$dirname" ]] || fail "skill name mismatch: $skill declares $name"
   [[ "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "invalid skill name: $name"
   [[ -n "$description" ]] || fail "missing skill description: $skill"
   [[ "${#description}" -le 1024 ]] || fail "skill description too long: $skill"
+  if [ -d "$(dirname "$skill")/references" ]; then
+    reference_nesting="$(find "$(dirname "$skill")/references" -mindepth 2 -type f -print)"
+    [[ -z "$reference_nesting" ]] || fail "nested skill references: $reference_nesting"
+  fi
 done
 ok "skill metadata"
 
@@ -104,8 +110,8 @@ sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > 
 if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
 
 review_prompt_text="$(review_prompt codex "$criteria_file" ".codex/tracks/test.md" main 1 ".codex/reviews/test-r1.md" test 5 "$criteria_file" true)"
-contains "$review_prompt_text" "Bundled review skill:" "review prompt"
-contains "$review_prompt_text" "Devloop Review" "review prompt"
+contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
+contains "$review_prompt_text" "Bundled skill path, for fallback only: $ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
 
 findings_a="$work/findings-a.md"
@@ -179,12 +185,36 @@ contains "$uuid_one" "00000000-0000-4000-8000-" "new_uuid fallback format"
 ok "pure helpers"
 
 bin_dir="$work/bin"
-DEVLOOP_BIN_DIR="$bin_dir" "$ROOT/install.sh" >/tmp/devloop-install-test.out
+skills_dir="$work/skills"
+DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-test.out
 [[ -x "$ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
+[[ -f "$skills_dir/devloop-spec/SKILL.md" ]] || fail "installer did not install spec skill"
+[[ -f "$skills_dir/devloop-spec/references/spec-template.md" ]] || fail "installer did not install spec template reference"
+[[ -f "$skills_dir/devloop-review/SKILL.md" ]] || fail "installer did not install review skill"
+[[ -f "$skills_dir/devloop-review/.devloop-checksum" ]] || fail "installer did not write checksum"
 "$bin_dir/devloop" --help >/tmp/devloop-help-test.out
 contains "$(cat /tmp/devloop-help-test.out)" "Spec-driven code and review loop." "installed help"
 ok "installer"
+
+printf '%s\n' "user edit" >> "$skills_dir/devloop-review/SKILL.md"
+DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
+contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
+contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
+contains "$(cat "$skills_dir/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
+DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" DEVLOOP_SKILLS_DIR="$skills_dir" "$ROOT/install.sh" >/tmp/devloop-install-force.out
+if grep -q "user edit" "$skills_dir/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
+ok "installer skill updates"
+
+fake_bin="$work/fake-bin"
+mkdir -p "$fake_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/codex"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/claude"
+chmod +x "$fake_bin/codex" "$fake_bin/claude"
+doctor_output="$(DEVLOOP_SKILLS_DIR="$skills_dir" PATH="$bin_dir:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
+contains "$doctor_output" "devloop doctor: ready" "doctor"
+contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
+ok "doctor"
 
 agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'

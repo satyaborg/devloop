@@ -14,6 +14,7 @@ while [ -L "$SCRIPT_PATH" ]; do
   esac
 done
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+source "$ROOT_DIR/skill_helpers.sh"
 
 USE_TUI=false
 if [ -t 1 ]; then USE_TUI=true; fi
@@ -52,6 +53,16 @@ main() {
     return $?
   fi
 
+  if [ "${1:-}" = "doctor" ]; then
+    shift
+    if [ "$#" -gt 0 ]; then
+      printf '%s\n' "usage: devloop doctor" >&2
+      return 2
+    fi
+    devloop_doctor "$ROOT_DIR"
+    return $?
+  fi
+
   if [ "$#" -eq 0 ] || has_arg "-h" "$@" || has_arg "--help" "$@"; then
     welcome
     return 0
@@ -75,6 +86,7 @@ Usage:
   devloop [options] <spec.md> [max=5]
 
 Common commands:
+  devloop doctor
   devloop spec "add retry behavior to the chat sender"
   devloop .specs/change.md
   devloop --tui .specs/change.md
@@ -1081,7 +1093,7 @@ review_prompt() {
   local criteria priors review_skill strict_rule
   criteria="$(criteria_block "$criteria_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
-  review_skill="$(cat "$ROOT_DIR/skills/devloop-review/SKILL.md")"
+  review_skill="$ROOT_DIR/skills/devloop-review/SKILL.md"
   strict_rule=""
   if [ "$strict" = true ]; then
     strict_rule="
@@ -1099,8 +1111,8 @@ $priors
 Acceptance criteria:
 $criteria
 Output path: $output
-Bundled review skill:
-$review_skill
+Skill: use the installed devloop-review skill.
+Bundled skill path, for fallback only: $review_skill
 
 Steps:
 1. Read the spec and track.
@@ -1644,7 +1656,7 @@ spec_command() {
   local context today prompt cmd_args=()
   context="$(resolve_spec_context "${context_items[@]}")"
   today="$(date +%F)"
-  prompt="$(spec_prompt "$context" "$output" "$(cat "$skill")" "$today")"
+  prompt="$(spec_prompt "$context" "$output" "$skill" "$today")"
   if [ "$agent" = "codex" ]; then
     run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
   elif [ "$agent" = "claude" ]; then
@@ -1705,15 +1717,14 @@ spec_prompt() {
     output_line="Output path: choose a .specs/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."
   fi
   cat <<EOF
-Use this bundled devloop skill to produce one implementation spec.
+Use the installed devloop-spec skill to produce one implementation spec.
 
 Current date: $today
 $output_line
 
 If the source context is missing or too thin, follow the skill's interview path before drafting. Return only the final markdown spec. Do not wrap it in a code fence.
 
-Bundled skill:
-$skill
+Bundled skill path, for fallback only: $skill
 
 Context:
 $context

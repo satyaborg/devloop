@@ -22,6 +22,13 @@ Run without installing:
 ./devloop --help
 ```
 
+`install.sh` also installs the bundled Agent Skills globally under `~/.agents/skills`.
+After install or update, verify the local setup:
+
+```sh
+devloop doctor
+```
+
 ## Quick Start
 
 Create a spec:
@@ -44,7 +51,7 @@ devloop --create-pr .specs/change.md
 
 ## Specs
 
-A good spec is short, concrete, and verifiable. Start from [`templates/spec.md`](templates/spec.md), or generate one:
+A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md), or generate one:
 
 ```sh
 devloop spec
@@ -94,7 +101,9 @@ devloop [options] <spec.md> [max=5]
 ```sh
 bash -n devloop install.sh
 ./devloop --help
-DEVLOOP_BIN_DIR="$(mktemp -d)/bin" ./install.sh
+tmp="$(mktemp -d)"
+DEVLOOP_BIN_DIR="$tmp/bin" DEVLOOP_SKILLS_DIR="$tmp/skills" ./install.sh
+PATH="$tmp/bin:$PATH" DEVLOOP_SKILLS_DIR="$tmp/skills" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
