@@ -1,5 +1,5 @@
 .codex/
+.claude/
 .specs/
 .DS_Store
 coverage/
-node_modules/
