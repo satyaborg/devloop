@@ -243,12 +243,14 @@ run_devloop() {
   criteria_count="$(line_count "$criteria_file")"
   if [ "$strict" = true ] && [ "$criteria_count" -eq 0 ]; then
     printf '%s\n' "strict mode requires ## Acceptance criteria" >&2
+    rm -f "$criteria_file"
     return 2
   fi
   event_gate "acceptance criteria" "$criteria_count" "$criteria_count found"
 
   SOURCE_REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || {
     printf '%s\n' "not inside a git repository" >&2
+    rm -f "$criteria_file"
     return 2
   }
   local source_branch
@@ -269,6 +271,7 @@ run_devloop() {
     else
       printf 'naming failed: %s\n' "$naming_error" >&2
     fi
+    rm -f "$criteria_file"
     return 2
   fi
   local slug="$WORK_SLUG"
@@ -277,7 +280,10 @@ run_devloop() {
   local repo="$SOURCE_REPO"
   if [ "$use_worktree" = true ]; then
     event_step "worktree" "create worktree"
-    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || return 2
+    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || {
+      rm -f "$criteria_file"
+      return 2
+    }
     event_done "worktree" true "$repo"
   fi
   WORKTREE_REPO="$repo"
@@ -990,12 +996,13 @@ new_uuid() {
   if command -v uuidgen >/dev/null 2>&1; then
     uuidgen | tr '[:upper:]' '[:lower:]'
   else
-    printf '00000000-0000-4000-8000-%012d\n' "$$"
+    printf '00000000-0000-4000-8000-%04x%04x%04x\n' "$(( RANDOM & 0xffff ))" "$(( RANDOM & 0xffff ))" "$(( RANDOM & 0xffff ))"
   fi
 }
 
 extract_session_id() {
   printf '%s\n' "$1" |
+    grep -Ei '(session.?id|thread_id|codex exec resume|codex resume|To continue this session)' |
     grep -Eio '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' |
     head -n 1 |
     tr '[:upper:]' '[:lower:]'
@@ -1291,9 +1298,15 @@ findings_hash() {
   ' "$file" |
     tr -d '0-9' |
     tr '\r\n\t' ' ' |
-    sed -E 's/[ ]+/ /g; s/\./\
-/g; s/^[[:space:]]+|[[:space:]]+$//g' |
-    awk 'NF' |
+    awk '{
+      gsub(/[[:space:]]+/, " ")
+      count = split($0, parts, ".")
+      for (i = 1; i <= count; i++) {
+        line = parts[i]
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line != "") print line
+      }
+    }' |
     LC_ALL=C sort |
     hash_sha256
 }
@@ -1724,4 +1737,6 @@ generated_spec_path() {
   printf '%s\n' "$file"
 }
 
-main "$@"
+if [ "${DEVLOOP_LIB:-}" != "1" ]; then
+  main "$@"
+fi

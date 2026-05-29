@@ -19,8 +19,19 @@ contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "$label missing: $needle"
 }
 
+equals() {
+  local actual="$1"
+  local expected="$2"
+  local label="$3"
+  [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
+}
+
 bash -n "$ROOT/devloop" "$ROOT/install.sh"
 ok "bash syntax"
+
+DEVLOOP_LIB=1
+source "$ROOT/devloop"
+unset DEVLOOP_LIB
 
 help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
@@ -33,6 +44,107 @@ ok "spec skill path"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+criteria_file="$work/criteria.md"
+cat > "$criteria_file" <<'MARKDOWN'
+# Spec
+
+## Acceptance criteria
+1. First thing
+- Second thing
+
+## Notes
+Ignore me
+MARKDOWN
+equals "$(parse_criteria "$criteria_file")" $'First thing\nSecond thing' "parse_criteria"
+
+review_file="$work/review.md"
+cat > "$review_file" <<'MARKDOWN'
+# Review
+
+Verdict: ACCEPT
+
+## Acceptance matrix
+
+| Criterion | Status | Implementation evidence | Test evidence |
+| --- | --- | --- | --- |
+| AC1 | PASS | code path | test |
+| AC2 | PASS | behavior | test |
+MARKDOWN
+equals "$(parse_verdict "$review_file")" "ACCEPT" "parse_verdict"
+has_passing_matrix "$review_file" 2 || fail "has_passing_matrix rejected passing matrix"
+sed 's/| AC2 | PASS |/| AC2 | FAIL |/' "$review_file" > "$work/review-fail.md"
+if has_passing_matrix "$work/review-fail.md" 2; then fail "has_passing_matrix accepted failing matrix"; fi
+
+findings_a="$work/findings-a.md"
+findings_b="$work/findings-b.md"
+cat > "$findings_a" <<'MARKDOWN'
+## Findings
+
+1. Fix item 123.
+2. Another item 456.
+
+## Notes
+none
+MARKDOWN
+cat > "$findings_b" <<'MARKDOWN'
+## Findings
+
+2. Another item 999.
+1. Fix item 000.
+
+## Notes
+none
+MARKDOWN
+equals "$(findings_hash "$findings_a")" "$(findings_hash "$findings_b")" "findings_hash normalizes order and numbers"
+
+equals "$(slugify "Feat: Chat Retry's")" "feat-chat-retrys" "slugify"
+equals "$(parse_bool yes)" "true" "parse_bool true"
+equals "$(parse_bool 0)" "false" "parse_bool false"
+if parse_bool maybe >/dev/null 2>&1; then fail "parse_bool accepted invalid value"; fi
+
+frontmatter_text=$'---\ntype: fix!\nslug: "Chat Retry"\nbreaking: true\nempty: null\n---\n# Title'
+equals "$(frontmatter_value type "$frontmatter_text")" "fix!" "frontmatter type"
+equals "$(frontmatter_value slug "$frontmatter_text")" "Chat Retry" "frontmatter slug"
+equals "$(frontmatter_value empty "$frontmatter_text")" "" "frontmatter ignores null"
+
+parse_work_item 'noise {"type":"feat","slug":"chat-retry","breaking":false}' || fail "parse_work_item failed"
+equals "$WORK_TYPE" "feat" "work item type"
+equals "$WORK_SLUG" "chat-retry" "work item slug"
+equals "$WORK_BREAKING" "false" "work item breaking"
+if parse_work_item '{"type":"feat","slug":"feat-chat-retry","breaking":false}' >/dev/null 2>&1; then fail "parse_work_item accepted type-prefixed slug"; fi
+
+equals "$(branch_base fix true null-check)" "fix!/null-check" "branch_base breaking"
+equals "$(pass_commit_message feat false chat-retry 1)" "feat: chat-retry" "first pass commit"
+equals "$(pass_commit_message feat false chat-retry 2)" "fix: chat-retry" "later pass commit"
+equals "$(pass_commit_message chore false docs 2)" "chore: docs" "later chore commit"
+
+branch_repo="$work/branch-repo"
+git init -q "$branch_repo"
+git -C "$branch_repo" config user.email devloop-test@example.com
+git -C "$branch_repo" config user.name "devloop test"
+printf x > "$branch_repo/file.txt"
+git -C "$branch_repo" add file.txt
+git -C "$branch_repo" commit -q -m init
+git -C "$branch_repo" branch feat/chat-retry
+equals "$(next_branch "$branch_repo" feat false chat-retry "")" "feat/chat-retry-2" "next_branch suffix"
+
+spec_output=$'preface\n---\nstatus: draft\n---\n\n# Generated'
+equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n# Generated' "extract_generated_spec"
+
+session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue this session, run codex exec resume 22222222-2222-4222-8222-222222222222'
+equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
+
+old_path="$PATH"
+no_uuid_path="$work/no-uuid"
+mkdir -p "$no_uuid_path"
+PATH="$no_uuid_path"
+uuid_one="$(new_uuid)"
+uuid_two="$(new_uuid)"
+PATH="$old_path"
+[[ "$uuid_one" != "$uuid_two" ]] || fail "new_uuid fallback returned duplicate values"
+contains "$uuid_one" "00000000-0000-4000-8000-" "new_uuid fallback format"
+ok "pure helpers"
 
 bin_dir="$work/bin"
 DEVLOOP_BIN_DIR="$bin_dir" "$ROOT/install.sh" >/tmp/devloop-install-test.out
