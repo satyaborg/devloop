@@ -1,6 +1,6 @@
 # Devloop
 
-**Spec in. Reviewed code out.**
+**Spec-driven code and review loop.**
 
 `devloop` is a single Bash executable that runs a local implementation and review loop for agent-written code.
 
@@ -95,7 +95,7 @@ devloop [options] <spec.md> [max=5]
 | Option | Meaning |
 | --- | --- |
 | `--plain` | Force plain output, useful for automation |
-| `--tui` | Force simple terminal progress output |
+| `--tui` | Force terminal UI output |
 | `--coder <agent>` | Choose Codex or Claude Code for implementation (`codex`/`claude`) |
 | `--reviewer <agent>` | Choose Codex or Claude Code for review (`codex`/`claude`) |
 | `--report-format <format>` | Choose `html` or `markdown` |
@@ -116,7 +116,9 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 - `Settings`: view spec search paths, and add or remove one custom spec path.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
-`gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
+Nested menu screens keep `Back` as the final option so you can return to the previous menu without exiting Devloop.
+
+`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
 
 ## What Devloop Does
 

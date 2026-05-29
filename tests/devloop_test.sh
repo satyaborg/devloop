@@ -261,6 +261,15 @@ equals "$(cd "$raw_tilde_repo" && devloop_spec_dir)" ".specs" "raw tilde config 
 session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue this session, run codex exec resume 22222222-2222-4222-8222-222222222222'
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
 
+contains "$(devloop_logo)" "░█▀▄░█▀▀" "devloop logo"
+equals "$(ui_color_code accent)" "38;5;141" "accent color"
+equals "$(ui_color_code rec)" "38;5;135" "run color"
+equals "$(ui_color_code ok)" "38;5;141" "ok color"
+equals "$(ui_color_code dim)" "38;5;244" "dim color"
+if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec back navigation"; fi
+if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
+if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup back navigation"; fi
+
 picker_file="$work/picker.txt"
 printf '%s\n' "alpha" "beta" > "$picker_file"
 old_use_tui="$USE_TUI"
