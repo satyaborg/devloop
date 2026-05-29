@@ -199,6 +199,48 @@ USE_TUI=false
 equals "$(ui_pick_from_file "$picker_file" "Pick")" "alpha" "non-tui picker fallback"
 USE_TUI="$old_use_tui"
 
+step_log="$work/step.log"
+printf '%s\n' "hidden" > "$step_log"
+EVENT_IDS=("step")
+EVENT_TITLES=("run tests")
+EVENT_STARTS=(0)
+EVENT_STATUSES=("run")
+EVENT_DETAILS=("running")
+EVENT_OPEN=("false")
+EVENT_LOG_FILES=("$step_log")
+EVENT_STDOUT_FILES=("")
+EVENT_STDERR_FILES=("")
+closed_tui="$(ui_render_events 0 false)"
+contains "$closed_tui" "> .. [+] run tests - running" "closed tui row"
+if [[ "$closed_tui" == *hidden* ]]; then fail "closed tui row showed log output"; fi
+printf '%s\n' {0..81} | sed 's/^/line-/' > "$step_log"
+EVENT_STATUSES=("ok")
+EVENT_DETAILS=("completed")
+EVENT_OPEN=("true")
+open_tui="$(ui_render_events 0 false)"
+contains "$open_tui" "> ok [-] run tests - completed" "open tui row"
+if [[ "$open_tui" == *line-0* ]]; then fail "open tui row did not limit old logs"; fi
+contains "$open_tui" "line-81" "open tui row latest logs"
+EVENT_IDS=()
+EVENT_TITLES=()
+EVENT_STARTS=()
+EVENT_STATUSES=()
+EVENT_DETAILS=()
+EVENT_OPEN=()
+EVENT_LOG_FILES=()
+EVENT_STDOUT_FILES=()
+EVENT_STDERR_FILES=()
+UI_EVENT_DIR="$work/ui-events"
+mkdir -p "$UI_EVENT_DIR"
+event_step "agent-1" "run agent" 2>/dev/null
+equals "${EVENT_IDS[0]}" "agent-1" "event_step stores row id"
+equals "${EVENT_TITLES[0]}" "run agent" "event_step stores row title"
+[[ -f "${EVENT_LOG_FILES[0]}" ]] || fail "event_step did not create row log"
+event_done "agent-1" true "completed" 2>/dev/null
+equals "${EVENT_STATUSES[0]}" "ok" "event_done stores row status"
+contains "${EVENT_DETAILS[0]}" "completed" "event_done stores row detail"
+ok "tui log rendering"
+
 old_path="$PATH"
 no_uuid_path="$work/no-uuid"
 mkdir -p "$no_uuid_path"

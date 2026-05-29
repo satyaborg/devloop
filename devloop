@@ -24,10 +24,24 @@ ENTER_WORKTREE=false
 if [ -t 0 ] && [ -t 1 ]; then ENTER_WORKTREE=true; fi
 
 UI_STEP_TITLE=""
+UI_SELECTED=0
+UI_EVENT_DIR=""
+UI_TTY_RAW=false
+UI_TTY_STATE=""
+UI_TTY_FD=0
+UI_LOG_LIMIT=80
+EVENT_INDEX=0
+EVENT_LOG_PATH=""
 
 EVENT_IDS=()
 EVENT_TITLES=()
 EVENT_STARTS=()
+EVENT_STATUSES=()
+EVENT_DETAILS=()
+EVENT_OPEN=()
+EVENT_LOG_FILES=()
+EVENT_STDOUT_FILES=()
+EVENT_STDERR_FILES=()
 
 RUN_CODE=0
 RUN_STDOUT=""
@@ -355,6 +369,150 @@ ui_status_line() {
   fi
 }
 
+ui_live_enabled() {
+  [ "$USE_TUI" = true ] && [ -t 2 ]
+}
+
+ui_status_icon() {
+  case "$1" in
+    ok) printf '%s' "ok" ;;
+    fail) printf '%s' "!!" ;;
+    warn) printf '%s' "??" ;;
+    *) printf '%s' ".." ;;
+  esac
+}
+
+ui_event_output() {
+  local index="$1"
+  local stdout_file="${EVENT_STDOUT_FILES[$index]:-}"
+  local stderr_file="${EVENT_STDERR_FILES[$index]:-}"
+  local log_file="${EVENT_LOG_FILES[$index]:-}"
+  if [ -n "$stdout_file$stderr_file" ]; then
+    if [ -f "$stdout_file" ]; then cat "$stdout_file"; fi
+    if [ -f "$stderr_file" ]; then cat "$stderr_file"; fi
+  elif [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    cat "$log_file"
+  fi
+}
+
+ui_render_event_logs() {
+  local index="$1"
+  ui_event_output "$index" |
+    tail -n "$UI_LOG_LIMIT" |
+    while IFS= read -r line; do
+      printf '      %s\n' "$line"
+    done
+}
+
+ui_render_events() {
+  local selected="${1:-$UI_SELECTED}"
+  local show_help="${2:-true}"
+  local i mark fold title detail status
+  printf '%s\n\n' "devloop"
+  if [ "${#EVENT_IDS[@]}" -eq 0 ]; then
+    if [ "$show_help" = true ]; then printf '%s\n' "enter/space toggles logs, arrows move"; fi
+    return
+  fi
+  i=0
+  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
+    mark=" "
+    if [ "$i" -eq "$selected" ]; then mark=">"; fi
+    if [ "${EVENT_OPEN[$i]:-false}" = true ]; then fold="[-]"; else fold="[+]"; fi
+    title="${EVENT_TITLES[$i]}"
+    detail="${EVENT_DETAILS[$i]:-}"
+    status="${EVENT_STATUSES[$i]:-run}"
+    printf '%s %s %s %s - %s\n' "$mark" "$(ui_status_icon "$status")" "$fold" "$title" "$detail"
+    if [ "${EVENT_OPEN[$i]:-false}" = true ]; then
+      ui_render_event_logs "$i"
+    fi
+    i=$((i + 1))
+  done
+  if [ "$show_help" = true ]; then
+    printf '\n%s\n' "enter/space toggles logs, arrows move"
+  fi
+}
+
+ui_live_render() {
+  if ! ui_live_enabled; then return; fi
+  printf '\033[2J\033[H' >&2
+  ui_render_events "$UI_SELECTED" true >&2
+}
+
+ui_live_select() {
+  local delta="$1"
+  local count="${#EVENT_IDS[@]}"
+  if [ "$count" -eq 0 ]; then return; fi
+  UI_SELECTED=$((UI_SELECTED + delta))
+  if [ "$UI_SELECTED" -lt 0 ]; then UI_SELECTED=0; fi
+  if [ "$UI_SELECTED" -ge "$count" ]; then UI_SELECTED=$((count - 1)); fi
+}
+
+ui_live_toggle_selected() {
+  if [ "${#EVENT_IDS[@]}" -eq 0 ]; then return; fi
+  if [ "${EVENT_OPEN[$UI_SELECTED]:-false}" = true ]; then
+    EVENT_OPEN[$UI_SELECTED]=false
+  else
+    EVENT_OPEN[$UI_SELECTED]=true
+  fi
+}
+
+ui_tty_raw_begin() {
+  if [ "$UI_TTY_RAW" = true ]; then return; fi
+  if [ -t 0 ]; then
+    UI_TTY_FD=0
+    UI_TTY_STATE="$(stty -g 2>/dev/null)" || return
+    stty -echo -icanon min 0 time 0 2>/dev/null || return
+  elif [ -r /dev/tty ]; then
+    exec 3</dev/tty || return
+    UI_TTY_FD=3
+    UI_TTY_STATE="$(stty -g < /dev/tty 2>/dev/null)" || { exec 3<&-; UI_TTY_FD=0; return; }
+    stty -echo -icanon min 0 time 0 < /dev/tty 2>/dev/null || { exec 3<&-; UI_TTY_FD=0; return; }
+  else
+    return
+  fi
+  UI_TTY_RAW=true
+}
+
+ui_tty_restore() {
+  if [ "$UI_TTY_RAW" != true ]; then return; fi
+  if [ -n "$UI_TTY_STATE" ]; then
+    if [ "$UI_TTY_FD" -eq 0 ]; then
+      stty "$UI_TTY_STATE" 2>/dev/null || true
+    else
+      stty "$UI_TTY_STATE" < /dev/tty 2>/dev/null || true
+    fi
+  fi
+  if [ "$UI_TTY_FD" -eq 3 ]; then exec 3<&-; fi
+  UI_TTY_FD=0
+  UI_TTY_RAW=false
+}
+
+ui_live_poll_key() {
+  local key rest
+  if [ "$UI_TTY_RAW" != true ]; then return; fi
+  if [ "$UI_TTY_FD" -eq 0 ]; then
+    if ! IFS= read -r -s -n 1 key; then return; fi
+  else
+    if ! IFS= read -r -s -n 1 -u "$UI_TTY_FD" key; then return; fi
+  fi
+  case "$key" in
+    " ") ui_live_toggle_selected ;;
+    $'\r'|$'\n') ui_live_toggle_selected ;;
+    $'\033')
+      rest=""
+      if [ "$UI_TTY_FD" -eq 0 ]; then
+        IFS= read -r -s -n 2 rest || true
+      else
+        IFS= read -r -s -n 2 -u "$UI_TTY_FD" rest || true
+      fi
+      case "$rest" in
+        "[A") ui_live_select -1 ;;
+        "[B") ui_live_select 1 ;;
+      esac
+      ;;
+  esac
+}
+
 ui_spinner_wait() {
   local pid="$1"
   local done_file="$2"
@@ -362,6 +520,23 @@ ui_spinner_wait() {
   local frames='|/-\'
   local index=0
   local elapsed frame minutes seconds
+  local old_int old_term
+  if ui_live_enabled; then
+    old_int="$(trap -p INT || true)"
+    old_term="$(trap -p TERM || true)"
+    ui_tty_raw_begin
+    trap 'ui_tty_restore; exit 130' INT TERM
+    while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+      ui_live_poll_key
+      ui_live_render
+      sleep 0.2
+    done
+    ui_tty_restore
+    if [ -n "$old_int" ]; then eval "$old_int"; else trap - INT; fi
+    if [ -n "$old_term" ]; then eval "$old_term"; else trap - TERM; fi
+    ui_live_render
+    return
+  fi
   if [ "$USE_TUI" != true ] || [ ! -t 2 ]; then
     while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; done
     return
@@ -379,48 +554,125 @@ ui_spinner_wait() {
   printf '\r\033[K' >&2
 }
 
-event_store_start() {
+event_index() {
   local id="$1"
-  local title="$2"
   local i
   i=0
   while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
     if [ "${EVENT_IDS[$i]}" = "$id" ]; then
-      EVENT_TITLES[$i]="$title"
-      EVENT_STARTS[$i]="$SECONDS"
+      printf '%s\n' "$i"
       return
     fi
     i=$((i + 1))
   done
+  return 1
+}
+
+event_ensure() {
+  local id="$1"
+  local title="${2:-$1}"
+  local i
+  if i="$(event_index "$id")"; then
+    EVENT_INDEX="$i"
+    return
+  fi
+  EVENT_INDEX="${#EVENT_IDS[@]}"
   EVENT_IDS+=("$id")
   EVENT_TITLES+=("$title")
   EVENT_STARTS+=("$SECONDS")
+  EVENT_STATUSES+=("run")
+  EVENT_DETAILS+=("running")
+  EVENT_OPEN+=("false")
+  EVENT_LOG_FILES+=("")
+  EVENT_STDOUT_FILES+=("")
+  EVENT_STDERR_FILES+=("")
+}
+
+event_log_path() {
+  local id="$1"
+  local i path safe
+  event_ensure "$id" "$id"
+  i="$EVENT_INDEX"
+  path="${EVENT_LOG_FILES[$i]:-}"
+  if [ -z "$path" ]; then
+    if [ -z "$UI_EVENT_DIR" ]; then UI_EVENT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/devloop-ui.XXXXXX")"; fi
+    safe="$(slugify "$id")"
+    if [ -z "$safe" ]; then safe="event-$i"; fi
+    path="$UI_EVENT_DIR/$safe.log"
+    EVENT_LOG_FILES[$i]="$path"
+  fi
+  EVENT_LOG_PATH="$path"
+  printf '%s\n' "$path"
+}
+
+event_store_start() {
+  local id="$1"
+  local title="$2"
+  local i log_file
+  event_ensure "$id" "$title"
+  i="$EVENT_INDEX"
+  EVENT_TITLES[$i]="$title"
+  EVENT_STARTS[$i]="$SECONDS"
+  EVENT_STATUSES[$i]="run"
+  EVENT_DETAILS[$i]="running"
+  EVENT_STDOUT_FILES[$i]=""
+  EVENT_STDERR_FILES[$i]=""
+  event_log_path "$id" >/dev/null
+  log_file="$EVENT_LOG_PATH"
+  : > "$log_file"
+  UI_SELECTED="$i"
 }
 
 event_title() {
   local id="$1"
-  local i=0
-  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
-    if [ "${EVENT_IDS[$i]}" = "$id" ]; then
-      printf '%s\n' "${EVENT_TITLES[$i]}"
-      return
-    fi
-    i=$((i + 1))
-  done
+  local i
+  if i="$(event_index "$id")"; then
+    printf '%s\n' "${EVENT_TITLES[$i]}"
+    return
+  fi
   printf '%s\n' "$id"
 }
 
 event_elapsed() {
   local id="$1"
-  local i=0
-  while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
-    if [ "${EVENT_IDS[$i]}" = "$id" ]; then
-      printf '%s\n' "$((SECONDS - EVENT_STARTS[$i]))"
-      return
-    fi
-    i=$((i + 1))
-  done
+  local i
+  if i="$(event_index "$id")"; then
+    printf '%s\n' "$((SECONDS - EVENT_STARTS[$i]))"
+    return
+  fi
   printf '%s\n' "0"
+}
+
+event_set_live_files() {
+  local id="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  local i
+  event_ensure "$id" "$id"
+  i="$EVENT_INDEX"
+  EVENT_STDOUT_FILES[$i]="$stdout_file"
+  EVENT_STDERR_FILES[$i]="$stderr_file"
+}
+
+event_set_log_file() {
+  local id="$1"
+  local file="$2"
+  local i
+  event_ensure "$id" "$id"
+  i="$EVENT_INDEX"
+  EVENT_LOG_FILES[$i]="$file"
+  EVENT_STDOUT_FILES[$i]=""
+  EVENT_STDERR_FILES[$i]=""
+}
+
+event_copy_log_file() {
+  local id="$1"
+  local file="$2"
+  local target
+  event_log_path "$id" >/dev/null
+  target="$EVENT_LOG_PATH"
+  cp "$file" "$target"
+  event_set_log_file "$id" "$target"
 }
 
 format_elapsed() {
@@ -1106,18 +1358,30 @@ event_step() {
   UI_STEP_TITLE="$title"
   UI_STEP_STARTED="$SECONDS"
   event_store_start "$id" "$title"
-  ui_status_line "run" "$title" "started"
+  if ui_live_enabled; then
+    ui_live_render
+  else
+    ui_status_line "run" "$title" "started"
+  fi
 }
 
 event_done() {
   local id="$1"
   local ok="$2"
   local detail="$3"
-  local title elapsed status
+  local title elapsed status i
   title="$(event_title "$id")"
   elapsed="$(format_elapsed "$(event_elapsed "$id")")"
   if [ "$ok" = true ]; then status="ok"; else status="fail"; fi
-  ui_status_line "$status" "$title" "$detail $elapsed"
+  event_ensure "$id" "$title"
+  i="$EVENT_INDEX"
+  EVENT_STATUSES[$i]="$status"
+  EVENT_DETAILS[$i]="$detail $elapsed"
+  if ui_live_enabled; then
+    ui_live_render
+  else
+    ui_status_line "$status" "$title" "$detail $elapsed"
+  fi
 }
 
 event_gate() {
@@ -1125,14 +1389,30 @@ event_gate() {
   local ok_value="$2"
   local detail="$3"
   local status="ok"
+  local i
   if [ "${ok_value:-0}" -eq 0 ] 2>/dev/null; then status="warn"; fi
-  ui_status_line "$status" "$name" "$detail"
+  event_ensure "$name" "$name"
+  i="$EVENT_INDEX"
+  EVENT_STATUSES[$i]="$status"
+  EVENT_DETAILS[$i]="$detail"
+  UI_SELECTED="$i"
+  if ui_live_enabled; then
+    ui_live_render
+  else
+    ui_status_line "$status" "$name" "$detail"
+  fi
 }
 
 event_log() {
   local id="$1"
   local line="$2"
-  if [ "$USE_TUI" = true ]; then
+  local log_file
+  if ui_live_enabled; then
+    event_log_path "$id" >/dev/null
+    log_file="$EVENT_LOG_PATH"
+    printf '%s\n' "$line" >> "$log_file"
+    ui_live_render
+  elif [ "$USE_TUI" = true ]; then
     printf '       %s\n' "$line" >&2
   else
     printf '[devloop] %s\n' "$line" >&2
@@ -1662,6 +1942,9 @@ run_with_prompt() {
   code_file="$(mktemp "${TMPDIR:-/tmp}/devloop-code.XXXXXX")"
   printf '%s' "$prompt" > "$prompt_file"
   rm -f "$code_file"
+  if [ -n "$id" ] && ui_live_enabled; then
+    event_set_live_files "$id" "$stdout_file" "$stderr_file"
+  fi
   if [ "$USE_TUI" = true ] && [ -t 2 ]; then
     (
       cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file"
@@ -1691,9 +1974,18 @@ run_with_prompt() {
     cp "$output_file" "$log"
   fi
   if [ -n "$id" ]; then
-    while IFS= read -r line; do
-      if [ -n "$line" ]; then event_log "$id" "$line"; fi
-    done < "$output_file"
+    if ui_live_enabled; then
+      if [ -n "$log" ]; then
+        event_set_log_file "$id" "$log"
+      else
+        event_copy_log_file "$id" "$output_file"
+      fi
+      ui_live_render
+    else
+      while IFS= read -r line; do
+        if [ -n "$line" ]; then event_log "$id" "$line"; fi
+      done < "$output_file"
+    fi
   fi
   rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file" "$code_file"
 }

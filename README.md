@@ -105,7 +105,7 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 - `Open reports`: pick a prior report from any registered worktree.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
-`gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
+`gum` powers prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. During a run, use arrow keys to move between progress rows and `enter` or `space` to expand or collapse live agent output.
 
 ## What Devloop Does
 
