@@ -1,6 +1,3 @@
-[![CI](https://github.com/satyaborg/devloop/actions/workflows/ci.yml/badge.svg)](https://github.com/satyaborg/devloop/actions/workflows/ci.yml)
-[![license](https://img.shields.io/github/license/satyaborg/devloop.svg)](LICENSE)
-
 # Devloop
 
 **Spec in. Reviewed code out.**
@@ -69,7 +66,7 @@ devloop [options] <spec.md> [max=5]
 
 | Option | Meaning |
 | --- | --- |
-| `--plain` | Force plain output, useful for CI |
+| `--plain` | Force plain output, useful for automation |
 | `--tui` | Force simple terminal progress output |
 | `--coder <agent>` | Choose `codex` or `claude` for implementation |
 | `--reviewer <agent>` | Choose `codex` or `claude` for review |
