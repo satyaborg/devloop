@@ -40,6 +40,7 @@ ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"
 [[ "$skill_path" == "$ROOT/skills/spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
+contains "$("$ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
 ok "spec skill path"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
@@ -70,11 +71,31 @@ Verdict: ACCEPT
 | --- | --- | --- | --- |
 | AC1 | PASS | code path | test |
 | AC2 | PASS | behavior | test |
+
+## Engineering quality matrix
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Correctness | PASS | no logic regression |
+| Test quality | PASS | targeted test |
+| Maintainability | PASS | direct implementation |
+| Architecture boundaries | PASS | existing layer |
+| Simplicity | PASS | no extra abstraction |
+| Security | N/A | no security boundary |
+| Operational safety | PASS | no partial update |
 MARKDOWN
 equals "$(parse_verdict "$review_file")" "ACCEPT" "parse_verdict"
 has_passing_matrix "$review_file" 2 || fail "has_passing_matrix rejected passing matrix"
+has_passing_quality_matrix "$review_file" || fail "has_passing_quality_matrix rejected passing matrix"
 sed 's/| AC2 | PASS |/| AC2 | FAIL |/' "$review_file" > "$work/review-fail.md"
 if has_passing_matrix "$work/review-fail.md" 2; then fail "has_passing_matrix accepted failing matrix"; fi
+sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > "$work/review-quality-fail.md"
+if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
+
+review_prompt_text="$(review_prompt codex "$criteria_file" ".codex/tracks/test.md" main 1 ".codex/reviews/test-r1.md" test 5 "$criteria_file" true)"
+contains "$review_prompt_text" "Bundled review skill:" "review prompt"
+contains "$review_prompt_text" "Devloop Review" "review prompt"
+contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
 
 findings_a="$work/findings-a.md"
 findings_b="$work/findings-b.md"

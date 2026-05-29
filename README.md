@@ -51,7 +51,8 @@ devloop spec
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
 ```
 
-Strict mode is on by default and requires:
+Strict mode is on by default. It requires acceptance criteria and only accepts
+reviews that pass both the spec gate and engineering quality gate:
 
 ```md
 ## Acceptance criteria
@@ -73,7 +74,7 @@ devloop [options] <spec.md> [max=5]
 | `--report-format <format>` | Choose `html` or `markdown` |
 | `--in-place` | Run in the current worktree |
 | `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
-| `--no-strict` | Weaken acceptance gates |
+| `--no-strict` | Weaken strict review gates |
 
 ## What Devloop Does
 

@@ -1,9 +1,9 @@
 ---
-name: spec
+name: devloop-spec
 description: Interview from a cold start or distill existing material into one devloop-compatible implementation spec. Use when the user wants a concrete spec for devloop, whether they provide notes, a file, a URL, research, conversation context, or only a rough idea.
 ---
 
-# Spec
+# Devloop Spec
 
 Produce one implementation spec that conforms to the devloop standard. This skill has two modes:
 
