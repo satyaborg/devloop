@@ -1,6 +1,6 @@
 ---
 name: devloop-review
-description: Review devloop implementation passes with separate spec and engineering gates.
+description: Use this skill when reviewing a devloop implementation pass against a spec, track, diff, prior reviews, acceptance criteria, or engineering quality gates. Decide ACCEPT, REJECT, or UNCLEAR with concrete evidence and fix instructions.
 ---
 
 # Devloop Review

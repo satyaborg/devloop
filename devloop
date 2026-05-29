@@ -1081,7 +1081,7 @@ review_prompt() {
   local criteria priors review_skill strict_rule
   criteria="$(criteria_block "$criteria_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
-  review_skill="$(cat "$ROOT_DIR/skills/review/SKILL.md")"
+  review_skill="$(cat "$ROOT_DIR/skills/devloop-review/SKILL.md")"
   strict_rule=""
   if [ "$strict" = true ]; then
     strict_rule="
@@ -1635,7 +1635,7 @@ spec_command() {
     esac
   done
 
-  local skill="$ROOT_DIR/skills/spec/SKILL.md"
+  local skill="$ROOT_DIR/skills/devloop-spec/SKILL.md"
   case "$action" in
     print-skill) cat "$skill"; return ;;
     skill-path) printf '%s\n' "$skill"; return ;;

@@ -39,9 +39,20 @@ contains "$help" "--create-pr" "help"
 ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"
-[[ "$skill_path" == "$ROOT/skills/spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
+[[ "$skill_path" == "$ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
 contains "$("$ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
 ok "spec skill path"
+
+for skill in "$ROOT"/skills/*/SKILL.md; do
+  name="$(sed -n 's/^name: *//p' "$skill" | head -n 1)"
+  description="$(sed -n 's/^description: *//p' "$skill" | head -n 1)"
+  dirname="$(basename "$(dirname "$skill")")"
+  [[ "$name" == "$dirname" ]] || fail "skill name mismatch: $skill declares $name"
+  [[ "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "invalid skill name: $name"
+  [[ -n "$description" ]] || fail "missing skill description: $skill"
+  [[ "${#description}" -le 1024 ]] || fail "skill description too long: $skill"
+done
+ok "skill metadata"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
