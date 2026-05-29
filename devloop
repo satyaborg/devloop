@@ -1,0 +1,1727 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
+CLAUDE_EFFORT_ARGS=(--effort max)
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+  LINK_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH="$LINK_TARGET" ;;
+    *) SCRIPT_PATH="$LINK_DIR/$LINK_TARGET" ;;
+  esac
+done
+ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+
+USE_TUI=false
+if [ -t 1 ]; then USE_TUI=true; fi
+
+RUN_CODE=0
+RUN_STDOUT=""
+RUN_STDERR=""
+RUN_OUTPUT=""
+
+STATUS=""
+PASSES=0
+MAX=5
+REPORT=""
+TRACK=""
+FINAL_BRANCH=""
+FINAL_COMMIT=""
+FINAL_COMMIT_MESSAGE=""
+SOURCE_REPO=""
+WORKTREE_REPO=""
+CODER=""
+REVIEWER=""
+CODER_SESSION_ID=""
+REVIEWER_SESSION_ID=""
+PULL_REQUEST=""
+PULL_REQUEST_ERROR=""
+
+COMMIT_PASSES=()
+COMMIT_HASHES=()
+COMMIT_MESSAGES=()
+COMMIT_PATHS=()
+
+main() {
+  if [ "${1:-}" = "spec" ]; then
+    shift
+    spec_command "$@"
+    return $?
+  fi
+
+  if [ "$#" -eq 0 ] || has_arg "-h" "$@" || has_arg "--help" "$@"; then
+    welcome
+    return 0
+  fi
+
+  run_command "$@"
+}
+
+welcome() {
+  cat <<'EOF'
+       __          __                
+  ____/ /__ _   __/ /___  ____  ____ 
+ / __  / _ \ | / / / __ \/ __ \/ __ \
+/ /_/ /  __/ |/ / / /_/ / /_/ / /_/ /
+\__,_/\___/|___/_/\____/\____/ .___/ 
+                            /_/
+
+Spec-driven code and review loop. Codex implements and Claude Code reviews by default.
+
+Usage:
+  devloop [options] <spec.md> [max=5]
+
+Common commands:
+  devloop spec "add retry behavior to the chat sender"
+  devloop .specs/change.md
+  devloop --tui .specs/change.md
+  devloop --plain .specs/change.md
+  devloop --report-format markdown .specs/change.md 3
+  devloop --coder claude --reviewer codex .specs/change.md
+  devloop --create-pr .specs/change.md
+
+Options:
+  --tui                         force simple terminal progress output
+  --plain                       force plain output
+  --coder codex|claude          choose the implementation agent
+  --reviewer codex|claude       choose the review agent
+  --report-format html|markdown choose report format
+  --no-strict                   weaken acceptance gates
+  --in-place                    run in the current worktree
+  --create-pr, --pr             push accepted branch and open a PR
+  -h, --help                    show this screen
+EOF
+}
+
+usage() {
+  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+}
+
+spec_usage() {
+  cat <<'EOF'
+usage: devloop spec [--agent codex|claude|<cmd>] [--output spec.md] [--force] [context...]
+       devloop spec --print-skill
+       devloop spec --skill-path
+
+Without context, the bundled skill uses its interview path before writing a spec.
+EOF
+}
+
+has_arg() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    if [ "$item" = "$needle" ]; then return 0; fi
+  done
+  return 1
+}
+
+run_command() {
+  local report_format="html"
+  local strict=true
+  local use_worktree=true
+  local coder="codex"
+  local reviewer="claude"
+  local create_pr=false
+  local spec=""
+  local max_raw="5"
+  local max_set=false
+  local arg value
+
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --report-format)
+        if [ "$#" -eq 0 ]; then usage >&2; return 2; fi
+        value="$1"
+        shift
+        case "$value" in
+          html) report_format="html" ;;
+          markdown|md) report_format="markdown" ;;
+          *) usage >&2; return 2 ;;
+        esac
+        ;;
+      --coder)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "coder must be codex or claude" >&2; usage >&2; return 2; fi
+        value="$(normalize_agent "$1")"
+        shift
+        if [ -z "$value" ]; then printf '%s\n' "coder must be codex or claude" >&2; usage >&2; return 2; fi
+        coder="$value"
+        ;;
+      --reviewer)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "reviewer must be codex or claude" >&2; usage >&2; return 2; fi
+        value="$(normalize_agent "$1")"
+        shift
+        if [ -z "$value" ]; then printf '%s\n' "reviewer must be codex or claude" >&2; usage >&2; return 2; fi
+        reviewer="$value"
+        ;;
+      --html) report_format="html" ;;
+      --markdown|--md) report_format="markdown" ;;
+      --no-strict) strict=false ;;
+      --strict) strict=true ;;
+      --in-place) use_worktree=false ;;
+      --create-pr|--pr) create_pr=true ;;
+      --plain) USE_TUI=false ;;
+      --tui) USE_TUI=true ;;
+      -h|--help) usage; return 0 ;;
+      --*)
+        printf 'unknown option: %s\n' "$arg" >&2
+        usage >&2
+        return 2
+        ;;
+      *)
+        if [ -z "$spec" ]; then
+          spec="$arg"
+        elif [ "$max_set" = false ]; then
+          max_raw="$arg"
+          max_set=true
+        else
+          usage >&2
+          return 2
+        fi
+        ;;
+    esac
+  done
+
+  if [ -z "$spec" ]; then usage >&2; return 2; fi
+  if ! printf '%s\n' "$max_raw" | grep -Eq '^[+-]?[0-9]+$'; then
+    printf '%s\n' "max must be an integer between 1 and 10" >&2
+    return 2
+  fi
+
+  local max="$max_raw"
+  if [ "$max" -lt 1 ]; then max=1; fi
+  if [ "$max" -gt 10 ]; then max=10; fi
+
+  run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
+  local code=$?
+  case "$STATUS" in
+    accepted) return 0 ;;
+    stalled|max-turns|unclear) return 1 ;;
+    *) return "$code" ;;
+  esac
+}
+
+run_devloop() {
+  local spec_arg="$1"
+  local max="$2"
+  local report_format="$3"
+  local strict="$4"
+  local use_worktree="$5"
+  local coder="$6"
+  local reviewer="$7"
+  local create_pr="$8"
+
+  MAX="$max"
+  CODER="$coder"
+  REVIEWER="$reviewer"
+  STATUS="max-turns"
+  PASSES=0
+  FINAL_COMMIT=""
+  FINAL_COMMIT_MESSAGE=""
+  PULL_REQUEST=""
+  PULL_REQUEST_ERROR=""
+  COMMIT_PASSES=()
+  COMMIT_HASHES=()
+  COMMIT_MESSAGES=()
+  COMMIT_PATHS=()
+
+  local spec
+  spec="$(absolute_existing_file "$spec_arg")" || { usage >&2; return 2; }
+  local spec_text
+  spec_text="$(cat "$spec")"
+
+  local criteria_file
+  criteria_file="$(mktemp "${TMPDIR:-/tmp}/devloop-criteria.XXXXXX")"
+  parse_criteria "$spec" > "$criteria_file"
+  local criteria_count
+  criteria_count="$(line_count "$criteria_file")"
+  if [ "$strict" = true ] && [ "$criteria_count" -eq 0 ]; then
+    printf '%s\n' "strict mode requires ## Acceptance criteria" >&2
+    return 2
+  fi
+  event_gate "acceptance criteria" "$criteria_count" "$criteria_count found"
+
+  SOURCE_REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || {
+    printf '%s\n' "not inside a git repository" >&2
+    return 2
+  }
+  local source_branch
+  source_branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
+  local base
+  base="$(base_branch "$SOURCE_REPO")"
+
+  event_step "naming" "derive branch name with $(agent_label "$coder")"
+  local naming_tmp naming_log naming_error
+  naming_tmp=""
+  naming_log=""
+  naming_error=""
+  if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text"; then
+    naming_error="$WORK_ITEM_ERROR"
+    event_done "naming" false "$naming_error"
+    if [ -n "${WORK_ITEM_LOG:-}" ]; then
+      printf 'naming failed: %s\nnaming log: %s\n' "$naming_error" "$WORK_ITEM_LOG" >&2
+    else
+      printf 'naming failed: %s\n' "$naming_error" >&2
+    fi
+    return 2
+  fi
+  local slug="$WORK_SLUG"
+  event_done "naming" true "$(branch_base "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")"
+
+  local repo="$SOURCE_REPO"
+  if [ "$use_worktree" = true ]; then
+    event_step "worktree" "create worktree"
+    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || return 2
+    event_done "worktree" true "$repo"
+  fi
+  WORKTREE_REPO="$repo"
+
+  mkdir -p "$repo/.codex/specs" "$repo/.codex/tracks" "$repo/.codex/reviews" "$repo/.codex/reports" "$repo/.codex/logs" "$repo/.codex/sessions"
+  if [ -n "${WORK_ITEM_LOG:-}" ] && [ -f "$WORK_ITEM_LOG" ]; then
+    cp "$WORK_ITEM_LOG" "$repo/.codex/logs/$slug-naming.log"
+    rm -rf "$(dirname "$WORK_ITEM_LOG")"
+  fi
+
+  local run_spec="$spec"
+  if [ "$use_worktree" = true ]; then
+    run_spec="$repo/.codex/specs/$slug.md"
+    printf '%s' "$spec_text" > "$run_spec"
+  fi
+
+  local initial_dirty
+  initial_dirty="$(mktemp "${TMPDIR:-/tmp}/devloop-dirty.XXXXXX")"
+  status_paths "$repo" > "$initial_dirty"
+
+  local run_branch
+  run_branch="$(git -C "$repo" branch --show-current)"
+  FINAL_BRANCH="$run_branch"
+  TRACK=".codex/tracks/$slug.md"
+  if [ "$report_format" = "html" ]; then
+    REPORT=".codex/reports/$slug.html"
+  else
+    REPORT=".codex/reports/$slug.md"
+  fi
+  local coder_session=".codex/sessions/$slug-coder-$coder.id"
+  local reviewer_session=".codex/sessions/$slug-reviewer-$reviewer.id"
+
+  init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr"
+
+  local pass prior_hash
+  prior_hash=""
+  for pass in $(seq 1 "$max"); do
+    PASSES="$pass"
+    local coder_log=".codex/logs/$slug-r$pass-coder.log"
+    local coder_id="coder-$pass"
+    event_step "$coder_id" "pass $pass/$max $(agent_label "$coder") implementation"
+    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".codex/reviews/$slug-r$((pass - 1)).md" "$criteria_file")" "$coder_id"; then
+      event_done "$coder_id" true "completed"
+    else
+      STATUS="coder-error"
+      event_done "$coder_id" false "failed"
+      break
+    fi
+
+    local commit_id="commit-$pass"
+    event_step "$commit_id" "pass $pass/$max commit"
+    if commit_pass "$repo" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG" "$pass" "$initial_dirty"; then
+      if [ -n "$PASS_BRANCH" ]; then FINAL_BRANCH="$PASS_BRANCH"; fi
+      if [ -n "$PASS_COMMIT" ]; then
+        COMMIT_PASSES+=("$pass")
+        COMMIT_HASHES+=("$PASS_COMMIT")
+        COMMIT_MESSAGES+=("$PASS_MESSAGE")
+        COMMIT_PATHS+=("$PASS_PATHS")
+        FINAL_COMMIT="$PASS_COMMIT"
+        FINAL_COMMIT_MESSAGE="$PASS_MESSAGE"
+      fi
+      if [ -n "$PASS_COMMIT" ]; then
+        event_done "$commit_id" true "1 commit"
+      else
+        event_done "$commit_id" true "no changes"
+      fi
+    else
+      STATUS="commit-error"
+      event_done "$commit_id" false "$COMMIT_ERROR"
+      break
+    fi
+
+    local review=".codex/reviews/$slug-r$pass.md"
+    local reviewer_log=".codex/logs/$slug-r$pass-reviewer.log"
+    local reviewer_id="reviewer-$pass"
+    event_step "$reviewer_id" "pass $pass/$max $(agent_label "$reviewer") review"
+    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$criteria_file" "$strict")" "$reviewer_id"; then
+      event_done "$reviewer_id" true "completed"
+    else
+      STATUS="reviewer-error"
+      event_done "$reviewer_id" false "failed"
+      break
+    fi
+
+    if [ ! -f "$repo/$review" ]; then
+      STATUS="review-missing"
+      break
+    fi
+
+    local verdict
+    verdict="$(parse_verdict "$repo/$review")"
+    if [ "$verdict" = "ACCEPT" ]; then
+      event_gate "pass $pass verdict" 1 "$verdict"
+      if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$criteria_count"; then
+        STATUS="unclear"
+      else
+        STATUS="accepted"
+      fi
+      break
+    fi
+    event_gate "pass $pass verdict" 0 "${verdict:-MISSING}"
+    if [ "$verdict" = "UNCLEAR" ]; then
+      STATUS="unclear"
+      break
+    elif [ "$verdict" = "REJECT" ]; then
+      local hash
+      hash="$(findings_hash "$repo/$review")"
+      if [ -n "$prior_hash" ] && [ "$hash" = "$prior_hash" ]; then
+        STATUS="stalled"
+        break
+      fi
+      prior_hash="$hash"
+    else
+      STATUS="no-verdict"
+      break
+    fi
+  done
+
+  if [ "$PASSES" -gt "$max" ]; then PASSES="$max"; fi
+
+  if [ "$create_pr" = true ] && [ "$STATUS" = "accepted" ]; then
+    event_step "pull-request" "push branch and create PR"
+    if create_pull_request "$repo" "$FINAL_BRANCH" "$base"; then
+      event_done "pull-request" true "${PULL_REQUEST:-origin/$FINAL_BRANCH}"
+    else
+      STATUS="pr-error"
+      event_done "pull-request" false "$PULL_REQUEST_ERROR"
+    fi
+  fi
+
+  CODER_SESSION_ID="$(read_first_line "$repo/$coder_session")"
+  REVIEWER_SESSION_ID="$(read_first_line "$repo/$reviewer_session")"
+  synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID" "$report_format"
+
+  print_result
+  rm -f "$criteria_file" "$initial_dirty"
+  return 0
+}
+
+event_step() {
+  local id="$1"
+  local title="$2"
+  if [ "$USE_TUI" = true ]; then
+    printf '\033[1m[devloop]\033[0m %s\n' "$title" >&2
+  else
+    printf '[devloop] %s\n' "$title" >&2
+  fi
+}
+
+event_done() {
+  local id="$1"
+  local ok="$2"
+  local detail="$3"
+  printf '[devloop] %s\n' "$detail" >&2
+}
+
+event_gate() {
+  local name="$1"
+  local ok_value="$2"
+  local detail="$3"
+  printf '[devloop] %s: %s\n' "$name" "$detail" >&2
+}
+
+event_log() {
+  local id="$1"
+  local line="$2"
+  printf '[devloop] %s\n' "$line" >&2
+}
+
+normalize_agent() {
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | awk '$0=="codex" || $0=="claude"{print}'
+}
+
+agent_label() {
+  case "$1" in
+    codex) printf '%s' "Codex" ;;
+    claude) printf '%s' "Claude Code" ;;
+  esac
+}
+
+absolute_existing_file() {
+  local file="$1"
+  local dir base
+  if [ ! -f "$file" ]; then return 1; fi
+  dir="$(dirname "$file")"
+  base="$(basename "$file")"
+  (cd "$dir" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "$base")
+}
+
+absolute_path() {
+  local file="$1"
+  local dir base
+  dir="$(dirname "$file")"
+  base="$(basename "$file")"
+  mkdir -p "$dir"
+  (cd "$dir" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "$base")
+}
+
+line_count() {
+  local file="$1"
+  awk 'END{print NR + 0}' "$file"
+}
+
+parse_criteria() {
+  local file="$1"
+  awk '
+    BEGIN { inside = 0 }
+    /^[[:space:]]*##[[:space:]]+[Aa]cceptance[[:space:]]+[Cc]riteria[[:space:]]*$/ { inside = 1; next }
+    inside && /^[[:space:]]*##[[:space:]]+/ { exit }
+    inside {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      sub(/^([-*]|[0-9]+[.)])[[:space:]]+/, "", line)
+      if (line != "") print line
+    }
+  ' "$file"
+}
+
+criteria_block() {
+  local criteria_file="$1"
+  local count=0
+  local line
+  while IFS= read -r line; do
+    count=$((count + 1))
+    printf 'AC%s: %s\n' "$count" "$line"
+  done < "$criteria_file"
+  if [ "$count" -eq 0 ]; then printf '%s\n' "No parsed acceptance criteria."; fi
+}
+
+base_branch() {
+  local repo="$1"
+  local out
+  if out="$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    printf '%s\n' "${out#origin/}"
+    return
+  fi
+  if git -C "$repo" show-ref --verify -q refs/heads/main; then
+    printf '%s\n' "main"
+    return
+  fi
+  if git -C "$repo" show-ref --verify -q refs/heads/master; then
+    printf '%s\n' "master"
+    return
+  fi
+  printf '%s\n' "main"
+}
+
+status_paths() {
+  local repo="$1"
+  local item code file next
+  git -C "$repo" status --porcelain=v1 -z --untracked-files=all |
+    while IFS= read -r -d '' item; do
+      code="${item:0:2}"
+      file="${item:3}"
+      if [ -n "$file" ]; then printf '%s\n' "$file"; fi
+      case "$code" in
+        *R*|*C*)
+          if IFS= read -r -d '' next; then
+            if [ -n "$next" ]; then printf '%s\n' "$next"; fi
+          fi
+          ;;
+      esac
+    done
+}
+
+frontmatter_value() {
+  local key="$1"
+  local text="$2"
+  printf '%s\n' "$text" | awk -v key="$key" '
+    BEGIN { inside = 0 }
+    NR == 1 && $0 == "---" { inside = 1; next }
+    inside && $0 == "---" { exit }
+    inside {
+      split($0, parts, ":")
+      name = tolower(parts[1])
+      if (name == key) {
+        sub(/^[^:]*:[[:space:]]*/, "", $0)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+        gsub(/^["'"'"']|["'"'"']$/, "", $0)
+        print $0
+        exit
+      }
+    }
+  ' | awk '
+    $0 == "" || $0 == "null" || $0 == "undefined" { next }
+    /^\<.*\>$/ { next }
+    /\|/ { next }
+    { print }
+  '
+}
+
+slugify() {
+  printf '%s' "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E "s/'//g; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//"
+}
+
+parse_bool() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
+    true|yes|1) printf '%s' "true" ;;
+    false|no|0) printf '%s' "false" ;;
+    *) return 1 ;;
+  esac
+}
+
+WORK_TYPE=""
+WORK_SLUG=""
+WORK_BREAKING=""
+WORK_ITEM_ERROR=""
+WORK_ITEM_LOG=""
+
+resolve_work_item() {
+  local agent="$1"
+  local repo="$2"
+  local spec="$3"
+  local spec_text="$4"
+  WORK_TYPE=""
+  WORK_SLUG=""
+  WORK_BREAKING=""
+  WORK_ITEM_ERROR=""
+  WORK_ITEM_LOG=""
+
+  local fm_type fm_slug fm_breaking_raw fm_breaking
+  fm_type="$(frontmatter_value "type" "$spec_text")"
+  fm_slug="$(frontmatter_value "slug" "$spec_text")"
+  fm_breaking_raw="$(frontmatter_value "breaking" "$spec_text")"
+  fm_breaking=""
+
+  if [ -n "$fm_type" ]; then
+    fm_type="$(printf '%s' "$fm_type" | tr '[:upper:]' '[:lower:]')"
+    case "$fm_type" in
+      *!)
+        fm_type="${fm_type%!}"
+        fm_breaking="true"
+        ;;
+    esac
+    case "$fm_type" in
+      feat|fix|chore) ;;
+      *) WORK_ITEM_ERROR="frontmatter type must be feat, fix, or chore"; return 1 ;;
+    esac
+  fi
+
+  if [ -n "$fm_slug" ]; then fm_slug="$(slugify "$fm_slug")"; fi
+
+  if [ -n "$fm_breaking_raw" ]; then
+    local parsed_breaking
+    if ! parsed_breaking="$(parse_bool "$fm_breaking_raw")"; then
+      WORK_ITEM_ERROR="frontmatter breaking must be true or false"
+      return 1
+    fi
+    if [ "$fm_breaking" = "true" ] && [ "$parsed_breaking" = "false" ]; then
+      WORK_ITEM_ERROR="frontmatter breaking conflicts with type !"
+      return 1
+    fi
+    fm_breaking="$parsed_breaking"
+  fi
+
+  if [ -n "$fm_type" ] && [ -n "$fm_slug" ] && [ -n "$fm_breaking" ]; then
+    validate_work_item "$fm_type" "$fm_slug" "$fm_breaking" || return 1
+    WORK_TYPE="$fm_type"
+    WORK_SLUG="$fm_slug"
+    WORK_BREAKING="$fm_breaking"
+    WORK_ITEM_LOG=""
+    return 0
+  fi
+
+  local tmpdir log prompt
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/devloop-naming.XXXXXX")"
+  log="$tmpdir/naming.log"
+  WORK_ITEM_LOG="$log"
+  prompt="$(naming_prompt "$spec" "$spec_text")"
+  if ! run_agent_once "$agent" "$repo" "$log" "$prompt" "naming"; then
+    WORK_ITEM_ERROR="${RUN_OUTPUT:-$agent failed}"
+    return 1
+  fi
+  if ! parse_work_item "$RUN_OUTPUT"; then
+    return 1
+  fi
+
+  local final_type="$WORK_TYPE"
+  local final_slug="$WORK_SLUG"
+  local final_breaking="$WORK_BREAKING"
+  if [ -n "$fm_type" ]; then final_type="$fm_type"; fi
+  if [ -n "$fm_slug" ]; then final_slug="$fm_slug"; fi
+  if [ -n "$fm_breaking" ]; then final_breaking="$fm_breaking"; fi
+  validate_work_item "$final_type" "$final_slug" "$final_breaking" || return 1
+  WORK_TYPE="$final_type"
+  WORK_SLUG="$final_slug"
+  WORK_BREAKING="$final_breaking"
+}
+
+validate_work_item() {
+  local type="$1"
+  local slug="$2"
+  local breaking="$3"
+  case "$type" in
+    feat|fix|chore) ;;
+    *) WORK_ITEM_ERROR="naming output type must be feat, fix, or chore"; return 1 ;;
+  esac
+  slug="$(slugify "$slug")"
+  if [ -z "$slug" ]; then WORK_ITEM_ERROR="naming output slug is required"; return 1; fi
+  local words
+  words="$(printf '%s\n' "$slug" | awk -F- '{print NF}')"
+  if [ "$words" -gt 6 ]; then WORK_ITEM_ERROR="naming output slug must be 1-6 words"; return 1; fi
+  case "${slug%%-*}" in
+    feat|fix|chore) WORK_ITEM_ERROR="naming output slug must not include a type prefix"; return 1 ;;
+  esac
+  case "$breaking" in
+    true|false) ;;
+    *) WORK_ITEM_ERROR="naming output breaking must be boolean"; return 1 ;;
+  esac
+}
+
+parse_work_item() {
+  local output="$1"
+  local candidates reversed candidate type slug breaking
+  candidates="$(mktemp "${TMPDIR:-/tmp}/devloop-json.XXXXXX")"
+  reversed="$(mktemp "${TMPDIR:-/tmp}/devloop-json-rev.XXXXXX")"
+  printf '%s\n' "$output" | grep -Eo '\{[^{}]*\}' > "$candidates" || true
+  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$candidates" > "$reversed"
+  while IFS= read -r candidate; do
+    type="$(printf '%s\n' "$candidate" | sed -nE 's/.*"type"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+    slug="$(printf '%s\n' "$candidate" | sed -nE 's/.*"slug"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+    breaking="$(printf '%s\n' "$candidate" | sed -nE 's/.*"breaking"[[:space:]]*:[[:space:]]*(true|false).*/\1/p')"
+    if [ -n "$type" ] && [ -n "$slug" ] && [ -n "$breaking" ]; then
+      if validate_work_item "$type" "$slug" "$breaking"; then
+        WORK_TYPE="$type"
+        WORK_SLUG="$(slugify "$slug")"
+        WORK_BREAKING="$breaking"
+        rm -f "$candidates" "$reversed"
+        return 0
+      fi
+    fi
+  done < "$reversed"
+  rm -f "$candidates" "$reversed"
+  if [ -z "$WORK_ITEM_ERROR" ]; then WORK_ITEM_ERROR="naming output must include JSON"; fi
+  return 1
+}
+
+naming_prompt() {
+  local spec="$1"
+  local spec_text="$2"
+  cat <<EOF
+Work item naming task.
+
+Read the spec and, when useful, inspect the repository to choose the semantic work item identity.
+
+Return exactly one JSON object and no markdown:
+{"type":"feat","slug":"short-kebab-case-name","breaking":false}
+
+Rules:
+- type must be one of: feat, fix, chore.
+- Use feat for new capability or materially expanded behavior.
+- Use fix for correcting broken, incorrect, or regressed behavior.
+- Use chore for maintenance, docs, tests, dependency work, refactors, and internal cleanup.
+- Use breaking true only when the work intentionally breaks an external API, data contract, command behavior, or migration expectation.
+- slug must be 1-6 short kebab-case words that name the actual work, not the process.
+- Exclude dates, issue numbers, repo names, agent names, and type words from slug.
+- Prefer concrete nouns from the problem domain over generic words like change, update, cleanup, or implementation.
+
+Spec path: $spec
+
+Spec:
+$spec_text
+EOF
+}
+
+branch_base() {
+  local type="$1"
+  local breaking="$2"
+  local slug="$3"
+  if [ "$breaking" = true ]; then
+    printf '%s!/%s\n' "$type" "$slug"
+  else
+    printf '%s/%s\n' "$type" "$slug"
+  fi
+}
+
+branch_leaf() {
+  local branch="$1"
+  printf '%s\n' "${branch##*/}"
+}
+
+regex_escape() {
+  printf '%s' "$1" | sed -E 's/[][().*^$+?{}|\\/]/\\&/g'
+}
+
+branch_exists() {
+  local repo="$1"
+  local branch="$2"
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"
+}
+
+next_branch() {
+  local repo="$1"
+  local type="$2"
+  local breaking="$3"
+  local slug="$4"
+  local current="$5"
+  local base branch suffix escaped
+  base="$(branch_base "$type" "$breaking" "$slug")"
+  escaped="$(regex_escape "$base")"
+  if [ "$current" = "$base" ] || printf '%s\n' "$current" | grep -Eq "^$escaped-[0-9]+$"; then
+    printf '%s\n' "$current"
+    return
+  fi
+  suffix=1
+  branch="$base"
+  while branch_exists "$repo" "$branch"; do
+    suffix=$((suffix + 1))
+    branch="$base-$suffix"
+  done
+  printf '%s\n' "$branch"
+}
+
+next_worktree_path() {
+  local repo="$1"
+  local slug="$2"
+  local parent base candidate suffix
+  parent="$(dirname "$repo")"
+  base="$parent/$(basename "$repo")-$(slugify "$slug")"
+  suffix=1
+  candidate="$base"
+  while [ -e "$candidate" ]; do
+    suffix=$((suffix + 1))
+    candidate="$base-$suffix"
+  done
+  printf '%s\n' "$candidate"
+}
+
+create_worktree() {
+  local repo="$1"
+  local type="$2"
+  local breaking="$3"
+  local slug="$4"
+  local current branch worktree leaf
+  current=""
+  branch="$(next_branch "$repo" "$type" "$breaking" "$slug" "$current")"
+  leaf="$(branch_leaf "$branch")"
+  worktree="$(next_worktree_path "$repo" "$leaf")"
+  if ! git -C "$repo" worktree add -b "$branch" "$worktree" HEAD >/dev/null 2>&1; then
+    printf 'failed to create worktree\n' >&2
+    return 1
+  fi
+  absolute_existing_dir "$worktree"
+}
+
+absolute_existing_dir() {
+  local dir="$1"
+  (cd "$dir" >/dev/null 2>&1 && pwd -P)
+}
+
+init_track() {
+  local file="$1"
+  local spec="$2"
+  local source_spec="$3"
+  local cwd="$4"
+  local source_repo="$5"
+  local worktree="$6"
+  local base="$7"
+  local branch="$8"
+  local worktree_branch="$9"
+  local max="${10}"
+  local report_format="${11}"
+  local strict="${12}"
+  local coder="${13}"
+  local reviewer="${14}"
+  local type="${15}"
+  local breaking="${16}"
+  local create_pr="${17}"
+  if [ -f "$file" ]; then return; fi
+  cat > "$file" <<EOF
+# Track: $(basename "$file" .md)
+
+- spec: $spec
+- source-spec: $source_spec
+- cwd: $cwd
+- source-repo: $source_repo
+- worktree: $worktree
+- base: $base
+- branch: $branch
+- worktree-branch: $worktree_branch
+- coder: $coder
+- reviewer: $reviewer
+- type: $type
+- breaking: $breaking
+- max: $max
+- report-format: $report_format
+- strict: $strict
+- create-pr: $create_pr
+- started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+EOF
+}
+
+read_first_line() {
+  local file="$1"
+  if [ -f "$file" ]; then
+    sed -n '1p' "$file"
+  fi
+}
+
+run_agent_once() {
+  local agent="$1"
+  local repo="$2"
+  local log="$3"
+  local prompt="$4"
+  local id="$5"
+  case "$agent" in
+    codex)
+      run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$repo" -
+      ;;
+    claude)
+      run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+      ;;
+  esac
+  [ "$RUN_CODE" -eq 0 ]
+}
+
+run_agent() {
+  local agent="$1"
+  local repo="$2"
+  local session_file="$3"
+  local log="$4"
+  local prompt="$5"
+  local id="$6"
+  case "$agent" in
+    codex) run_codex "$repo" "$session_file" "$log" "$prompt" "$id" ;;
+    claude) run_claude "$repo" "$session_file" "$log" "$prompt" "$id" ;;
+  esac
+}
+
+run_codex() {
+  local repo="$1"
+  local session_file="$2"
+  local log="$3"
+  local prompt="$4"
+  local id="$5"
+  local session
+  session="$(read_first_line "$session_file")"
+  if [ -n "$session" ]; then
+    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec resume "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox "$session" -
+  else
+    run_with_prompt "$repo" "$log" "$id" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox -C "$repo" -
+  fi
+  if [ "$RUN_CODE" -ne 0 ]; then return 1; fi
+  if [ -z "$session" ]; then
+    local next
+    next="$(extract_session_id "$RUN_OUTPUT")"
+    if [ -z "$next" ]; then return 1; fi
+    mkdir -p "$(dirname "$session_file")"
+    printf '%s\n' "$next" > "$session_file"
+  fi
+}
+
+run_claude() {
+  local repo="$1"
+  local session_file="$2"
+  local log="$3"
+  local prompt="$4"
+  local id="$5"
+  local session next
+  session="$(read_first_line "$session_file")"
+  if [ -n "$session" ]; then
+    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --resume "$session" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+  else
+    next="$(new_uuid)"
+    run_with_prompt "$repo" "$log" "$id" "$prompt" claude -p --session-id "$next" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo"
+  fi
+  if [ "$RUN_CODE" -ne 0 ]; then return 1; fi
+  if [ -z "$session" ]; then
+    mkdir -p "$(dirname "$session_file")"
+    printf '%s\n' "$next" > "$session_file"
+  fi
+}
+
+run_with_prompt() {
+  local cwd="$1"
+  local log="$2"
+  local id="$3"
+  local prompt="$4"
+  shift 4
+  local prompt_file stdout_file stderr_file output_file line
+  prompt_file="$(mktemp "${TMPDIR:-/tmp}/devloop-prompt.XXXXXX")"
+  stdout_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stdout.XXXXXX")"
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stderr.XXXXXX")"
+  output_file="$(mktemp "${TMPDIR:-/tmp}/devloop-output.XXXXXX")"
+  printf '%s' "$prompt" > "$prompt_file"
+  (cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file")
+  RUN_CODE=$?
+  RUN_STDOUT="$(cat "$stdout_file")"
+  RUN_STDERR="$(cat "$stderr_file")"
+  cat "$stdout_file" "$stderr_file" > "$output_file"
+  RUN_OUTPUT="$(cat "$output_file")"
+  if [ -n "$log" ]; then
+    mkdir -p "$(dirname "$log")"
+    cp "$output_file" "$log"
+  fi
+  if [ -n "$id" ]; then
+    while IFS= read -r line; do
+      if [ -n "$line" ]; then event_log "$id" "$line"; fi
+    done < "$output_file"
+  fi
+  rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file"
+}
+
+new_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  else
+    printf '00000000-0000-4000-8000-%012d\n' "$$"
+  fi
+}
+
+extract_session_id() {
+  printf '%s\n' "$1" |
+    grep -Eio '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' |
+    head -n 1 |
+    tr '[:upper:]' '[:lower:]'
+}
+
+coder_prompt() {
+  local spec="$1"
+  local track="$2"
+  local pass="$3"
+  local strict="$4"
+  local previous="$5"
+  local criteria_file="$6"
+  local criteria
+  criteria="$(criteria_block "$criteria_file")"
+  local strict_block=""
+  if [ "$strict" = true ]; then
+    strict_block="
+Strict lifecycle:
+1. Add or update regression tests before implementation.
+2. Run the narrow test first and record the failing result, unless impossible; if impossible, say why.
+3. Implement the smallest change.
+4. Run targeted tests, full tests, lint/typecheck, and coverage. Coverage must be 100% when the project exposes coverage tooling.
+"
+  fi
+  if [ "$pass" -eq 1 ]; then
+    cat <<EOF
+You are implementing against an approved spec.
+
+Spec: $spec
+Track: $track
+Pass: $pass
+Acceptance criteria:
+$criteria$strict_block
+Tasks:
+1. Read the spec.
+2. Implement the smallest working change satisfying the acceptance criteria.
+3. Append "## Pass $pass - implement" to $track with changed files, design tradeoffs, verification, and residual risk.
+
+Constraints:
+- Do not commit.
+- Do not edit the spec.
+- Do not revert unrelated dirty files.
+EOF
+  else
+    cat <<EOF
+Fix only the findings in the review. Do not refactor unrelated code.
+
+Spec: $spec
+Track: $track
+Review: $previous
+Pass: $pass
+Acceptance criteria:
+$criteria$strict_block
+Tasks:
+1. Read the review file.
+2. Fix each finding or explain why it is wrong in the track.
+3. Re-run relevant tests.
+4. Append "## Pass $pass - fix" to $track with per-finding outcomes.
+EOF
+  fi
+}
+
+review_prompt() {
+  local coder="$1"
+  local spec="$2"
+  local track="$3"
+  local base="$4"
+  local pass="$5"
+  local output="$6"
+  local slug="$7"
+  local max="$8"
+  local criteria_file="$9"
+  local strict="${10}"
+  local criteria priors strict_rule
+  criteria="$(criteria_block "$criteria_file")"
+  priors="$(list_reviews "$slug" "$pass" "$max")"
+  strict_rule=""
+  if [ "$strict" = true ]; then
+    strict_rule="
+- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, and 100% coverage when coverage tooling exists."
+  fi
+  cat <<EOF
+You are reviewing a $(agent_label "$coder") implementation. Be a senior reviewer, not a linter.
+
+Spec: $spec
+Track: $track
+Base: $base
+Pass: $pass
+Prior reviews:
+$priors
+Acceptance criteria:
+$criteria
+Output path: $output
+
+Steps:
+1. Read the spec and track.
+2. Run: git diff $base...HEAD
+3. Read prior reviews so you do not repeat resolved findings.
+4. Write the review to $output using this exact format:
+
+# Review $pass
+
+Verdict: <ACCEPT | REJECT | UNCLEAR>
+
+## Acceptance matrix
+
+| Criterion | Status | Implementation evidence | Test evidence |
+| --- | --- | --- | --- |
+| AC1 | <PASS, FAIL, or UNCLEAR> | <code or behavior evidence> | <test, check, or explicit gap> |
+
+## Review flags
+
+- Silent decision: <present or absent> - <evidence, or None>
+- Scope drift: <present or absent> - <evidence, or None>
+- Missing test: <present or absent> - <evidence, or None>
+
+## Findings
+
+1. [severity] <file:line> - <symptom>. Root cause: <why>. Principle: <principle>.
+
+## Missing tests
+
+- <gap, or None>
+
+## Fix instructions
+
+1. <standalone instruction>
+
+## Notes
+
+- <scope, disputes, ambiguity questions, lessons, or None>
+
+Rules:
+- The verdict line must appear verbatim.
+- ACCEPT requires every acceptance criterion PASS with concrete implementation evidence and concrete test evidence.$strict_rule
+- Flag a silent decision when the diff makes a tradeoff, default choice, compatibility choice, migration choice, or risk acceptance that is not recorded in the spec or track.
+- Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the acceptance criteria, or includes a broad refactor not needed for the spec.
+- Flag a missing test when behavior changed without targeted test evidence, even if the full suite passed.
+- Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes.
+- For ACCEPT: Findings and Fix instructions bodies are "None".
+- Findings must explain WHY, not just WHAT.
+EOF
+}
+
+list_reviews() {
+  local slug="$1"
+  local upto="$2"
+  local max="$3"
+  local limit i
+  limit="$upto"
+  if [ "$limit" -gt "$max" ]; then limit="$max"; fi
+  i=1
+  while [ "$i" -le "$limit" ]; do
+    printf -- '- .codex/reviews/%s-r%s.md\n' "$slug" "$i"
+    i=$((i + 1))
+  done
+}
+
+PASS_BRANCH=""
+PASS_COMMIT=""
+PASS_MESSAGE=""
+PASS_PATHS=""
+COMMIT_ERROR=""
+
+commit_pass() {
+  local repo="$1"
+  local type="$2"
+  local breaking="$3"
+  local slug="$4"
+  local pass="$5"
+  local initial_dirty="$6"
+  PASS_BRANCH=""
+  PASS_COMMIT=""
+  PASS_MESSAGE=""
+  PASS_PATHS=""
+  COMMIT_ERROR=""
+
+  local changed
+  changed="$(mktemp "${TMPDIR:-/tmp}/devloop-changed.XXXXXX")"
+  committable_paths "$repo" "$initial_dirty" > "$changed"
+  if [ ! -s "$changed" ]; then
+    rm -f "$changed"
+    return 0
+  fi
+
+  local current branch message
+  current="$(git -C "$repo" branch --show-current)"
+  branch="$(next_branch "$repo" "$type" "$breaking" "$slug" "$current")"
+  if [ "$branch" != "$current" ]; then
+    if ! run_git_capture "$repo" switch -c "$branch"; then return 1; fi
+  fi
+  PASS_BRANCH="$branch"
+  message="$(pass_commit_message "$type" "$breaking" "$slug" "$pass")"
+
+  local paths=()
+  local file
+  while IFS= read -r file; do
+    paths+=("$file")
+  done < "$changed"
+
+  if ! git -C "$repo" add -- "${paths[@]}" >/dev/null 2>&1; then
+    COMMIT_ERROR="git add failed"
+    rm -f "$changed"
+    return 1
+  fi
+  if ! run_git_capture "$repo" commit --only -m "$message" -- "${paths[@]}"; then
+    rm -f "$changed"
+    return 1
+  fi
+
+  PASS_COMMIT="$(git -C "$repo" rev-parse --short HEAD)"
+  PASS_MESSAGE="$message"
+  PASS_PATHS="$(paste_join "$changed" ", ")"
+  rm -f "$changed"
+}
+
+committable_paths() {
+  local repo="$1"
+  local initial_dirty="$2"
+  local file
+  status_paths "$repo" |
+    while IFS= read -r file; do
+      if grep -Fxq -- "$file" "$initial_dirty"; then continue; fi
+      case "$file" in
+        .codex/*) continue ;;
+      esac
+      printf '%s\n' "$file"
+    done |
+    LC_ALL=C sort
+}
+
+run_git_capture() {
+  local repo="$1"
+  shift
+  local out
+  out="$(git -C "$repo" "$@" 2>&1)"
+  local code=$?
+  if [ "$code" -ne 0 ]; then
+    COMMIT_ERROR="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    if [ -z "$COMMIT_ERROR" ]; then COMMIT_ERROR="git $* failed"; fi
+    return 1
+  fi
+}
+
+pass_commit_message() {
+  local type="$1"
+  local breaking="$2"
+  local slug="$3"
+  local pass="$4"
+  if [ "$pass" -eq 1 ]; then
+    if [ "$breaking" = true ]; then
+      printf '%s!: %s\n' "$type" "$slug"
+    else
+      printf '%s: %s\n' "$type" "$slug"
+    fi
+  elif [ "$type" = "chore" ]; then
+    printf '%s\n' "chore: $slug"
+  else
+    printf '%s\n' "fix: $slug"
+  fi
+}
+
+paste_join() {
+  local file="$1"
+  local separator="$2"
+  awk -v sep="$separator" 'NR == 1 { out = $0; next } { out = out sep $0 } END { print out }' "$file"
+}
+
+parse_verdict() {
+  local file="$1"
+  sed -nE 's/^Verdict:[[:space:]]+(ACCEPT|REJECT|UNCLEAR).*/\1/p' "$file" | head -n 1
+}
+
+has_passing_matrix() {
+  local file="$1"
+  local count="$2"
+  local i=1
+  grep -Eq '^##[[:space:]]+Acceptance matrix[[:space:]]*$' "$file" || return 1
+  while [ "$i" -le "$count" ]; do
+    if ! grep -Eiq "^\|[[:space:]]*AC$i[[:space:]]*\|[[:space:]]*PASS[[:space:]]*\|" "$file"; then
+      return 1
+    fi
+    i=$((i + 1))
+  done
+}
+
+findings_hash() {
+  local file="$1"
+  awk '
+    /^## Findings[[:space:]]*$/ { inside = 1; next }
+    inside && /^##[[:space:]]+/ { exit }
+    inside { print }
+  ' "$file" |
+    tr -d '0-9' |
+    tr '\r\n\t' ' ' |
+    sed -E 's/[ ]+/ /g; s/\./\
+/g; s/^[[:space:]]+|[[:space:]]+$//g' |
+    awk 'NF' |
+    LC_ALL=C sort |
+    hash_sha256
+}
+
+hash_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    sha256sum | awk '{print $1}'
+  fi
+}
+
+create_pull_request() {
+  local repo="$1"
+  local branch="$2"
+  local base="$3"
+  local remote="origin"
+  local out
+  out="$(git -C "$repo" push -u "$remote" "$branch" 2>&1)"
+  if [ "$?" -ne 0 ]; then
+    PULL_REQUEST_ERROR="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    return 1
+  fi
+  out="$(cd "$repo" >/dev/null 2>&1 && gh pr create --fill --base "$base" --head "$branch" 2>&1)"
+  if [ "$?" -ne 0 ]; then
+    PULL_REQUEST_ERROR="pushed $remote/$branch, but PR creation failed: $(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    return 1
+  fi
+  PULL_REQUEST="$(printf '%s\n' "$out" | awk '/^https?:\/\// { print; exit }')"
+  if [ -z "$PULL_REQUEST" ]; then PULL_REQUEST="$(printf '%s\n' "$out" | tail -n 1)"; fi
+}
+
+synthesize_report() {
+  local repo="$1"
+  local slug="$2"
+  local reviewer="$3"
+  local run_spec="$4"
+  local source_spec="$5"
+  local spec_text="$6"
+  local source_repo="$7"
+  local worktree="$8"
+  local track="$9"
+  local report="${10}"
+  local status="${11}"
+  local pass="${12}"
+  local max="${13}"
+  local base="${14}"
+  local initial_branch="${15}"
+  local branch="${16}"
+  local commit="${17}"
+  local commit_message="${18}"
+  local pull_request="${19}"
+  local pull_request_error="${20}"
+  local coder="${21}"
+  local reviewer_session_file="${22}"
+  local coder_session_id="${23}"
+  local reviewer_session_id="${24}"
+  local format="${25}"
+  local title subtitle reviews metadata body prompt
+  title="$(report_title "$spec_text" "$slug")"
+  subtitle="$(report_subtitle "$spec_text" "$title")"
+  reviews="$(list_reviews "$slug" "$pass" "$max")"
+  metadata="$(report_metadata "$status" "$pass" "$max" "$repo" "$run_spec" "$source_spec" "$source_repo" "$worktree" "$base" "$initial_branch" "$branch" "$commit" "$commit_message" "$pull_request" "$pull_request_error" "$coder" "$reviewer" "$coder_session_id" "$reviewer_session_id" "$track" "$reviews")"
+  if [ "$format" = "html" ]; then
+    body="Write the report to $report as valid standalone HTML. Use a readable document layout with embedded CSS, set the HTML <title> to the report title, render the report title and subtitle before Metadata, render a topical three-line haiku immediately after the subtitle, use a compact metadata table, and add substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run."
+  else
+    body="Write the report to $report in markdown. Start with the report title as the H1, put the subtitle directly below it, put a topical three-line haiku immediately after the subtitle, then include these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run."
+  fi
+  prompt="$(cat <<EOF
+You are writing a learning-oriented post-mortem for a developer who just ran a devloop.
+
+Report framing to render visibly near the top, before Metadata:
+Title: $title
+Subtitle: $subtitle
+Haiku: Compose a three-line haiku, 5/7/5 syllables if possible, about this specific work.
+Haiku topic: $title - $subtitle
+
+Use that exact title and subtitle. The subtitle must be specific to this work, not a generic or hard-coded tagline. The haiku must be topical, concrete, and rendered immediately after the subtitle before Metadata.
+
+Metadata to render exactly and visibly:
+$metadata
+
+Inputs:
+- spec: $run_spec
+- track: $track
+Review files:
+$reviews
+- final status: $status
+- passes used: $pass / $max
+- base: $base, starting branch: $initial_branch, final branch: $branch, local commit: ${commit:-none}
+- pull request: ${pull_request:-none}
+
+$body
+
+Style:
+- Human readable, not ornamental.
+- Preserve useful substance over brevity.
+- Teach the why: symptom, root cause, principle, decision, tradeoff, and evidence.
+- No emoji.
+EOF
+)"
+  run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.codex/logs/$slug-report.log" "$prompt" "report" >/dev/null 2>&1 || true
+}
+
+report_metadata() {
+  local status="$1"
+  local pass="$2"
+  local max="$3"
+  local repo="$4"
+  local spec="$5"
+  local source_spec="$6"
+  local source_repo="$7"
+  local worktree="$8"
+  local base="$9"
+  local initial_branch="${10}"
+  local branch="${11}"
+  local commit="${12}"
+  local commit_message="${13}"
+  local pull_request="${14}"
+  local pull_request_error="${15}"
+  local coder="${16}"
+  local reviewer="${17}"
+  local coder_session_id="${18}"
+  local reviewer_session_id="${19}"
+  local track="${20}"
+  local reviews="${21}"
+  cat <<EOF
+Result: $status
+Passes: $pass / $max
+Repository: $repo
+Spec: $spec
+Source spec: $source_spec
+Source repository: $source_repo
+Worktree: $worktree
+Base branch: $base
+Starting branch: $initial_branch
+Final branch: $branch
+Local commit: ${commit:-none}
+Commit message: ${commit_message:-none}
+Commits:
+$(commit_lines)
+Pull request: ${pull_request:-none}
+Pull request error: ${pull_request_error:-none}
+Coder: $(agent_label "$coder")
+Reviewer: $(agent_label "$reviewer")
+Coder session: ${coder_session_id:-unknown}
+Reviewer session: ${reviewer_session_id:-unknown}
+Track: $track
+Reviews:
+$reviews
+EOF
+}
+
+commit_lines() {
+  local i
+  if [ "${#COMMIT_HASHES[@]}" -eq 0 ]; then
+    printf '%s\n' "- none"
+    return
+  fi
+  i=0
+  while [ "$i" -lt "${#COMMIT_HASHES[@]}" ]; do
+    printf -- '- pass %s %s %s (%s)\n' "${COMMIT_PASSES[$i]}" "${COMMIT_HASHES[$i]}" "${COMMIT_MESSAGES[$i]}" "${COMMIT_PATHS[$i]}"
+    i=$((i + 1))
+  done
+}
+
+report_title() {
+  local spec_text="$1"
+  local slug="$2"
+  local title
+  title="$(printf '%s\n' "$spec_text" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | while IFS= read -r line; do clean_report_text "$line"; break; done)"
+  if [ -n "$title" ]; then
+    printf '%s\n' "$title"
+  else
+    title_from_slug "$slug"
+  fi
+}
+
+report_subtitle() {
+  local spec_text="$1"
+  local title="$2"
+  local text
+  for heading in "Outcome" "Problem" "Acceptance criteria"; do
+    text="$(section_lead "$spec_text" "$heading")"
+    if [ -n "$text" ]; then printf '%s\n' "$text"; return; fi
+  done
+  printf 'Outcome, review findings, and residual risk for %s.\n' "$title"
+}
+
+section_lead() {
+  local spec_text="$1"
+  local heading="$2"
+  printf '%s\n' "$spec_text" | awk -v heading="$heading" '
+    BEGIN { inside = 0 }
+    {
+      line = $0
+      lower = tolower(line)
+      target = "## " tolower(heading)
+      if (lower == target) { inside = 1; next }
+      if (inside && line ~ /^##[[:space:]]+/) exit
+      if (inside) print line
+    }
+  ' |
+    sed -E 's/^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+//' |
+    while IFS= read -r line; do
+      clean_report_text "$line"
+      if [ -n "$(clean_report_text "$line")" ]; then break; fi
+    done
+}
+
+clean_report_text() {
+  local text
+  text="$(printf '%s' "$1" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/[[:space:]]+/ /g')"
+  if [ -z "$text" ] || [ "$text" = "..." ]; then return; fi
+  if printf '%s\n' "$text" | grep -Eq '^<.*>$'; then return; fi
+  printf '%s\n' "$text"
+}
+
+title_from_slug() {
+  printf '%s\n' "$1" | awk -F- '{
+    for (i = 1; i <= NF; i++) {
+      if ($i == "") continue
+      word = toupper(substr($i, 1, 1)) substr($i, 2)
+      out = out (out ? " " : "") word
+    }
+    print out ? out : "Devloop Report"
+  }'
+}
+
+print_result() {
+  printf '\n'
+  result_line "result" "$STATUS"
+  result_line "passes" "$PASSES / $MAX"
+  result_line "coder" "$CODER"
+  result_line "reviewer" "$REVIEWER"
+  result_line "branch" "$FINAL_BRANCH"
+  result_line "commit" "${FINAL_COMMIT:-none}"
+  if [ -n "$PULL_REQUEST" ]; then result_line "pr" "$PULL_REQUEST"; fi
+  if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then result_line "worktree" "$WORKTREE_REPO"; fi
+  result_line "report" "$(display_path "$REPORT")"
+  result_line "track" "$(display_path "$TRACK")"
+}
+
+result_line() {
+  local label="$1:"
+  local value="$2"
+  printf '%-10s%s\n' "$label" "$value"
+}
+
+display_path() {
+  local file="$1"
+  if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then
+    printf '%s/%s\n' "$WORKTREE_REPO" "$file"
+  else
+    printf '%s\n' "$file"
+  fi
+}
+
+spec_command() {
+  local agent="codex"
+  local output=""
+  local force=false
+  local action=""
+  local context_items=()
+  local arg value
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --agent)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--agent requires a value" >&2; spec_usage >&2; return 2; fi
+        agent="$1"
+        shift
+        ;;
+      --output|-o)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--output requires a value" >&2; spec_usage >&2; return 2; fi
+        output="$1"
+        shift
+        ;;
+      --force) force=true ;;
+      --print-skill) action="print-skill" ;;
+      --skill-path) action="skill-path" ;;
+      -h|--help) spec_usage; return 0 ;;
+      --*)
+        printf 'unknown option: %s\n' "$arg" >&2
+        spec_usage >&2
+        return 2
+        ;;
+      *) context_items+=("$arg") ;;
+    esac
+  done
+
+  local skill="$ROOT_DIR/skills/spec/SKILL.md"
+  case "$action" in
+    print-skill) cat "$skill"; return ;;
+    skill-path) printf '%s\n' "$skill"; return ;;
+  esac
+
+  local context today prompt cmd_args=()
+  context="$(resolve_spec_context "${context_items[@]}")"
+  today="$(date +%F)"
+  prompt="$(spec_prompt "$context" "$output" "$(cat "$skill")" "$today")"
+  if [ "$agent" = "codex" ]; then
+    run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
+  elif [ "$agent" = "claude" ]; then
+    run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
+  else
+    run_with_prompt "$PWD" "" "" "$prompt" "$agent"
+  fi
+  if [ "$RUN_CODE" -ne 0 ]; then
+    if [ -n "$RUN_STDERR" ]; then printf '%s\n' "$RUN_STDERR" >&2; else printf '%s\n' "${RUN_STDOUT:-spec agent failed}" >&2; fi
+    return 2
+  fi
+
+  local markdown file
+  if ! markdown="$(extract_generated_spec "$RUN_STDOUT$RUN_STDERR")"; then
+    printf '%s\n' "agent output must include spec frontmatter" >&2
+    return 2
+  fi
+  file="$(generated_spec_path "$markdown" "$output" "$today" "$force")"
+  if [ -f "$file" ] && [ "$force" = false ]; then
+    printf 'spec already exists: %s\n' "$file" >&2
+    return 2
+  fi
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$markdown" > "$file"
+  printf 'spec:  %s\n' "$file"
+  printf 'agent: %s\n' "$agent"
+}
+
+resolve_spec_context() {
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' "No source material was provided. Use the cold-start interview path in the bundled skill to discover intent before writing the spec."
+    return
+  fi
+  local first=true
+  local item file
+  for item in "$@"; do
+    if [ "$first" = false ]; then printf '\n---\n\n'; fi
+    first=false
+    if [ -f "$item" ]; then
+      file="$(absolute_existing_file "$item")"
+      printf 'Source file: %s\n\n' "$file"
+      cat "$file"
+    else
+      printf 'Context:\n%s\n' "$item"
+    fi
+  done
+}
+
+spec_prompt() {
+  local context="$1"
+  local output="$2"
+  local skill="$3"
+  local today="$4"
+  local output_line
+  if [ -n "$output" ]; then
+    output_line="Output path: $output"
+  else
+    output_line="Output path: choose a .specs/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."
+  fi
+  cat <<EOF
+Use this bundled devloop skill to produce one implementation spec.
+
+Current date: $today
+$output_line
+
+If the source context is missing or too thin, follow the skill's interview path before drafting. Return only the final markdown spec. Do not wrap it in a code fence.
+
+Bundled skill:
+$skill
+
+Context:
+$context
+EOF
+}
+
+extract_generated_spec() {
+  local output="$1"
+  local tmp stripped next
+  tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-spec.XXXXXX")"
+  stripped="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-stripped.XXXXXX")"
+  printf '%s\n' "$output" > "$tmp"
+  cp "$tmp" "$stripped"
+  if head -n 1 "$stripped" | grep -Eq '^[[:space:]]*```(markdown|md)?[[:space:]]*$'; then
+    next="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-next.XXXXXX")"
+    sed '1d' "$stripped" > "$next"
+    mv "$next" "$stripped"
+  fi
+  if tail -n 1 "$stripped" | grep -Eq '^[[:space:]]*```[[:space:]]*$'; then
+    next="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-next.XXXXXX")"
+    sed '$d' "$stripped" > "$next"
+    mv "$next" "$stripped"
+  fi
+  if ! grep -q '^---[[:space:]]*$' "$stripped"; then
+    rm -f "$tmp" "$stripped"
+    return 1
+  fi
+  awk 'found || /^---[[:space:]]*$/ { found = 1; print }' "$stripped" | sed -E '${/^[[:space:]]*$/d;}'
+  rm -f "$tmp" "$stripped"
+}
+
+generated_spec_path() {
+  local markdown="$1"
+  local output="$2"
+  local today="$3"
+  local force="$4"
+  local title slug file base ext index
+  if [ -n "$output" ]; then
+    absolute_path "$output"
+    return
+  fi
+  title="$(printf '%s\n' "$markdown" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | head -n 1)"
+  slug="$(slugify "${title:-spec}")"
+  if [ -z "$slug" ]; then slug="spec"; fi
+  file="$PWD/.specs/$today-$slug.md"
+  if [ "$force" = true ]; then
+    printf '%s\n' "$file"
+    return
+  fi
+  base="${file%.md}"
+  ext=".md"
+  index=2
+  while [ -e "$file" ]; do
+    file="$base-$index$ext"
+    index=$((index + 1))
+  done
+  printf '%s\n' "$file"
+}
+
+main "$@"
