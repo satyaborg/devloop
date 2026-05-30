@@ -78,20 +78,20 @@ A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec
 
 ```sh
 devloop spec
-devloop spec --agent claude --output .specs/chat-retry.md notes.md
+devloop spec --agent claude notes.md
 ```
 
-By default, generated specs are written under `.specs/`, and the interactive spec picker searches `.specs/`. If your specs live somewhere else, open `devloop`, choose `Settings`, and add one extra spec path. Generated specs will be written there too.
+Devloop maintains a global config at `~/.devloop/config`. By default, generated specs are written under `~/Projects/specs/`, and the interactive spec picker searches that directory plus the current repo's `.specs/` fallback.
 
-The custom path is saved in `.devloop/config` and can be repo-relative or absolute:
+Change the shared spec directory from `devloop` > `Settings`, or edit `~/.devloop/config`:
 
 ```ini
 spec_dir=/Users/satya/Projects/specs
 ```
 
-The Settings menu expands `~/...` before saving. It also lets you change the per-run timeout. `.devloop/` is ignored by git because absolute paths are machine-local.
+Repo-local `.devloop/config` is still supported for explicit overrides. Prefer absolute paths there unless the override should be repo-relative.
 
-Runs time out after 30 minutes by default. Change that in `Settings`, in `.devloop/config`, or per command:
+Runs time out after 30 minutes by default. Change that in `Settings`, in `~/.devloop/config`, or per command:
 
 ```ini
 timeout_minutes=45
@@ -134,11 +134,11 @@ devloop [options] <spec.md> [max=5]
 
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
-- `Run a spec`: pick a spec from the configured spec path or `.specs/`.
+- `Run a spec`: pick a spec from the shared spec directory or `.specs/`.
 - `Create a spec`: choose the spec agent and provide source context.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
-- `Settings`: view spec search paths, add or remove one custom spec path, and set the run timeout.
+- `Settings`: view or change the shared spec path and set the run timeout.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
 Nested menu screens keep `Back` as the final option so you can return to the previous menu without exiting Devloop.
