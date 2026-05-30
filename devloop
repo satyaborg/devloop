@@ -1513,6 +1513,7 @@ has_user_dirty_paths() {
   local repo="$1"
   local file
   while IFS= read -r file; do
+    [ -n "$file" ] || continue
     case "$file" in
       .codex/*) continue ;;
     esac

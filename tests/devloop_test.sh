@@ -199,6 +199,20 @@ equals "$(track_value max "$branch_repo/.codex/tracks/chat-retry.md")" "3" "trac
 touch "$branch_repo/.codex/reviews/chat-retry-r1.md" "$branch_repo/.codex/reviews/chat-retry-r3.md"
 equals "$(next_pass_from_track "$branch_repo/.codex/tracks/chat-retry.md")" "4" "track next pass"
 
+clean_status_repo="$work/clean-status-repo"
+git init -q "$clean_status_repo"
+git -C "$clean_status_repo" config user.email devloop-test@example.com
+git -C "$clean_status_repo" config user.name "devloop test"
+printf '%s\n' ".codex/" > "$clean_status_repo/.gitignore"
+printf '%s\n' "# Clean status" > "$clean_status_repo/README.md"
+git -C "$clean_status_repo" add .gitignore README.md
+git -C "$clean_status_repo" commit -q -m init
+mkdir -p "$clean_status_repo/.codex/tracks"
+clean_status_track="$clean_status_repo/.codex/tracks/clean-status.md"
+printf '%s\n' "# Track" > "$clean_status_track"
+if has_user_dirty_paths "$clean_status_repo"; then fail "clean worktree reported dirty"; fi
+equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$work/source-repo")" "ready" "clean candidate ready"
+
 spec_output=$'preface\n---\nstatus: draft\n---\n\n# Generated'
 equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n# Generated' "extract_generated_spec"
 
