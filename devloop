@@ -6,6 +6,7 @@ CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
 CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort max)
 DEFAULT_TIMEOUT_MINUTES=30
+DEFAULT_SPEC_DIR_SUFFIX="Projects/specs"
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -286,7 +287,7 @@ devloop_global_config_file() {
 }
 
 devloop_config_file() {
-  devloop_local_config_file
+  devloop_global_config_file || devloop_local_config_file
 }
 
 devloop_config_file_for_scope() {
@@ -323,9 +324,43 @@ config_file_value() {
   done < "$file" | tail -n 1
 }
 
+devloop_default_spec_dir() {
+  if [ -n "${HOME:-}" ]; then
+    printf '%s/%s\n' "${HOME%/}" "$DEFAULT_SPEC_DIR_SUFFIX"
+  else
+    printf '%s\n' ".specs"
+  fi
+}
+
+ensure_global_config() {
+  local file value spec_dir
+  file="$(devloop_global_config_file 2>/dev/null)" || return 0
+  mkdir -p "$(dirname "$file")" || return 1
+  if [ ! -f "$file" ]; then
+    spec_dir="$(devloop_default_spec_dir)"
+    mkdir -p "$spec_dir" || return 1
+    {
+      printf 'spec_dir=%s\n' "$spec_dir"
+      printf 'timeout_minutes=%s\n' "$DEFAULT_TIMEOUT_MINUTES"
+    } > "$file"
+    return 0
+  fi
+  value="$(config_file_value spec_dir "$file" || true)"
+  if [ -z "$value" ]; then
+    spec_dir="$(devloop_default_spec_dir)"
+    mkdir -p "$spec_dir" || return 1
+    printf 'spec_dir=%s\n' "$spec_dir" >> "$file"
+  fi
+  value="$(config_file_value timeout_minutes "$file" || true)"
+  if [ -z "$value" ]; then
+    printf 'timeout_minutes=%s\n' "$DEFAULT_TIMEOUT_MINUTES" >> "$file"
+  fi
+}
+
 devloop_config_value() {
   local key="$1"
   local file value
+  ensure_global_config >/dev/null 2>&1 || true
   file="$(devloop_local_config_file)"
   if value="$(config_file_value "$key" "$file")" && [ -n "$value" ]; then
     printf '%s\n' "$value"
@@ -406,46 +441,53 @@ expand_spec_dir_input() {
 }
 
 devloop_spec_dir() {
-  local value normalized
-  value="$(devloop_config_value spec_dir || true)"
-  if normalized="$(normalize_spec_dir "$value")"; then
-    printf '%s\n' "$normalized"
-  else
-    printf '%s\n' ".specs"
-  fi
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value spec_dir "$file" || true)"
+    [ -n "$value" ] || continue
+    if normalized="$(normalize_spec_dir "$value")"; then
+      printf '%s\n' "$normalized"
+      return 0
+    fi
+  done
+  devloop_default_spec_dir
 }
 
 is_default_spec_dir() {
-  case "$1" in
-    ".specs") return 0 ;;
-    *) return 1 ;;
-  esac
+  local default_spec_dir
+  default_spec_dir="$(devloop_default_spec_dir)"
+  [ "$1" = "$default_spec_dir" ]
 }
 
 configured_spec_dir() {
-  local value normalized
-  value="$(devloop_config_value spec_dir || true)"
-  [ -n "$value" ] || return 1
-  normalized="$(normalize_spec_dir "$value")" || return 1
-  is_default_spec_dir "$normalized" && return 1
-  printf '%s\n' "$normalized"
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value spec_dir "$file" || true)"
+    [ -n "$value" ] || continue
+    normalized="$(normalize_spec_dir "$value")" || continue
+    is_default_spec_dir "$normalized" && return 1
+    printf '%s\n' "$normalized"
+    return 0
+  done
+  return 1
 }
 
 configured_spec_dir_scope() {
-  local file value normalized
-  file="$(devloop_local_config_file)"
-  if value="$(config_file_value spec_dir "$file")" && [ -n "$value" ]; then
-    normalized="$(normalize_spec_dir "$value")" || return 1
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value spec_dir "$file" || true)"
+    [ -n "$value" ] || continue
+    normalized="$(normalize_spec_dir "$value")" || continue
     is_default_spec_dir "$normalized" && return 1
-    printf '%s\n' "local"
+    printf '%s\n' "$scope"
     return 0
-  fi
-  if file="$(devloop_global_config_file 2>/dev/null)" && value="$(config_file_value spec_dir "$file")" && [ -n "$value" ]; then
-    normalized="$(normalize_spec_dir "$value")" || return 1
-    is_default_spec_dir "$normalized" && return 1
-    printf '%s\n' "global"
-    return 0
-  fi
+  done
   return 1
 }
 
@@ -493,7 +535,7 @@ spec_dir_status() {
 }
 
 write_config_spec_dir() {
-  local scope="local"
+  local scope="global"
   local dir
   local expanded normalized file
   if [ "$#" -eq 2 ]; then
@@ -510,6 +552,12 @@ write_config_spec_dir() {
     printf '%s\n' "spec directory must be absolute, or relative without '..'" >&2
     return 2
   }
+  if [ "$scope" = "global" ]; then
+    case "$normalized" in
+      /*) ;;
+      *) normalized="$(absolute_path "$normalized")" || return 1 ;;
+    esac
+  fi
   file="$(devloop_config_file_for_scope "$scope")" || return $?
   mkdir -p "$(dirname "$file")" "$normalized" || return 1
   write_config_value "$scope" spec_dir "$normalized" || return $?
@@ -517,7 +565,7 @@ write_config_spec_dir() {
 }
 
 remove_config_spec_dir() {
-  local scope="local"
+  local scope="global"
   if [ "$#" -eq 1 ]; then scope="$1"; fi
   remove_config_value "$scope" spec_dir
 }
@@ -531,44 +579,52 @@ normalize_timeout_minutes() {
 }
 
 devloop_timeout_minutes() {
-  local value normalized
-  value="$(devloop_config_value timeout_minutes || true)"
-  if normalized="$(normalize_timeout_minutes "$value")"; then
-    printf '%s\n' "$normalized"
-  else
-    printf '%s\n' "$DEFAULT_TIMEOUT_MINUTES"
-  fi
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value timeout_minutes "$file" || true)"
+    [ -n "$value" ] || continue
+    if normalized="$(normalize_timeout_minutes "$value")"; then
+      printf '%s\n' "$normalized"
+      return 0
+    fi
+  done
+  printf '%s\n' "$DEFAULT_TIMEOUT_MINUTES"
 }
 
 configured_timeout_minutes() {
-  local value normalized
-  value="$(devloop_config_value timeout_minutes || true)"
-  [ -n "$value" ] || return 1
-  normalized="$(normalize_timeout_minutes "$value")" || return 1
-  [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
-  printf '%s\n' "$normalized"
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value timeout_minutes "$file" || true)"
+    [ -n "$value" ] || continue
+    normalized="$(normalize_timeout_minutes "$value")" || continue
+    [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
+    printf '%s\n' "$normalized"
+    return 0
+  done
+  return 1
 }
 
 configured_timeout_minutes_scope() {
-  local file value normalized
-  file="$(devloop_local_config_file)"
-  if value="$(config_file_value timeout_minutes "$file")" && [ -n "$value" ]; then
-    normalized="$(normalize_timeout_minutes "$value")" || return 1
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value timeout_minutes "$file" || true)"
+    [ -n "$value" ] || continue
+    normalized="$(normalize_timeout_minutes "$value")" || continue
     [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
-    printf '%s\n' "local"
+    printf '%s\n' "$scope"
     return 0
-  fi
-  if file="$(devloop_global_config_file 2>/dev/null)" && value="$(config_file_value timeout_minutes "$file")" && [ -n "$value" ]; then
-    normalized="$(normalize_timeout_minutes "$value")" || return 1
-    [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
-    printf '%s\n' "global"
-    return 0
-  fi
+  done
   return 1
 }
 
 write_config_timeout_minutes() {
-  local scope="local"
+  local scope="global"
   local value normalized
   if [ "$#" -eq 2 ]; then
     scope="$1"
@@ -585,7 +641,7 @@ write_config_timeout_minutes() {
 }
 
 remove_config_timeout_minutes() {
-  local scope="local"
+  local scope="global"
   if [ "$#" -eq 1 ]; then scope="$1"; fi
   remove_config_value "$scope" timeout_minutes
 }
@@ -1085,21 +1141,24 @@ interactive_create_spec() {
 
 interactive_settings() {
   local choice custom_spec_dir custom_timeout scope saved value timeout_display code
+  local default_spec_dir
   local choices=()
   while true; do
     custom_spec_dir="$(configured_spec_dir || true)"
     custom_timeout="$(configured_timeout_minutes || true)"
     timeout_display="$(devloop_timeout_minutes) minutes"
-    ui_header "Settings" "Spec paths and run timeout"
+    default_spec_dir="$(devloop_default_spec_dir)"
+    ui_header "Settings" "Global spec path and run timeout"
     if [ -n "$custom_spec_dir" ]; then
       ui_print_key_values \
-        "custom" "$custom_spec_dir" \
-        "default" ".specs" \
+        "configured" "$custom_spec_dir" \
+        "fallback" ".specs" \
         "timeout" "$timeout_display"
       choices=("Remove spec path" "Set timeout" "Back")
     else
       ui_print_key_values \
-        "default" ".specs" \
+        "default" "$default_spec_dir" \
+        "fallback" ".specs" \
         "timeout" "$timeout_display"
       choices=("Add spec path" "Set timeout" "Back")
     fi
@@ -1115,7 +1174,7 @@ interactive_settings() {
     case "$choice" in
       "Add spec path")
         value="$(ui_input "Spec path" "")" || continue
-        if saved="$(write_config_spec_dir local "$value")"; then
+        if saved="$(write_config_spec_dir global "$value")"; then
           UI_NOTICE="spec path saved: $saved"
         else
           UI_NOTICE="spec path not saved"
@@ -1130,7 +1189,7 @@ interactive_settings() {
         ;;
       "Set timeout")
         value="$(ui_input "Timeout minutes, 1-1440" "$(devloop_timeout_minutes)")" || continue
-        if saved="$(write_config_timeout_minutes local "$value")"; then
+        if saved="$(write_config_timeout_minutes global "$value")"; then
           UI_NOTICE="timeout saved: $saved minutes"
         else
           UI_NOTICE="timeout not saved"

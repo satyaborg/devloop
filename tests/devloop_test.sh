@@ -271,16 +271,23 @@ equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n#
 
 config_repo="$work/config-repo"
 config_home="$work/config-home"
+config_default_specs="$config_home/Projects/specs"
 mkdir -p "$config_repo/.specs" "$config_repo/.devloop/specs" "$config_home"
 config_repo_real="$(cd "$config_repo" && pwd)"
-equals "$(devloop_config_file)" ".devloop/config" "default config file"
+equals "$(HOME="$config_home" devloop_config_file)" "$config_home/.devloop/config" "default config file"
 printf '%s\n' "# Default" > "$config_repo/.specs/default.md"
 printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
 config_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
+[[ -f "$config_home/.devloop/config" ]] || fail "global config was not created"
+contains "$(cat "$config_home/.devloop/config")" "spec_dir=$config_default_specs" "global config default spec dir"
+contains "$(cat "$config_home/.devloop/config")" "timeout_minutes=30" "global config default timeout"
+[[ -d "$config_default_specs" ]] || fail "global default spec dir was not created"
 contains "$config_specs" ".specs/default.md" "default spec search"
 if printf '%s\n' "$config_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "default spec search included .devloop/specs"; fi
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs" "spec search label"
-equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir "custom-specs")" "custom-specs" "write config spec dir"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "default global spec dir"
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs, .specs" "spec search label"
+if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "default global spec dir reported as custom"; fi
+equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir local "custom-specs")" "custom-specs" "write local config spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "custom-specs" "configured spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "custom-specs" "custom spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir_scope)" "local" "custom spec dir scope"
@@ -292,7 +299,7 @@ equals "$(cd "$config_repo" && HOME="$config_home" generated_spec_path "$spec_ou
 if (cd "$config_repo" && HOME="$config_home" write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
 
 absolute_specs="$work/shared-specs"
-equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir "$absolute_specs")" "$absolute_specs" "write absolute config spec dir"
+equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir local "$absolute_specs")" "$absolute_specs" "write absolute config spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$absolute_specs" "absolute configured spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "$absolute_specs" "absolute custom spec dir"
 [[ -d "$absolute_specs" ]] || fail "absolute configured spec dir was not created"
@@ -305,8 +312,8 @@ equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
 equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
 (cd "$config_repo" && HOME="$config_home" remove_config_spec_dir local)
 if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "custom spec dir was not removed"; fi
-equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" ".specs" "removed custom spec dir falls back"
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs" "removed custom spec search label"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "removed custom spec dir falls back"
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs, .specs" "removed custom spec search label"
 
 global_repo="$work/global-repo"
 global_home="$work/global-home"
@@ -324,18 +331,31 @@ equals "$(cd "$global_repo" && HOME="$global_home" devloop_spec_dir)" "local-spe
 equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir)" "local-specs" "local custom spec dir"
 equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir_scope)" "local" "local custom spec dir scope"
 equals "$(cd "$global_repo" && HOME="$global_home" devloop_config_value coder)" "codex" "global config fills missing local key"
+printf '%s\n' "spec_dir=.specs" > "$global_repo/.devloop/config"
+equals "$(cd "$global_repo" && HOME="$global_home" devloop_spec_dir)" ".specs" "repo .specs overrides global spec dir"
+equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir)" ".specs" "repo .specs reported as override"
+equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir_scope)" "local" "repo .specs override scope"
+
+default_scope_repo="$work/default-scope-repo"
+default_scope_home="$work/default-scope-home"
+default_scope_specs="$work/default-scope-specs"
+mkdir -p "$default_scope_repo" "$default_scope_home"
+equals "$(cd "$default_scope_repo" && HOME="$default_scope_home" write_config_spec_dir "$default_scope_specs")" "$default_scope_specs" "default write config spec dir is global"
+equals "$(cat "$default_scope_home/.devloop/config")" "spec_dir=$default_scope_specs" "default write config path"
+equals "$(cd "$default_scope_repo" && HOME="$default_scope_home" configured_spec_dir_scope)" "global" "default write config scope"
 
 tilde_repo="$work/tilde-repo"
 tilde_home="$work/home"
 tilde_input="~"/shared-specs
 mkdir -p "$tilde_repo" "$tilde_home"
 equals "$(cd "$tilde_repo" && HOME="$tilde_home" write_config_spec_dir "$tilde_input")" "$tilde_home/shared-specs" "tilde input expands when saved"
-equals "$(cat "$tilde_repo/.devloop/config")" "spec_dir=$tilde_home/shared-specs" "tilde input saved as absolute path"
+equals "$(cat "$tilde_home/.devloop/config")" "spec_dir=$tilde_home/shared-specs" "tilde input saved as absolute path"
 
 raw_tilde_repo="$work/raw-tilde-repo"
-mkdir -p "$raw_tilde_repo/.devloop"
+raw_tilde_home="$work/raw-tilde-home"
+mkdir -p "$raw_tilde_repo/.devloop" "$raw_tilde_home"
 printf '%s\n' "spec_dir=~/raw-specs" > "$raw_tilde_repo/.devloop/config"
-equals "$(cd "$raw_tilde_repo" && devloop_spec_dir)" ".specs" "raw tilde config falls back"
+equals "$(cd "$raw_tilde_repo" && HOME="$raw_tilde_home" devloop_spec_dir)" "$raw_tilde_home/Projects/specs" "raw tilde config falls back"
 
 equals "$(normalize_timeout_minutes 1)" "1" "timeout lower bound"
 equals "$(normalize_timeout_minutes 30)" "30" "timeout normalize"
@@ -346,8 +366,8 @@ if normalize_timeout_minutes nope >/dev/null 2>&1; then fail "timeout accepted n
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "default timeout"
 equals "$(cd "$config_repo" && HOME="$config_home" write_config_timeout_minutes 45)" "45" "write timeout"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "45" "configured timeout"
-equals "$(cd "$config_repo" && HOME="$config_home" configured_timeout_minutes_scope)" "local" "configured timeout scope"
-(cd "$config_repo" && HOME="$config_home" remove_config_timeout_minutes local)
+equals "$(cd "$config_repo" && HOME="$config_home" configured_timeout_minutes_scope)" "global" "configured timeout scope"
+(cd "$config_repo" && HOME="$config_home" remove_config_timeout_minutes)
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "removed timeout falls back"
 
 lint_spec_text=$'---\ntype: feat\n---\n# Title\n\n## Acceptance criteria\n1. Thing'
@@ -518,13 +538,16 @@ AGENT
 chmod +x "$agent"
 
 repo="$work/repo"
-mkdir -p "$repo/.devloop"
+spec_home="$work/spec-home"
 repo_specs="$work/repo-specs"
-printf 'spec_dir=%s\n' "$repo_specs" > "$repo/.devloop/config"
+mkdir -p "$repo" "$spec_home/.devloop"
+printf 'spec_dir=%s\n' "$repo_specs" > "$spec_home/.devloop/config"
 old_use_tui="$USE_TUI"
 USE_TUI=false
 (
   cd "$repo"
+  HOME="$spec_home"
+  export HOME
   main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 USE_TUI="$old_use_tui"
