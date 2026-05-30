@@ -65,6 +65,13 @@ Open a PR after an accepted run:
 devloop --create-pr .specs/change.md
 ```
 
+See tracked runs and cleanup candidates:
+
+```sh
+devloop status
+devloop clean
+```
+
 ## Specs
 
 A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md), or generate one:
@@ -74,7 +81,7 @@ devloop spec
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
 ```
 
-By default, generated specs are written under `.specs/`, and the interactive spec picker searches `.specs/` and `.devloop/specs/`. If your specs live somewhere else, open `devloop`, choose `Settings`, and add one extra spec path. Generated specs will be written there too.
+By default, generated specs are written under `.specs/`, and the interactive spec picker searches `.specs/`. If your specs live somewhere else, open `devloop`, choose `Settings`, and add one extra spec path. Generated specs will be written there too.
 
 The custom path is saved in `.devloop/config` and can be repo-relative or absolute:
 
@@ -82,7 +89,17 @@ The custom path is saved in `.devloop/config` and can be repo-relative or absolu
 spec_dir=/Users/satya/Projects/specs
 ```
 
-The Settings menu expands `~/...` before saving. `.devloop/` is ignored by git because absolute paths are machine-local.
+The Settings menu expands `~/...` before saving. It also lets you change the per-run timeout. `.devloop/` is ignored by git because absolute paths are machine-local.
+
+Runs time out after 30 minutes by default. Change that in `Settings`, in `.devloop/config`, or per command:
+
+```ini
+timeout_minutes=45
+```
+
+```sh
+devloop --timeout-minutes 45 .specs/change.md
+```
 
 Strict mode is on by default. It requires acceptance criteria and only accepts
 reviews that pass both the spec gate and engineering quality gate:
@@ -105,6 +122,7 @@ devloop [options] <spec.md> [max=5]
 | `--coder <agent>` | Choose Codex or Claude Code for implementation (`codex`/`claude`) |
 | `--reviewer <agent>` | Choose Codex or Claude Code for review (`codex`/`claude`) |
 | `--report-format <format>` | Choose `html` or `markdown` |
+| `--timeout-minutes <n>` | Cap one run, default `30` |
 | `--in-place` | Run in the current worktree |
 | `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
 | `--no-strict` | Weaken strict review gates |
@@ -116,11 +134,11 @@ devloop [options] <spec.md> [max=5]
 
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
-- `Run a spec`: pick a spec from the configured spec path, `.specs/`, or `.devloop/specs/`.
+- `Run a spec`: pick a spec from the configured spec path or `.specs/`.
 - `Create a spec`: choose the spec agent and provide source context.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
-- `Settings`: view spec search paths, and add or remove one custom spec path.
+- `Settings`: view spec search paths, add or remove one custom spec path, and set the run timeout.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
 Nested menu screens keep `Back` as the final option so you can return to the previous menu without exiting Devloop.
@@ -130,8 +148,12 @@ Nested menu screens keep `Back` as the final option so you can return to the pre
 ## What Devloop Does
 
 - Runs up to 5 passes by default, clamped between 1 and 10.
+- Stops a run after the configured timeout, default 30 minutes.
 - Uses isolated sibling git worktrees by default.
+- Runs a small preflight before agents start: git identity, agent CLIs, installed skills, and `gh` when PR creation is enabled.
+- Lints specs for a title, valid frontmatter type when frontmatter exists, and strict acceptance criteria.
 - Commits eligible changes after each coder pass.
+- Runs `.devloop/verify` after each coder pass when it exists and is executable. In strict mode, a failing hook blocks acceptance.
 - Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.codex/`.
 - Leaves generated worktrees and branches in place for inspection.
 - Drops you into the generated worktree shell after interactive runs, unless `--no-shell` is set.
@@ -141,10 +163,20 @@ Nested menu screens keep `Back` as the final option so you can return to the pre
 
 `devloop` runs local agent CLIs against your checkout, so those agents inherit your local credentials, PATH, and machine access. `devloop` itself adds no telemetry and does not send data anywhere; network behavior depends on the agents and commands you configure.
 
+If present, `.devloop/verify` is executed from the run worktree with the pass number and slug as arguments. Keep that script local and auditable.
+
+## Operations
+
+`devloop status` summarizes tracked runs across registered git worktrees. It shows the slug, latest verdict-derived status, pass count, branch, worktree, report path, and a suggested next command.
+
+`devloop clean` defaults to a dry run. `devloop clean --force` removes eligible generated worktrees, but skips accepted runs and user-dirty worktrees unless forced. `.codex/` runtime artifacts do not count as user dirt.
+
 ## Development
 
 ```sh
 bash -n devloop install.sh release.sh skill_helpers.sh
+shellcheck devloop install.sh skill_helpers.sh tests/devloop_test.sh
+bash tests/devloop_test.sh
 ./devloop --help
 ./devloop --version
 tmp="$(mktemp -d)"
