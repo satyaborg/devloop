@@ -175,7 +175,7 @@ If present, `.devloop/verify` is executed from the run worktree with the pass nu
 
 ```sh
 bash -n devloop install.sh release.sh skill_helpers.sh
-shellcheck devloop install.sh skill_helpers.sh tests/devloop_test.sh
+shellcheck devloop install.sh skill_helpers.sh release.sh tests/devloop_test.sh
 bash tests/devloop_test.sh
 ./devloop --help
 ./devloop --version
@@ -185,25 +185,27 @@ PATH="$tmp/bin:$PATH" HOME="$tmp/home" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
+The shell suite enforces 100% project function coverage for `devloop`, `skill_helpers.sh`, and `release.sh`.
 
 ## Versioning and Release
 
 `devloop` uses [Semantic Versioning](https://semver.org/) and stores the current version in [`VERSION`](VERSION). `0.x` releases are initial public API releases, so breaking changes can happen between minor versions.
 
-Release notes in [`CHANGELOG.md`](CHANGELOG.md) are generated from Conventional Commit history with [`git-cliff`](https://git-cliff.org/). Install it before cutting a real release:
+Release notes in [`CHANGELOG.md`](CHANGELOG.md) are generated from Conventional Commit history with [`git-cliff`](https://git-cliff.org/). Published GitHub Releases use [`gh`](https://cli.github.com/). Install both before cutting a real release:
 
 ```sh
 brew install git-cliff
+brew install gh
 ```
 
 Cut a release from a clean tree by choosing the bump:
 
 ```sh
 ./release.sh patch --dry-run
-./release.sh patch
+./release.sh patch --publish
 ```
 
-Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--push` to push the release branch and tag. By default, pushed releases must run from `main`.
+Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--publish` to push the release branch and tag, then create the GitHub Release. Use `--push` only when you want to publish the git refs without creating a GitHub Release. By default, published releases must run from `main`.
 
 ## License
 
