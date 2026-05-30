@@ -17,6 +17,12 @@ cd devloop
 ./install.sh
 ```
 
+Check the installed version:
+
+```sh
+devloop --version
+```
+
 Run without installing:
 
 ```sh
@@ -104,6 +110,7 @@ devloop [options] <spec.md> [max=5]
 | `--no-strict` | Weaken strict review gates |
 | `--no-shell`, `--stay` | Do not open a shell in the generated worktree after completion |
 | `--shell`, `--enter-worktree` | Open a shell in the generated worktree after completion |
+| `-V`, `--version` | Show version |
 
 ## Interactive UI
 
@@ -137,14 +144,34 @@ Nested menu screens keep `Back` as the final option so you can return to the pre
 ## Development
 
 ```sh
-bash -n devloop install.sh
+bash -n devloop install.sh release.sh skill_helpers.sh
 ./devloop --help
+./devloop --version
 tmp="$(mktemp -d)"
 DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./install.sh
 PATH="$tmp/bin:$PATH" HOME="$tmp/home" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
+
+## Versioning and Release
+
+`devloop` uses [Semantic Versioning](https://semver.org/) and stores the current version in [`VERSION`](VERSION). `0.x` releases are initial public API releases, so breaking changes can happen between minor versions.
+
+Release notes in [`CHANGELOG.md`](CHANGELOG.md) are generated from Conventional Commit history with [`git-cliff`](https://git-cliff.org/). Install it before cutting a real release:
+
+```sh
+brew install git-cliff
+```
+
+Cut a release from a clean tree:
+
+```sh
+./release.sh 0.1.0 --dry-run
+./release.sh 0.1.0
+```
+
+That updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release 0.1.0`, and creates an annotated `v0.1.0` tag. Add `--push` to push the release branch and tag. By default, pushed releases must run from `main`.
 
 ## License
 

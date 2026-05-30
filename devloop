@@ -17,6 +17,8 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
 source "$ROOT_DIR/skill_helpers.sh"
+DEVLOOP_VERSION="$(sed -n '1p' "$ROOT_DIR/VERSION" 2>/dev/null || true)"
+if [ -z "$DEVLOOP_VERSION" ]; then DEVLOOP_VERSION="0.0.0-dev"; fi
 
 USE_TUI=false
 if [ -t 1 ]; then USE_TUI=true; fi
@@ -66,6 +68,11 @@ COMMIT_PATHS=()
 main() {
   if has_arg "--plain" "$@"; then USE_TUI=false; fi
   if has_arg "--tui" "$@"; then USE_TUI=true; fi
+
+  if version_args_only "$@"; then
+    printf 'devloop %s\n' "$DEVLOOP_VERSION"
+    return 0
+  fi
 
   if [ "${1:-}" = "spec" ]; then
     shift
@@ -127,6 +134,7 @@ devloop_logo() {
 ░█░█░█▀▀░▀▄▀░█░░░█░█░█░█░█▀▀
 ░▀▀░░▀▀▀░░▀░░▀▀▀░▀▀▀░▀▀▀░▀░░
 EOF
+  printf 'v%s\n' "$DEVLOOP_VERSION"
 }
 
 welcome_plain() {
@@ -162,6 +170,7 @@ Options:
   --create-pr, --pr             push accepted branch and open a PR
   --no-shell, --stay            do not open a shell in the run worktree after completion
   --shell, --enter-worktree     open a shell in the run worktree after completion
+  -V, --version                 show version
   -h, --help                    show this screen
 EOF
 }
@@ -192,11 +201,12 @@ welcome_tui() {
   printf '  %-30s %s\n' "--create-pr, --pr" "push accepted branch and open a PR"
   printf '  %-30s %s\n' "--no-shell, --stay" "do not open a shell after completion"
   printf '  %-30s %s\n' "--shell, --enter-worktree" "open a shell after completion"
+  printf '  %-30s %s\n' "-V, --version" "show version"
   printf '  %-30s %s\n' "-h, --help" "show this screen"
 }
 
 usage() {
-  printf '%s\n' "usage: devloop [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+  printf '%s\n' "usage: devloop [--version] [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
   printf '%s\n' "agents: Codex or Claude Code"
 }
 
@@ -220,6 +230,19 @@ has_arg() {
     if [ "$item" = "$needle" ]; then return 0; fi
   done
   return 1
+}
+
+version_args_only() {
+  local item saw_version=false
+  [ "$#" -gt 0 ] || return 1
+  for item in "$@"; do
+    case "$item" in
+      --version|-V) saw_version=true ;;
+      --plain|--tui) ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$saw_version" = true ]
 }
 
 trim_string() {
