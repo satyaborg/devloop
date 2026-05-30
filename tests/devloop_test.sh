@@ -44,11 +44,14 @@ help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
 contains "$help" "devloop doctor" "help"
 contains "$help" "devloop reports" "help"
+contains "$help" "devloop status" "help"
+contains "$help" "devloop clean" "help"
 contains "$help" "--create-pr" "help"
 contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
 contains "$help" "--version" "help"
 contains "$help" "v$version" "help"
+contains "$help" "--timeout-minutes" "help"
 ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"
@@ -256,14 +259,45 @@ equals "$(cd "$global_repo" && HOME="$global_home" devloop_config_value coder)" 
 
 tilde_repo="$work/tilde-repo"
 tilde_home="$work/home"
+tilde_input="~"/shared-specs
 mkdir -p "$tilde_repo" "$tilde_home"
-equals "$(cd "$tilde_repo" && HOME="$tilde_home" write_config_spec_dir "~/shared-specs")" "$tilde_home/shared-specs" "tilde input expands when saved"
+equals "$(cd "$tilde_repo" && HOME="$tilde_home" write_config_spec_dir "$tilde_input")" "$tilde_home/shared-specs" "tilde input expands when saved"
 equals "$(cat "$tilde_repo/.devloop/config")" "spec_dir=$tilde_home/shared-specs" "tilde input saved as absolute path"
 
 raw_tilde_repo="$work/raw-tilde-repo"
 mkdir -p "$raw_tilde_repo/.devloop"
 printf '%s\n' "spec_dir=~/raw-specs" > "$raw_tilde_repo/.devloop/config"
 equals "$(cd "$raw_tilde_repo" && devloop_spec_dir)" ".specs" "raw tilde config falls back"
+
+equals "$(normalize_timeout_minutes 1)" "1" "timeout lower bound"
+equals "$(normalize_timeout_minutes 30)" "30" "timeout normalize"
+equals "$(normalize_timeout_minutes 1440)" "1440" "timeout upper bound"
+if normalize_timeout_minutes 0 >/dev/null 2>&1; then fail "timeout accepted zero"; fi
+if normalize_timeout_minutes 1441 >/dev/null 2>&1; then fail "timeout accepted above upper bound"; fi
+if normalize_timeout_minutes nope >/dev/null 2>&1; then fail "timeout accepted non-numeric"; fi
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "default timeout"
+equals "$(cd "$config_repo" && HOME="$config_home" write_config_timeout_minutes 45)" "45" "write timeout"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "45" "configured timeout"
+(cd "$config_repo" && HOME="$config_home" remove_config_timeout_minutes local)
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "removed timeout falls back"
+
+lint_spec_text=$'---\ntype: feat\n---\n# Title\n\n## Acceptance criteria\n1. Thing'
+lint_spec_file "$criteria_file" "$lint_spec_text" 1 true || fail "lint_spec_file rejected valid spec"
+bad_lint_spec=$'---\ntype: invalid\n---\n# Title\n\n## Acceptance criteria\n1. Thing'
+if lint_spec_file "$criteria_file" "$bad_lint_spec" 1 true >/dev/null 2>&1; then fail "lint_spec_file accepted invalid type"; fi
+if lint_spec_file "$criteria_file" "# Title" 0 true >/dev/null 2>&1; then fail "lint_spec_file accepted missing strict criteria"; fi
+if lint_spec_file "$criteria_file" "## Missing H1" 0 false >/dev/null 2>&1; then fail "lint_spec_file accepted missing H1"; fi
+
+STATUS="accepted"
+equals "$(final_exit_code 0)" "0" "final exit accepted"
+STATUS="timeout"
+equals "$(final_exit_code 0)" "1" "final exit timeout"
+STATUS="stalled"
+equals "$(final_exit_code 0)" "1" "final exit stalled"
+STATUS="preflight-error"
+equals "$(final_exit_code 2)" "2" "final exit preserves early error"
+STATUS=""
+equals "$(final_exit_code 2)" "2" "final exit blank preserves fallback"
 
 session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue this session, run codex exec resume 22222222-2222-4222-8222-222222222222'
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
@@ -374,3 +408,256 @@ contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Output path: choose a $repo_specs/" "spec prompt configured output"
 ok "spec generation"
+
+cat > "$fake_bin/codex" <<'AGENT'
+#!/usr/bin/env bash
+set -euo pipefail
+prompt="$(cat)"
+if printf '%s\n' "$prompt" | grep -q "Work item naming task"; then
+  printf '%s\n' '{"type":"feat","slug":"fake-loop","breaking":false}'
+  exit 0
+fi
+pass="$(printf '%s\n' "$prompt" | sed -nE 's/^Pass: ([0-9]+).*/\1/p' | head -n 1)"
+track="$(printf '%s\n' "$prompt" | sed -nE 's/^Track: (.+)$/\1/p' | head -n 1)"
+mode="${DEVLOOP_FAKE_MODE:-accept}"
+case "$mode" in
+  no-changes) ;;
+  *) printf 'pass %s\n' "${pass:-1}" >> result.txt ;;
+esac
+if [ -n "$track" ]; then
+  {
+    printf '\n## fake coder pass %s\n' "${pass:-1}"
+    printf -- '- mode: %s\n' "$mode"
+  } >> "$track"
+fi
+printf '%s\n' "To continue this session, run codex exec resume 11111111-1111-4111-8111-111111111111"
+AGENT
+
+cat > "$fake_bin/claude" <<'AGENT'
+#!/usr/bin/env bash
+set -euo pipefail
+prompt="$(cat)"
+if printf '%s\n' "$prompt" | grep -q "learning-oriented post-mortem"; then
+  report="$(printf '%s\n' "$prompt" | sed -nE 's/.*Write the report to ([^ ]+) .*/\1/p' | head -n 1)"
+  if [ -z "$report" ]; then report=".codex/reports/fake.md"; fi
+  mkdir -p "$(dirname "$report")"
+  printf '%s\n' "# Fake report" "Result: ${DEVLOOP_FAKE_MODE:-accept}" > "$report"
+  exit 0
+fi
+output="$(printf '%s\n' "$prompt" | sed -nE 's/^Output path: (.+)$/\1/p' | head -n 1)"
+pass="$(printf '%s\n' "$prompt" | sed -nE 's/^Pass: ([0-9]+).*/\1/p' | head -n 1)"
+mode="${DEVLOOP_FAKE_MODE:-accept}"
+if [ "$mode" = "missing-review" ]; then exit 0; fi
+verdict="ACCEPT"
+ac_status="PASS"
+maintainability="PASS"
+findings="None"
+fixes="None"
+case "$mode" in
+  reject-then-accept)
+    if [ "${pass:-1}" = "1" ]; then
+      verdict="REJECT"
+      findings="1. [should-fix] result.txt:1 - first pass incomplete. Root cause: fixture. Principle: retry."
+      fixes="1. Complete the fixture."
+    fi
+    ;;
+  bad-ac) ac_status="FAIL" ;;
+  bad-quality) maintainability="FAIL" ;;
+  unclear) verdict="UNCLEAR" ;;
+esac
+mkdir -p "$(dirname "$output")"
+cat > "$output" <<MARKDOWN
+# Review ${pass:-1}
+
+Verdict: $verdict
+
+## Acceptance matrix
+
+| Criterion | Status | Implementation evidence | Test evidence |
+| --- | --- | --- | --- |
+| AC1 | $ac_status | result.txt | fake verification |
+
+## Engineering quality matrix
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Correctness | PASS | fixture |
+| Test quality | PASS | fixture |
+| Maintainability | $maintainability | fixture |
+| Architecture boundaries | PASS | fixture |
+| Simplicity | PASS | fixture |
+| Security | N/A | fixture |
+| Operational safety | PASS | fixture |
+
+## Review flags
+
+- Silent decision: absent - None
+- Scope drift: absent - None
+- Missing test: absent - None
+
+## Findings
+
+$findings
+
+## Missing tests
+
+- None
+
+## Fix instructions
+
+$fixes
+
+## Notes
+
+- None
+MARKDOWN
+AGENT
+chmod +x "$fake_bin/codex" "$fake_bin/claude"
+
+make_loop_repo() {
+  local repo_path="$1"
+  local slug="$2"
+  local title="$3"
+  mkdir -p "$repo_path/.specs"
+  git init -q "$repo_path"
+  git -C "$repo_path" config user.email devloop-test@example.com
+  git -C "$repo_path" config user.name "devloop test"
+  printf '%s\n' "# Fixture" > "$repo_path/README.md"
+  git -C "$repo_path" add README.md
+  git -C "$repo_path" commit -q -m init
+  cat > "$repo_path/.specs/$slug.md" <<MARKDOWN
+---
+status: draft
+type: feat
+slug: $slug
+breaking: false
+pr: null
+---
+
+# $title
+
+## Acceptance criteria
+1. Write the result file.
+MARKDOWN
+}
+
+run_loop() {
+  local repo_path="$1"
+  local slug="$2"
+  local mode="$3"
+  local max="${4:-1}"
+  local extra="${5:-}"
+  if [ -n "$extra" ]; then
+    (
+      cd "$repo_path"
+      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$ROOT/devloop" --plain --no-shell "$extra" ".specs/$slug.md" "$max"
+    )
+  else
+    (
+      cd "$repo_path"
+      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$ROOT/devloop" --plain --no-shell ".specs/$slug.md" "$max"
+    )
+  fi
+}
+
+loop_repo="$work/loop-accept"
+make_loop_repo "$loop_repo" "e2e-accept" "E2E Accept"
+mkdir -p "$loop_repo/.devloop"
+cat > "$loop_repo/.devloop/verify" <<'VERIFY'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'verify pass %s %s\n' "${1:-}" "${2:-}"
+VERIFY
+chmod +x "$loop_repo/.devloop/verify"
+if ! accept_output="$(run_loop "$loop_repo" "e2e-accept" accept 1 2>&1)"; then
+  printf '%s\n' "$accept_output" >&2
+  fail "accept loop failed"
+fi
+contains "$accept_output" "accepted" "accept loop"
+accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^worktree:[[:space:]]+//p')"
+[[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
+contains "$(cat "$accept_worktree/.codex/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" status)" "e2e-accept" "status command"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --dry-run)" "skip:" "clean skips accepted"
+ok "e2e accept and verify"
+
+loop_repo="$work/loop-retry"
+make_loop_repo "$loop_repo" "e2e-retry" "E2E Retry"
+if ! retry_output="$(run_loop "$loop_repo" "e2e-retry" reject-then-accept 2 2>&1)"; then
+  printf '%s\n' "$retry_output" >&2
+  fail "retry loop failed"
+fi
+contains "$retry_output" "accepted" "retry loop"
+contains "$retry_output" "2 / 2" "retry loop passes"
+ok "e2e reject then accept"
+
+loop_repo="$work/loop-bad-ac"
+make_loop_repo "$loop_repo" "e2e-bad-ac" "E2E Bad AC"
+if bad_ac_output="$(run_loop "$loop_repo" "e2e-bad-ac" bad-ac 1 2>&1)"; then
+  printf '%s\n' "$bad_ac_output" >&2
+  fail "bad acceptance loop unexpectedly passed"
+fi
+contains "$bad_ac_output" "unclear" "bad acceptance loop"
+ok "e2e bad acceptance matrix"
+
+loop_repo="$work/loop-bad-quality"
+make_loop_repo "$loop_repo" "e2e-bad-quality" "E2E Bad Quality"
+if bad_quality_output="$(run_loop "$loop_repo" "e2e-bad-quality" bad-quality 1 2>&1)"; then
+  printf '%s\n' "$bad_quality_output" >&2
+  fail "bad quality loop unexpectedly passed"
+fi
+contains "$bad_quality_output" "unclear" "bad quality loop"
+ok "e2e bad quality matrix"
+
+loop_repo="$work/loop-missing-review"
+make_loop_repo "$loop_repo" "e2e-missing-review" "E2E Missing Review"
+if missing_review_output="$(run_loop "$loop_repo" "e2e-missing-review" missing-review 1 2>&1)"; then
+  printf '%s\n' "$missing_review_output" >&2
+  fail "missing review loop unexpectedly passed"
+fi
+contains "$missing_review_output" "review-missing" "missing review loop"
+ok "e2e missing review"
+
+loop_repo="$work/loop-no-changes"
+make_loop_repo "$loop_repo" "e2e-no-changes" "E2E No Changes"
+if ! no_changes_output="$(run_loop "$loop_repo" "e2e-no-changes" no-changes 1 2>&1)"; then
+  printf '%s\n' "$no_changes_output" >&2
+  fail "no changes loop failed"
+fi
+contains "$no_changes_output" "accepted" "no changes loop"
+contains "$no_changes_output" "commit:   none" "no changes loop"
+ok "e2e no changes"
+
+loop_repo="$work/loop-dirty"
+make_loop_repo "$loop_repo" "e2e-dirty" "E2E Dirty"
+printf '%s\n' "user dirty" > "$loop_repo/dirty.txt"
+if ! dirty_output="$(run_loop "$loop_repo" "e2e-dirty" accept 1 "--in-place" 2>&1)"; then
+  printf '%s\n' "$dirty_output" >&2
+  fail "dirty in-place loop failed"
+fi
+contains "$dirty_output" "accepted" "dirty loop"
+contains "$(git -C "$loop_repo" status --porcelain=v1 -- dirty.txt)" "dirty.txt" "dirty file remains dirty"
+if git -C "$loop_repo" show --name-only --format= HEAD | grep -Fxq "dirty.txt"; then fail "dirty file was committed"; fi
+ok "e2e dirty file preserved"
+
+loop_repo="$work/loop-verify-fail"
+make_loop_repo "$loop_repo" "e2e-verify-fail" "E2E Verify Fail"
+mkdir -p "$loop_repo/.devloop"
+cat > "$loop_repo/.devloop/verify" <<'VERIFY'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "verify failed"
+exit 1
+VERIFY
+chmod +x "$loop_repo/.devloop/verify"
+if verify_fail_output="$(run_loop "$loop_repo" "e2e-verify-fail" accept 1 2>&1)"; then
+  printf '%s\n' "$verify_fail_output" >&2
+  fail "verify failure loop unexpectedly passed"
+fi
+contains "$verify_fail_output" "verify-error" "verify failure loop"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" status)" "verify-error" "verify failure status"
+clean_output="$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --dry-run)"
+contains "$clean_output" "would remove:" "clean dry run"
+(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --force >/tmp/devloop-clean-force.out)
+contains "$(cat /tmp/devloop-clean-force.out)" "removed:" "clean force"
+ok "e2e verify failure and clean"

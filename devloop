@@ -5,6 +5,7 @@ CODEX_MODEL_ARGS=(-m gpt-5.5)
 CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
 CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort max)
+DEFAULT_TIMEOUT_MINUTES=30
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -41,6 +42,10 @@ RUN_CODE=0
 RUN_STDOUT=""
 RUN_STDERR=""
 RUN_OUTPUT=""
+RUN_TIMEOUT_MINUTES="$DEFAULT_TIMEOUT_MINUTES"
+RUN_TIMEOUT_SECONDS=$((DEFAULT_TIMEOUT_MINUTES * 60))
+RUN_DEADLINE=0
+RUN_TIMED_OUT=false
 
 STATUS=""
 PASSES=0
@@ -59,6 +64,10 @@ REVIEWER_SESSION_ID=""
 PULL_REQUEST=""
 PULL_REQUEST_ERROR=""
 RUN_START_PASS=1
+VERIFY_LOG=""
+VERIFY_DETAIL=""
+PREFLIGHT_ERROR=""
+SPEC_LINT_ERROR=""
 
 COMMIT_PASSES=()
 COMMIT_HASHES=()
@@ -89,6 +98,18 @@ main() {
   if [ "${1:-}" = "reports" ]; then
     shift
     reports_command "$@"
+    return $?
+  fi
+
+  if [ "${1:-}" = "status" ]; then
+    shift
+    status_command "$@"
+    return $?
+  fi
+
+  if [ "${1:-}" = "clean" ]; then
+    shift
+    clean_command "$@"
     return $?
   fi
 
@@ -149,6 +170,8 @@ Usage:
 Common commands:
   devloop doctor
   devloop reports
+  devloop status
+  devloop clean
   devloop continue
   devloop menu
   devloop spec "add retry behavior to the chat sender"
@@ -165,6 +188,7 @@ Options:
   --coder codex|claude          choose Codex or Claude Code for implementation
   --reviewer codex|claude       choose Codex or Claude Code for review
   --report-format html|markdown choose report format
+  --timeout-minutes N           cap one run, default 30
   --no-strict                   weaken strict review gates
   --in-place                    run in the current worktree
   --create-pr, --pr             push accepted branch and open a PR
@@ -184,6 +208,8 @@ welcome_tui() {
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Common commands"
   printf '  %-42s %s\n' "devloop doctor" "check required and optional tools"
   printf '  %-42s %s\n' "devloop reports" "open previous run reports"
+  printf '  %-42s %s\n' "devloop status" "summarize tracked runs"
+  printf '  %-42s %s\n' "devloop clean" "show safe cleanup candidates"
   printf '  %-42s %s\n' "devloop continue" "resume a tracked run"
   printf '  %-42s %s\n' "devloop menu" "open the guided UI"
   printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "generate a spec"
@@ -196,6 +222,7 @@ welcome_tui() {
   printf '  %-30s %s\n' "--coder codex|claude" "choose implementation agent"
   printf '  %-30s %s\n' "--reviewer codex|claude" "choose review agent"
   printf '  %-30s %s\n' "--report-format html|markdown" "choose report format"
+  printf '  %-30s %s\n' "--timeout-minutes N" "cap one run, default 30"
   printf '  %-30s %s\n' "--no-strict" "weaken strict review gates"
   printf '  %-30s %s\n' "--in-place" "run in the current worktree"
   printf '  %-30s %s\n' "--create-pr, --pr" "push accepted branch and open a PR"
@@ -206,7 +233,7 @@ welcome_tui() {
 }
 
 usage() {
-  printf '%s\n' "usage: devloop [--version] [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] <spec.md> [max=5]"
+  printf '%s\n' "usage: devloop [--version] [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] [--timeout-minutes N] <spec.md> [max=5]"
   printf '%s\n' "agents: Codex or Claude Code"
 }
 
@@ -280,7 +307,12 @@ config_file_value() {
   local line value
   [ -f "$file" ] || return 1
   while IFS= read -r line; do
-    value="$(printf '%s\n' "$line" | sed -nE "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*(.*)$/\1/p")"
+    value="$(printf '%s\n' "$line" | awk -v key="$key" '
+      $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+        sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", $0)
+        print
+      }
+    ')"
     [ -n "$value" ] || continue
     value="${value%%#*}"
     value="$(trim_string "$value")"
@@ -312,14 +344,14 @@ write_config_value() {
   local value="$3"
   local file tmp
   case "$key" in
-    spec_dir) ;;
+    spec_dir|timeout_minutes) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
   mkdir -p "$(dirname "$file")" || return 1
   tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-config.XXXXXX")"
   if [ -f "$file" ]; then
-    sed -E "/^[[:space:]]*$key[[:space:]]*=/d" "$file" > "$tmp"
+    awk -v key="$key" '$0 !~ "^[[:space:]]*" key "[[:space:]]*="' "$file" > "$tmp"
   fi
   printf '%s=%s\n' "$key" "$value" >> "$tmp"
   mv "$tmp" "$file"
@@ -330,13 +362,13 @@ remove_config_value() {
   local key="$2"
   local file tmp
   case "$key" in
-    spec_dir) ;;
+    spec_dir|timeout_minutes) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
   [ -f "$file" ] || return 0
   tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-config.XXXXXX")"
-  sed -E "/^[[:space:]]*$key[[:space:]]*=/d" "$file" > "$tmp"
+  awk -v key="$key" '$0 !~ "^[[:space:]]*" key "[[:space:]]*="' "$file" > "$tmp"
   mv "$tmp" "$file"
 }
 
@@ -359,11 +391,11 @@ expand_spec_dir_input() {
   local dir="$1"
   dir="$(trim_string "$dir")"
   case "$dir" in
-    "~")
+    \~)
       if [ -z "${HOME:-}" ]; then return 1; fi
       printf '%s\n' "$HOME"
       ;;
-    "~/"*)
+    \~/*)
       if [ -z "${HOME:-}" ]; then return 1; fi
       printf '%s/%s\n' "${HOME%/}" "${dir#\~/}"
       ;;
@@ -488,6 +520,74 @@ remove_config_spec_dir() {
   local scope="local"
   if [ "$#" -eq 1 ]; then scope="$1"; fi
   remove_config_value "$scope" spec_dir
+}
+
+normalize_timeout_minutes() {
+  local value="$1"
+  value="$(trim_string "$value")"
+  if ! printf '%s\n' "$value" | grep -Eq '^[0-9]+$'; then return 1; fi
+  if [ "$value" -lt 1 ] || [ "$value" -gt 1440 ]; then return 1; fi
+  printf '%s\n' "$value"
+}
+
+devloop_timeout_minutes() {
+  local value normalized
+  value="$(devloop_config_value timeout_minutes || true)"
+  if normalized="$(normalize_timeout_minutes "$value")"; then
+    printf '%s\n' "$normalized"
+  else
+    printf '%s\n' "$DEFAULT_TIMEOUT_MINUTES"
+  fi
+}
+
+configured_timeout_minutes() {
+  local value normalized
+  value="$(devloop_config_value timeout_minutes || true)"
+  [ -n "$value" ] || return 1
+  normalized="$(normalize_timeout_minutes "$value")" || return 1
+  [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
+  printf '%s\n' "$normalized"
+}
+
+configured_timeout_minutes_scope() {
+  local file value normalized
+  file="$(devloop_local_config_file)"
+  if value="$(config_file_value timeout_minutes "$file")" && [ -n "$value" ]; then
+    normalized="$(normalize_timeout_minutes "$value")" || return 1
+    [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
+    printf '%s\n' "local"
+    return 0
+  fi
+  if file="$(devloop_global_config_file 2>/dev/null)" && value="$(config_file_value timeout_minutes "$file")" && [ -n "$value" ]; then
+    normalized="$(normalize_timeout_minutes "$value")" || return 1
+    [ "$normalized" = "$DEFAULT_TIMEOUT_MINUTES" ] && return 1
+    printf '%s\n' "global"
+    return 0
+  fi
+  return 1
+}
+
+write_config_timeout_minutes() {
+  local scope="local"
+  local value normalized
+  if [ "$#" -eq 2 ]; then
+    scope="$1"
+    value="$2"
+  else
+    value="$1"
+  fi
+  normalized="$(normalize_timeout_minutes "$value")" || {
+    printf '%s\n' "timeout must be an integer between 1 and 1440 minutes" >&2
+    return 2
+  }
+  write_config_value "$scope" timeout_minutes "$normalized" || return $?
+  printf '%s\n' "$normalized"
+}
+
+remove_config_timeout_minutes() {
+  local scope="local"
+  if [ "$#" -eq 1 ]; then scope="$1"; fi
+  remove_config_value "$scope" timeout_minutes
 }
 
 ui_has_gum() {
@@ -751,14 +851,31 @@ ui_spinner_wait() {
   local pid="$1"
   local done_file="$2"
   local title="${3:-working}"
-  local frames='|/-\'
+  local stderr_file="${4:-}"
+  local frames="|/-\\"
   local index=0
   local elapsed frame minutes seconds
   if [ "$USE_TUI" != true ] || [ ! -t 2 ]; then
-    while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; done
+    while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+      if run_deadline_reached; then
+        RUN_TIMED_OUT=true
+        if [ -n "$stderr_file" ]; then timeout_message >> "$stderr_file"; fi
+        printf '%s\n' "124" > "$done_file"
+        terminate_pid_tree "$pid"
+        return
+      fi
+      sleep 1
+    done
     return
   fi
   while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+    if run_deadline_reached; then
+      RUN_TIMED_OUT=true
+      if [ -n "$stderr_file" ]; then timeout_message >> "$stderr_file"; fi
+      printf '%s\n' "124" > "$done_file"
+      terminate_pid_tree "$pid"
+      return
+    fi
     frame="${frames:$((index % 4)):1}"
     elapsed="$SECONDS"
     if [ "${UI_STEP_STARTED:-0}" -gt 0 ]; then elapsed=$((SECONDS - UI_STEP_STARTED)); fi
@@ -778,8 +895,8 @@ event_store_start() {
   i=0
   while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
     if [ "${EVENT_IDS[$i]}" = "$id" ]; then
-      EVENT_TITLES[$i]="$title"
-      EVENT_STARTS[$i]="$SECONDS"
+      EVENT_TITLES[i]="$title"
+      EVENT_STARTS[i]="$SECONDS"
       return
     fi
     i=$((i + 1))
@@ -807,7 +924,7 @@ event_elapsed() {
   local i=0
   while [ "$i" -lt "${#EVENT_IDS[@]}" ]; do
     if [ "${EVENT_IDS[$i]}" = "$id" ]; then
-      printf '%s\n' "$((SECONDS - EVENT_STARTS[$i]))"
+      printf '%s\n' "$((SECONDS - EVENT_STARTS[i]))"
       return
     fi
     i=$((i + 1))
@@ -829,6 +946,7 @@ run_header() {
   local coder="$6"
   local reviewer="$7"
   local create_pr="$8"
+  local timeout_minutes="${9:-$DEFAULT_TIMEOUT_MINUTES}"
   if [ "$USE_TUI" != true ]; then return; fi
   ui_header "devloop" "$spec"
   ui_print_key_values \
@@ -836,6 +954,7 @@ run_header() {
     "coder" "$(agent_label "$coder")" \
     "reviewer" "$(agent_label "$reviewer")" \
     "passes" "$max" \
+    "timeout" "$timeout_minutes minutes" \
     "strict" "$strict" \
     "report" "$report_format" \
     "pr" "$create_pr"
@@ -916,22 +1035,29 @@ interactive_create_spec() {
 }
 
 interactive_settings() {
-  local choice custom_spec_dir scope saved value
+  local choice custom_spec_dir custom_timeout scope saved value timeout_display
   local choices=()
   while true; do
     custom_spec_dir="$(configured_spec_dir || true)"
-    ui_header "Settings" "Spec paths"
+    custom_timeout="$(configured_timeout_minutes || true)"
+    timeout_display="$(devloop_timeout_minutes) minutes"
+    ui_header "Settings" "Spec paths and run timeout"
     if [ -n "$custom_spec_dir" ]; then
       ui_print_key_values \
         "custom" "$custom_spec_dir" \
         "default" ".specs" \
-        "" ".devloop/specs"
-      choices=("Remove spec path" "Back")
+        "" ".devloop/specs" \
+        "timeout" "$timeout_display"
+      choices=("Remove spec path" "Set timeout" "Back")
     else
       ui_print_key_values \
         "default" ".specs" \
-        "" ".devloop/specs"
-      choices=("Add spec path" "Back")
+        "" ".devloop/specs" \
+        "timeout" "$timeout_display"
+      choices=("Add spec path" "Set timeout" "Back")
+    fi
+    if [ -n "$custom_timeout" ]; then
+      choices=("${choices[@]:0:${#choices[@]}-1}" "Remove timeout" "Back")
     fi
     choice="$(ui_choose "Spec paths" "${choices[@]}")" || return 130
     case "$choice" in
@@ -950,6 +1076,21 @@ interactive_settings() {
           printf '%s\n' "spec path removed" >&2
         fi
         ;;
+      "Set timeout")
+        value="$(ui_input "Timeout minutes, 1-1440" "$(devloop_timeout_minutes)")" || return 130
+        if saved="$(write_config_timeout_minutes local "$value")"; then
+          printf 'timeout saved: %s minutes\n' "$saved" >&2
+        else
+          printf '%s\n' "timeout not saved" >&2
+        fi
+        ;;
+      "Remove timeout")
+        scope="$(configured_timeout_minutes_scope || true)"
+        if [ -n "$scope" ]; then
+          remove_config_timeout_minutes "$scope"
+          printf '%s\n' "timeout removed" >&2
+        fi
+        ;;
       "Back") ui_go_back; return 0 ;;
     esac
   done
@@ -964,7 +1105,9 @@ interactive_run_setup() {
   local reviewer="claude"
   local create_pr=false
   local max="5"
+  local timeout_minutes
   local choice value code
+  timeout_minutes="$(devloop_timeout_minutes)"
 
   while true; do
     ui_header "Run setup" "$spec"
@@ -973,6 +1116,7 @@ interactive_run_setup() {
       "coder" "$(agent_label "$coder")" \
       "reviewer" "$(agent_label "$reviewer")" \
       "passes" "$max" \
+      "timeout" "$timeout_minutes minutes" \
       "strict" "$strict" \
       "report" "$report_format" \
       "pr" "$create_pr"
@@ -981,6 +1125,7 @@ interactive_run_setup() {
       "Change coder" \
       "Change reviewer" \
       "Change pass limit" \
+      "Change timeout" \
       "Toggle strict mode" \
       "Toggle worktree mode" \
       "Toggle PR creation" \
@@ -991,11 +1136,11 @@ interactive_run_setup() {
         if [ "$create_pr" = true ] && ! ui_confirm "Push the accepted branch and open a PR after acceptance?"; then
           continue
         fi
-        run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
-        run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
+        run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+        run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
         code=$?
         maybe_enter_worktree
-        return "$code"
+        return "$(final_exit_code "$code")"
         ;;
       "Change coder")
         value="$(ui_choose "Implementation agent" "Codex" "Claude Code" "Back")" || return 130
@@ -1013,6 +1158,15 @@ interactive_run_setup() {
           max="$value"
         else
           printf '%s\n' "pass limit must be an integer between 1 and 10" >&2
+        fi
+        ;;
+      "Change timeout")
+        value="$(ui_input "Timeout minutes, 1-1440" "$timeout_minutes")" || return 130
+        if timeout_minutes="$(normalize_timeout_minutes "$value")"; then
+          :
+        else
+          printf '%s\n' "timeout must be an integer between 1 and 1440 minutes" >&2
+          timeout_minutes="$(devloop_timeout_minutes)"
         fi
         ;;
       "Toggle strict mode")
@@ -1068,6 +1222,100 @@ reports_command() {
   rm -f "$list"
   if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 130; fi
   view_file "$selected"
+}
+
+status_command() {
+  if [ "$#" -gt 0 ]; then
+    printf '%s\n' "usage: devloop status" >&2
+    return 2
+  fi
+  local list track count
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-status.XXXXXX")"
+  list_artifact_files ".codex/tracks" > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    printf '%s\n' "no devloop tracks found" >&2
+    return 1
+  fi
+  printf '%-24s %-12s %-7s %-24s %s\n' "slug" "status" "passes" "branch" "worktree"
+  count=0
+  while IFS= read -r track; do
+    print_track_status "$track"
+    count=$((count + 1))
+  done < "$list"
+  rm -f "$list"
+  [ "$count" -gt 0 ]
+}
+
+clean_command() {
+  local dry_run=true
+  local force=false
+  local arg
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --dry-run) dry_run=true ;;
+      --force) force=true; dry_run=false ;;
+      -h|--help)
+        printf '%s\n' "usage: devloop clean [--dry-run|--force]"
+        return 0
+        ;;
+      *)
+        printf 'unknown option: %s\n' "$arg" >&2
+        printf '%s\n' "usage: devloop clean [--dry-run|--force]" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [ "$dry_run" = false ] && [ "$force" != true ] && [ "$USE_TUI" = true ] && [ -t 0 ]; then
+    if ! ui_confirm "Remove eligible Devloop worktrees?"; then
+      dry_run=true
+    fi
+  fi
+
+  local list track seen worktree slug source_repo status removed
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-clean.XXXXXX")"
+  list_artifact_files ".codex/tracks" > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    printf '%s\n' "no devloop tracks found" >&2
+    return 1
+  fi
+
+  seen=""
+  removed=0
+  while IFS= read -r track; do
+    worktree="$(track_value "worktree" "$track")"
+    slug="$(basename "$track" .md)"
+    [ -n "$worktree" ] || continue
+    case "$seen" in
+      *"|$worktree|"*) continue ;;
+    esac
+    seen="$seen|$worktree|"
+    source_repo="$(track_value "source-repo" "$track")"
+    status="$(clean_candidate_status "$track" "$worktree" "$source_repo")"
+    if [ "$status" = "ready" ] || [ "$force" = true ]; then
+      if [ "$dry_run" = true ]; then
+        printf 'would remove: %s (%s)\n' "$worktree" "$slug"
+      else
+        if remove_devloop_worktree "$source_repo" "$worktree" "$force"; then
+          printf 'removed: %s (%s)\n' "$worktree" "$slug"
+          removed=$((removed + 1))
+        else
+          printf 'failed: %s (%s)\n' "$worktree" "$slug" >&2
+        fi
+      fi
+    else
+      printf 'skip: %s (%s: %s)\n' "$worktree" "$slug" "$status"
+    fi
+  done < "$list"
+  rm -f "$list"
+  if [ "$dry_run" = true ]; then
+    printf '%s\n' "run devloop clean --force to remove eligible worktrees"
+  fi
+  if [ "$dry_run" = false ] && [ "$removed" -eq 0 ]; then return 1; fi
 }
 
 continue_command() {
@@ -1153,9 +1401,143 @@ track_value() {
   sed -nE "s/^- ${key}: //p" "$file" | head -n 1
 }
 
+latest_review_file() {
+  local track="$1"
+  local dir slug latest
+  dir="$(cd "$(dirname "$track")/.." >/dev/null 2>&1 && pwd -P)/reviews"
+  slug="$(basename "$track" .md)"
+  [ -d "$dir" ] || return 1
+  latest="$(find "$dir" -type f -name "$slug-r*.md" |
+    sed -nE 's/.*-r([0-9]+)\.md$/\1/p' |
+    LC_ALL=C sort -n |
+    tail -n 1)"
+  [ -n "$latest" ] || return 1
+  printf '%s/%s-r%s.md\n' "$dir" "$slug" "$latest"
+}
+
+track_run_status() {
+  local track="$1"
+  local review verdict verify_status
+  if ! review="$(latest_review_file "$track")"; then
+    verify_status="$(track_verify_status "$track")"
+    if [ -n "$verify_status" ]; then
+      printf '%s\n' "$verify_status"
+    else
+      printf '%s\n' "no-review"
+    fi
+    return
+  fi
+  verdict="$(parse_verdict "$review")"
+  case "$verdict" in
+    ACCEPT) printf '%s\n' "accepted" ;;
+    REJECT) printf '%s\n' "rejected" ;;
+    UNCLEAR) printf '%s\n' "unclear" ;;
+    *) printf '%s\n' "no-verdict" ;;
+  esac
+}
+
+track_verify_status() {
+  local track="$1"
+  awk '
+    /^## Pass [0-9]+ - verify[[:space:]]*$/ { inside = 1; latest = ""; next }
+    inside && /^##[[:space:]]+/ { inside = 0 }
+    inside && /^- status:[[:space:]]+/ {
+      latest = $0
+      sub(/^- status:[[:space:]]+/, "", latest)
+    }
+    END {
+      if (latest == "FAIL") print "verify-error"
+      else if (latest == "PASS") print "verified"
+    }
+  ' "$track"
+}
+
+track_report_path() {
+  local track="$1"
+  local slug dir report
+  slug="$(basename "$track" .md)"
+  dir="$(cd "$(dirname "$track")/.." >/dev/null 2>&1 && pwd -P)/reports"
+  for report in "$dir/$slug.html" "$dir/$slug.md"; do
+    if [ -f "$report" ]; then
+      printf '%s\n' "$report"
+      return
+    fi
+  done
+}
+
+print_track_status() {
+  local track="$1"
+  local slug status passes branch worktree report next
+  slug="$(basename "$track" .md)"
+  status="$(track_run_status "$track")"
+  passes="$(( $(next_pass_from_track "$track") - 1 ))"
+  branch="$(track_value "worktree-branch" "$track")"
+  worktree="$(track_value "worktree" "$track")"
+  report="$(track_report_path "$track")"
+  printf '%-24s %-12s %-7s %-24s %s\n' "$slug" "$status" "$passes" "${branch:-unknown}" "${worktree:-unknown}"
+  if [ -n "$report" ]; then printf '  report: %s\n' "$report"; fi
+  if [ "$status" = "accepted" ]; then
+    printf '  next: inspect report\n'
+  else
+    next="$(absolute_existing_file "$track" 2>/dev/null || printf '%s' "$track")"
+    printf '  next: devloop continue %s\n' "$next"
+  fi
+}
+
+clean_candidate_status() {
+  local track="$1"
+  local worktree="$2"
+  local source_repo="$3"
+  local status
+  if [ -z "$worktree" ] || [ ! -d "$worktree" ]; then
+    printf '%s\n' "missing"
+    return
+  fi
+  if [ -n "$source_repo" ] && [ "$worktree" = "$source_repo" ]; then
+    printf '%s\n' "source-worktree"
+    return
+  fi
+  status="$(track_run_status "$track")"
+  if [ "$status" = "accepted" ]; then
+    printf '%s\n' "accepted"
+    return
+  fi
+  if has_user_dirty_paths "$worktree"; then
+    printf '%s\n' "dirty"
+    return
+  fi
+  printf '%s\n' "ready"
+}
+
+has_user_dirty_paths() {
+  local repo="$1"
+  local file
+  while IFS= read -r file; do
+    case "$file" in
+      .codex/*) continue ;;
+    esac
+    return 0
+  done <<EOF
+$(status_paths "$repo")
+EOF
+  return 1
+}
+
+remove_devloop_worktree() {
+  local source_repo="$1"
+  local worktree="$2"
+  local force="$3"
+  if [ -z "$source_repo" ] || ! git -C "$source_repo" rev-parse --show-toplevel >/dev/null 2>&1; then return 1; fi
+  if [ "$force" = true ]; then
+    git -C "$source_repo" worktree remove --force "$worktree" >/dev/null 2>&1
+  else
+    git -C "$source_repo" worktree remove "$worktree" >/dev/null 2>&1
+  fi
+}
+
 run_from_track() {
   local track="$1"
-  local worktree spec max report_format strict coder reviewer create_pr old_pwd code next_pass
+  local worktree spec max report_format strict coder reviewer create_pr timeout_minutes old_pwd code next_pass
   track="$(absolute_existing_file "$track")" || {
     printf 'track not found: %s\n' "$track" >&2
     return 2
@@ -1168,6 +1550,7 @@ run_from_track() {
   coder="$(track_value "coder" "$track")"
   reviewer="$(track_value "reviewer" "$track")"
   create_pr="$(track_value "create-pr" "$track")"
+  timeout_minutes="$(track_value "timeout-minutes" "$track")"
 
   if [ -z "$worktree" ]; then worktree="$(cd "$(dirname "$track")/../.." >/dev/null 2>&1 && pwd -P)"; fi
   if [ -z "$spec" ]; then spec="$(track_value "source-spec" "$track")"; fi
@@ -1177,6 +1560,7 @@ run_from_track() {
   if [ -z "$coder" ]; then coder="codex"; fi
   if [ -z "$reviewer" ]; then reviewer="claude"; fi
   if [ -z "$create_pr" ]; then create_pr=false; fi
+  if ! timeout_minutes="$(normalize_timeout_minutes "$timeout_minutes")"; then timeout_minutes="$(devloop_timeout_minutes)"; fi
   next_pass="$(next_pass_from_track "$track")"
   if [ "$next_pass" -gt "$max" ]; then max="$next_pass"; fi
 
@@ -1192,13 +1576,13 @@ run_from_track() {
   old_pwd="$PWD"
   cd "$worktree" || return 2
   RUN_START_PASS="$next_pass"
-  run_header "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr"
-  run_devloop "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr"
+  run_header "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   code=$?
   RUN_START_PASS=1
   maybe_enter_worktree
   cd "$old_pwd" || return "$code"
-  return "$code"
+  return "$(final_exit_code "$code")"
 }
 
 next_pass_from_track() {
@@ -1247,10 +1631,12 @@ run_command() {
   local coder="codex"
   local reviewer="claude"
   local create_pr=false
+  local timeout_minutes
   local spec=""
   local max_raw="5"
   local max_set=false
   local arg value
+  timeout_minutes="$(devloop_timeout_minutes)"
 
   while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -1279,6 +1665,14 @@ run_command() {
         shift
         if [ -z "$value" ]; then printf '%s\n' "reviewer must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         reviewer="$value"
+        ;;
+      --timeout-minutes)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--timeout-minutes requires a value" >&2; usage >&2; return 2; fi
+        if ! timeout_minutes="$(normalize_timeout_minutes "$1")"; then
+          printf '%s\n' "timeout must be an integer between 1 and 1440 minutes" >&2
+          return 2
+        fi
+        shift
         ;;
       --html) report_format="html" ;;
       --markdown|--md) report_format="markdown" ;;
@@ -1320,15 +1714,11 @@ run_command() {
   if [ "$max" -lt 1 ]; then max=1; fi
   if [ "$max" -gt 10 ]; then max=10; fi
 
-  run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
-  run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr"
+  run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   local code=$?
   maybe_enter_worktree
-  case "$STATUS" in
-    accepted) return 0 ;;
-    stalled|max-turns|unclear) return 1 ;;
-    *) return "$code" ;;
-  esac
+  return "$(final_exit_code "$code")"
 }
 
 run_devloop() {
@@ -1340,10 +1730,15 @@ run_devloop() {
   local coder="$6"
   local reviewer="$7"
   local create_pr="$8"
+  local timeout_minutes="${9:-$DEFAULT_TIMEOUT_MINUTES}"
 
   MAX="$max"
   CODER="$coder"
   REVIEWER="$reviewer"
+  RUN_TIMEOUT_MINUTES="$timeout_minutes"
+  RUN_TIMEOUT_SECONDS=$((timeout_minutes * 60))
+  RUN_DEADLINE=$(($(current_epoch) + RUN_TIMEOUT_SECONDS))
+  RUN_TIMED_OUT=false
   STATUS="max-turns"
   PASSES=0
   FINAL_COMMIT=""
@@ -1369,8 +1764,9 @@ run_devloop() {
   parse_criteria "$spec" > "$criteria_file"
   local criteria_count
   criteria_count="$(line_count "$criteria_file")"
-  if [ "$strict" = true ] && [ "$criteria_count" -eq 0 ]; then
-    printf '%s\n' "strict mode requires ## Acceptance criteria" >&2
+  if ! lint_spec_file "$spec" "$spec_text" "$criteria_count" "$strict"; then
+    STATUS="spec-error"
+    printf '%s\n' "$SPEC_LINT_ERROR" >&2
     rm -f "$criteria_file"
     return 2
   fi
@@ -1386,10 +1782,19 @@ run_devloop() {
   local base
   base="$(base_branch "$SOURCE_REPO")"
 
+  event_step "preflight" "preflight checks"
+  if preflight_run "$SOURCE_REPO" "$coder" "$reviewer" "$create_pr"; then
+    event_done "preflight" true "ready"
+  else
+    STATUS="preflight-error"
+    event_done "preflight" false "$PREFLIGHT_ERROR"
+    printf 'preflight failed: %s\n' "$PREFLIGHT_ERROR" >&2
+    rm -f "$criteria_file"
+    return 2
+  fi
+
   event_step "naming" "derive branch name with $(agent_label "$coder")"
-  local naming_tmp naming_log naming_error
-  naming_tmp=""
-  naming_log=""
+  local naming_error
   naming_error=""
   if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text"; then
     naming_error="$WORK_ITEM_ERROR"
@@ -1444,7 +1849,7 @@ run_devloop() {
   local coder_session=".codex/sessions/$slug-coder-$coder.id"
   local reviewer_session=".codex/sessions/$slug-reviewer-$reviewer.id"
 
-  init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr"
+  init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
   local pass prior_hash
   prior_hash=""
@@ -1452,6 +1857,10 @@ run_devloop() {
     prior_hash="$(findings_hash "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md")"
   fi
   for pass in $(seq "$start_pass" "$max"); do
+    if run_deadline_reached; then
+      STATUS="timeout"
+      break
+    fi
     PASSES="$pass"
     local coder_log=".codex/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
@@ -1459,7 +1868,7 @@ run_devloop() {
     if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".codex/reviews/$slug-r$((pass - 1)).md" "$criteria_file")" "$coder_id"; then
       event_done "$coder_id" true "completed"
     else
-      STATUS="coder-error"
+      if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="coder-error"; fi
       event_done "$coder_id" false "failed"
       break
     fi
@@ -1487,6 +1896,29 @@ run_devloop() {
       break
     fi
 
+    local verify_id="verify-$pass"
+    if verify_hook_configured "$repo" "$SOURCE_REPO"; then
+      event_step "$verify_id" "pass $pass/$max verification"
+      if run_verify_hook "$repo" "$SOURCE_REPO" "$slug" "$pass"; then
+        event_done "$verify_id" true "$VERIFY_DETAIL"
+      else
+        event_done "$verify_id" false "$VERIFY_DETAIL"
+        if [ "$RUN_TIMED_OUT" = true ]; then
+          STATUS="timeout"
+          break
+        fi
+        if [ "$strict" = true ]; then
+          STATUS="verify-error"
+          break
+        fi
+      fi
+    fi
+
+    if run_deadline_reached; then
+      STATUS="timeout"
+      break
+    fi
+
     local review=".codex/reviews/$slug-r$pass.md"
     local reviewer_log=".codex/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
@@ -1494,7 +1926,7 @@ run_devloop() {
     if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$criteria_file" "$strict")" "$reviewer_id"; then
       event_done "$reviewer_id" true "completed"
     else
-      STATUS="reviewer-error"
+      if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
       event_done "$reviewer_id" false "failed"
       break
     fi
@@ -1593,6 +2025,193 @@ event_log() {
   else
     printf '[devloop] %s\n' "$line" >&2
   fi
+}
+
+current_epoch() {
+  date +%s
+}
+
+run_deadline_reached() {
+  [ "${RUN_DEADLINE:-0}" -gt 0 ] || return 1
+  [ "$(current_epoch)" -ge "$RUN_DEADLINE" ]
+}
+
+timeout_message() {
+  printf 'devloop run timed out after %s minutes\n' "$RUN_TIMEOUT_MINUTES"
+}
+
+final_exit_code() {
+  local fallback="${1:-0}"
+  case "$STATUS" in
+    accepted) printf '%s\n' "0" ;;
+    "") printf '%s\n' "$fallback" ;;
+    *)
+      if [ "$fallback" -ne 0 ]; then
+        printf '%s\n' "$fallback"
+      else
+        printf '%s\n' "1"
+      fi
+      ;;
+  esac
+}
+
+lint_spec_file() {
+  local spec="$1"
+  local spec_text="$2"
+  local criteria_count="$3"
+  local strict="$4"
+  local title type
+  SPEC_LINT_ERROR=""
+  title="$(printf '%s\n' "$spec_text" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | head -n 1)"
+  if [ -z "$(clean_report_text "$title")" ]; then
+    SPEC_LINT_ERROR="spec requires an H1 title: $spec"
+    return 1
+  fi
+  if printf '%s\n' "$spec_text" | sed -n '1p' | grep -Eq '^---[[:space:]]*$'; then
+    type="$(frontmatter_value type "$spec_text")"
+    case "$type" in
+      feat|fix|chore|feat!|fix!|chore!) ;;
+      *)
+        SPEC_LINT_ERROR="spec frontmatter type must be feat, fix, chore, or their ! forms"
+        return 1
+        ;;
+    esac
+  fi
+  if [ "$strict" = true ] && [ "$criteria_count" -eq 0 ]; then
+    SPEC_LINT_ERROR="strict mode requires ## Acceptance criteria"
+    return 1
+  fi
+}
+
+preflight_run() {
+  local repo="$1"
+  local coder="$2"
+  local reviewer="$3"
+  local create_pr="$4"
+  PREFLIGHT_ERROR=""
+  if ! command -v git >/dev/null 2>&1; then
+    PREFLIGHT_ERROR="missing command: git"
+    return 1
+  fi
+  if ! git -C "$repo" var GIT_AUTHOR_IDENT >/dev/null 2>&1; then
+    PREFLIGHT_ERROR="git author identity is not configured"
+    return 1
+  fi
+  if ! preflight_agent "$coder"; then return 1; fi
+  if ! preflight_agent "$reviewer"; then return 1; fi
+  if ! preflight_agent_skills "$coder"; then return 1; fi
+  if ! preflight_agent_skills "$reviewer"; then return 1; fi
+  if [ "$create_pr" = true ] && ! command -v gh >/dev/null 2>&1; then
+    PREFLIGHT_ERROR="missing command: gh"
+    return 1
+  fi
+}
+
+preflight_agent() {
+  local agent="$1"
+  local command_name
+  command_name="$(agent_command "$agent")"
+  if [ -z "$command_name" ]; then
+    PREFLIGHT_ERROR="unknown agent: $agent"
+    return 1
+  fi
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    PREFLIGHT_ERROR="missing command: $command_name"
+    return 1
+  fi
+}
+
+agent_command() {
+  case "$1" in
+    codex) printf '%s\n' "codex" ;;
+    claude) printf '%s\n' "claude" ;;
+  esac
+}
+
+agent_skill_dir() {
+  [ -n "${HOME:-}" ] || return 1
+  case "$1" in
+    codex) printf '%s\n' "${HOME%/}/.agents/skills" ;;
+    claude) printf '%s\n' "${HOME%/}/.claude/skills" ;;
+  esac
+}
+
+preflight_agent_skills() {
+  local agent="$1"
+  local dir
+  local skill
+  local source dest bundled installed
+  dir="$(agent_skill_dir "$agent")"
+  [ -n "$dir" ] || return 0
+  for skill in devloop-spec devloop-review; do
+    source="$ROOT_DIR/skills/$skill"
+    dest="$dir/$skill"
+    if [ ! -f "$dest/SKILL.md" ]; then
+      PREFLIGHT_ERROR="missing installed skill: $dest/SKILL.md"
+      return 1
+    fi
+    bundled="$(devloop_skill_tree_checksum "$source")" || {
+      PREFLIGHT_ERROR="failed to checksum bundled skill: $source"
+      return 1
+    }
+    installed="$(devloop_skill_tree_checksum "$dest")" || {
+      PREFLIGHT_ERROR="failed to checksum installed skill: $dest"
+      return 1
+    }
+    if [ "$bundled" != "$installed" ]; then
+      PREFLIGHT_ERROR="stale installed skill: $dest"
+      return 1
+    fi
+  done
+}
+
+verify_hook_path() {
+  local repo="$1"
+  local source_repo="$2"
+  if [ -n "$source_repo" ] && [ -x "$source_repo/.devloop/verify" ]; then
+    printf '%s\n' "$source_repo/.devloop/verify"
+    return
+  fi
+  if [ -x "$repo/.devloop/verify" ]; then
+    printf '%s\n' "$repo/.devloop/verify"
+  fi
+}
+
+verify_hook_configured() {
+  [ -n "$(verify_hook_path "$1" "$2")" ]
+}
+
+run_verify_hook() {
+  local repo="$1"
+  local source_repo="$2"
+  local slug="$3"
+  local pass="$4"
+  local hook
+  hook="$(verify_hook_path "$repo" "$source_repo")"
+  VERIFY_LOG=".codex/logs/$slug-r$pass-verify.log"
+  VERIFY_DETAIL="skipped"
+  [ -n "$hook" ] || return 0
+  run_with_prompt "$repo" "$repo/$VERIFY_LOG" "verify-$pass" "" "$hook" "$pass" "$slug"
+  if [ "$RUN_CODE" -eq 0 ]; then
+    VERIFY_DETAIL="$VERIFY_LOG"
+    append_verify_track "$repo/$TRACK" "$pass" "PASS" "$VERIFY_LOG"
+    return 0
+  fi
+  VERIFY_DETAIL="$VERIFY_LOG failed"
+  append_verify_track "$repo/$TRACK" "$pass" "FAIL" "$VERIFY_LOG"
+  return 1
+}
+
+append_verify_track() {
+  local track="$1"
+  local pass="$2"
+  local status="$3"
+  local log="$4"
+  {
+    printf '\n## Pass %s - verify\n' "$pass"
+    printf -- '- status: %s\n' "$status"
+    printf -- '- log: %s\n' "$log"
+  } >> "$track"
 }
 
 normalize_agent() {
@@ -1848,12 +2467,15 @@ validate_work_item() {
 
 parse_work_item() {
   local output="$1"
-  local candidates reversed candidate type slug breaking
+  local candidates candidate type slug breaking index
+  local items=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/devloop-json.XXXXXX")"
-  reversed="$(mktemp "${TMPDIR:-/tmp}/devloop-json-rev.XXXXXX")"
   printf '%s\n' "$output" | grep -Eo '\{[^{}]*\}' > "$candidates" || true
-  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$candidates" > "$reversed"
   while IFS= read -r candidate; do
+    items+=("$candidate")
+  done < "$candidates"
+  for ((index = ${#items[@]} - 1; index >= 0; index--)); do
+    candidate="${items[index]}"
     type="$(printf '%s\n' "$candidate" | sed -nE 's/.*"type"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
     slug="$(printf '%s\n' "$candidate" | sed -nE 's/.*"slug"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
     breaking="$(printf '%s\n' "$candidate" | sed -nE 's/.*"breaking"[[:space:]]*:[[:space:]]*(true|false).*/\1/p')"
@@ -1862,12 +2484,12 @@ parse_work_item() {
         WORK_TYPE="$type"
         WORK_SLUG="$(slugify "$slug")"
         WORK_BREAKING="$breaking"
-        rm -f "$candidates" "$reversed"
+        rm -f "$candidates"
         return 0
       fi
     fi
-  done < "$reversed"
-  rm -f "$candidates" "$reversed"
+  done
+  rm -f "$candidates"
   if [ -z "$WORK_ITEM_ERROR" ]; then WORK_ITEM_ERROR="naming output must include JSON"; fi
   return 1
 }
@@ -2003,9 +2625,12 @@ init_track() {
   local type="${15}"
   local breaking="${16}"
   local create_pr="${17}"
+  local timeout_minutes="${18}"
+  local track_name
   if [ -f "$file" ]; then return; fi
+  track_name="$(basename "$file" .md)"
   cat > "$file" <<EOF
-# Track: $(basename "$file" .md)
+# Track: $track_name
 
 - spec: $spec
 - source-spec: $source_spec
@@ -2023,6 +2648,7 @@ init_track() {
 - report-format: $report_format
 - strict: $strict
 - create-pr: $create_pr
+- timeout-minutes: $timeout_minutes
 - started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 EOF
@@ -2123,22 +2749,17 @@ run_with_prompt() {
   code_file="$(mktemp "${TMPDIR:-/tmp}/devloop-code.XXXXXX")"
   printf '%s' "$prompt" > "$prompt_file"
   rm -f "$code_file"
-  if [ "$USE_TUI" = true ] && [ -t 2 ]; then
-    (
-      cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file"
-      printf '%s\n' "$?" > "$code_file"
-    ) &
-    pid=$!
-    ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}"
-    wait "$pid" >/dev/null 2>&1 || true
-    if [ -f "$code_file" ]; then
-      RUN_CODE="$(cat "$code_file")"
-    else
-      RUN_CODE=1
-    fi
+  (
+    cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file"
+    printf '%s\n' "$?" > "$code_file"
+  ) &
+  pid=$!
+  ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}" "$stderr_file"
+  wait "$pid" >/dev/null 2>&1 || true
+  if [ -f "$code_file" ]; then
+    RUN_CODE="$(cat "$code_file")"
   else
-    (cd "$cwd" >/dev/null 2>&1 && "$@" < "$prompt_file" > "$stdout_file" 2> "$stderr_file")
-    RUN_CODE=$?
+    RUN_CODE=1
   fi
   case "$RUN_CODE" in
     ''|*[!0-9]*) RUN_CODE=1 ;;
@@ -2157,6 +2778,21 @@ run_with_prompt() {
     done < "$output_file"
   fi
   rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file" "$code_file"
+}
+
+terminate_pid_tree() {
+  local pid="$1"
+  # This catches the shell and direct children portably on macOS/Linux.
+  # Grandchildren may survive if the agent spawns its own process tree.
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -TERM -P "$pid" >/dev/null 2>&1 || true
+  fi
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  sleep 1
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -KILL -P "$pid" >/dev/null 2>&1 || true
+  fi
+  kill -KILL "$pid" >/dev/null 2>&1 || true
 }
 
 new_uuid() {
@@ -2465,7 +3101,7 @@ has_passing_matrix() {
   local i=1
   grep -Eq '^##[[:space:]]+Acceptance matrix[[:space:]]*$' "$file" || return 1
   while [ "$i" -le "$count" ]; do
-    if ! grep -Eiq "^\|[[:space:]]*AC$i[[:space:]]*\|[[:space:]]*PASS[[:space:]]*\|" "$file"; then
+    if ! grep -Eiq "^\|[[:space:]]*AC${i}[[:space:]]*\|[[:space:]]*PASS[[:space:]]*\|" "$file"; then
       return 1
     fi
     i=$((i + 1))
@@ -2484,7 +3120,7 @@ has_passing_quality_matrix() {
     "Simplicity" \
     "Security" \
     "Operational safety"; do
-    if ! grep -Eiq "^\|[[:space:]]*$area[[:space:]]*\|[[:space:]]*(PASS|N/A)[[:space:]]*\|" "$file"; then
+    if ! grep -Eiq "^\|[[:space:]]*${area}[[:space:]]*\|[[:space:]]*(PASS|N/A)[[:space:]]*\|" "$file"; then
       return 1
     fi
   done
@@ -2526,13 +3162,11 @@ create_pull_request() {
   local base="$3"
   local remote="origin"
   local out
-  out="$(git -C "$repo" push -u "$remote" "$branch" 2>&1)"
-  if [ "$?" -ne 0 ]; then
+  if ! out="$(git -C "$repo" push -u "$remote" "$branch" 2>&1)"; then
     PULL_REQUEST_ERROR="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
     return 1
   fi
-  out="$(cd "$repo" >/dev/null 2>&1 && gh pr create --fill --base "$base" --head "$branch" 2>&1)"
-  if [ "$?" -ne 0 ]; then
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr create --fill --base "$base" --head "$branch" 2>&1)"; then
     PULL_REQUEST_ERROR="pushed $remote/$branch, but PR creation failed: $(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
     return 1
   fi
@@ -2807,7 +3441,7 @@ spec_command() {
     skill-path) printf '%s\n' "$skill"; return ;;
   esac
 
-  local context today prompt spec_dir cmd_args=()
+  local context today prompt spec_dir
   context="$(resolve_spec_context "${context_items[@]}")"
   today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
