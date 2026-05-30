@@ -50,7 +50,6 @@ contains "$help" "--create-pr" "help"
 contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
 contains "$help" "--version" "help"
-contains "$help" "v$version" "help"
 contains "$help" "--timeout-minutes" "help"
 ok "help output"
 
@@ -393,7 +392,7 @@ session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue thi
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
 
 contains "$(devloop_logo)" "░█▀▄░█▀▀" "devloop logo"
-contains "$(devloop_logo)" "v$version" "devloop logo version"
+if [[ "$(devloop_logo)" == *"v$version"* ]]; then fail "devloop logo included version"; fi
 ui_logo stdout >/dev/null
 equals "$(ui_color_code accent)" "38;5;141" "accent color"
 equals "$(ui_color_code rec)" "38;5;135" "run color"
@@ -407,13 +406,24 @@ USE_TUI="$old_use_tui"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec back navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup back navigation"; fi
+if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec escape navigation"; fi
+if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup escape navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Quit"; }; UI_BACK=false; interactive_menu >/dev/null 2>&1 ); then fail "menu quit failed"; fi
 empty_spec_repo="$work/empty-spec-repo"
 mkdir -p "$empty_spec_repo"
 old_use_tui="$USE_TUI"
 USE_TUI=false
 if ( cd "$empty_spec_repo" && interactive_run_spec >/dev/null 2>&1 ); then fail "interactive_run_spec accepted missing specs"; fi
+USE_TUI=true
+if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_run_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_run_spec missing specs did not go back"; fi
+if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_continue_run >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_continue_run missing tracks did not go back"; fi
+if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_open_report >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_open_report missing reports did not go back"; fi
 USE_TUI="$old_use_tui"
+
+cancel_spec_repo="$work/cancel-spec-repo"
+mkdir -p "$cancel_spec_repo/.specs"
+printf '%s\n' "# Cancel" > "$cancel_spec_repo/.specs/cancel.md"
+if ! ( cd "$cancel_spec_repo" && ui_pick_from_file() { return 130; }; UI_BACK=false; interactive_run_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_run_spec escape navigation"; fi
 
 picker_file="$work/picker.txt"
 printf '%s\n' "alpha" "beta" > "$picker_file"

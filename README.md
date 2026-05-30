@@ -141,7 +141,7 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 - `Settings`: view or change the shared spec path and set the run timeout.
 - `Doctor`: verify required commands, optional UI tools, and installed skills.
 
-Nested menu screens keep `Back` as the final option so you can return to the previous menu without exiting Devloop.
+Nested menu screens keep `Back` as the final option, and Esc/cancel also returns to the previous menu without exiting Devloop. Interactive screens redraw in place instead of appending a fresh UI after each selection.
 
 `gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
 

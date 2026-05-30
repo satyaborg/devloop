@@ -34,6 +34,7 @@ UI_OK_COLOR="141"
 UI_DIM_COLOR="244"
 UI_BORDER_COLOR="141"
 UI_BACK=false
+UI_NOTICE=""
 
 EVENT_IDS=()
 EVENT_TITLES=()
@@ -156,7 +157,6 @@ devloop_logo() {
 ░█░█░█▀▀░▀▄▀░█░░░█░█░█░█░█▀▀
 ░▀▀░░▀▀▀░░▀░░▀▀▀░▀▀▀░▀▀▀░▀░░
 EOF
-  printf 'v%s\n' "$DEVLOOP_VERSION"
 }
 
 welcome_plain() {
@@ -679,6 +679,23 @@ ui_color() {
   fi
 }
 
+ui_clear_screen() {
+  if [ "$USE_TUI" = true ] && [ -t 2 ]; then
+    printf '\033[2J\033[H' >&2
+  fi
+}
+
+ui_print_notice() {
+  local notice="$UI_NOTICE"
+  if [ -z "$notice" ]; then return 0; fi
+  UI_NOTICE=""
+  if ui_has_gum; then
+    gum style --foreground "$UI_DIM_COLOR" "$notice" >&2
+  else
+    printf '%s\n' "$(ui_color dim "$notice")" >&2
+  fi
+}
+
 ui_logo() {
   local target="${1:-stderr}"
   local logo
@@ -701,6 +718,7 @@ ui_logo() {
 ui_header() {
   local title="$1"
   local subtitle="${2:-}"
+  ui_clear_screen
   if [ "$title" = "devloop" ]; then
     ui_logo stderr
     if [ -n "$subtitle" ]; then
@@ -710,6 +728,7 @@ ui_header() {
         printf '%s\n' "$subtitle" >&2
       fi
     fi
+    ui_print_notice
     return
   fi
   if ui_has_gum; then
@@ -721,6 +740,7 @@ ui_header() {
     printf '\n%s\n' "$title" >&2
     if [ -n "$subtitle" ]; then printf '%s\n' "$subtitle" >&2; fi
   fi
+  ui_print_notice
 }
 
 ui_print_key_values() {
@@ -1047,8 +1067,18 @@ interactive_menu() {
         if [ "$UI_BACK" = true ]; then continue; fi
         return "$code"
         ;;
-      "Continue a run") continue_command; return $? ;;
-      "Open reports") reports_command; return $? ;;
+      "Continue a run")
+        interactive_continue_run
+        code=$?
+        if [ "$UI_BACK" = true ]; then continue; fi
+        return "$code"
+        ;;
+      "Open reports")
+        interactive_open_report
+        code=$?
+        if [ "$UI_BACK" = true ]; then continue; fi
+        return "$code"
+        ;;
       "Settings")
         interactive_settings
         code=$?
@@ -1062,27 +1092,46 @@ interactive_menu() {
 }
 
 interactive_run_spec() {
-  local spec
-  if ! spec="$(select_spec_file)"; then
-    printf 'no specs found under %s\n' "$(spec_search_label)" >&2
-    if ui_confirm "Create a spec now?"; then
-      interactive_create_spec
-      return $?
+  local spec code message
+  spec="$(select_spec_file)"
+  code=$?
+  if [ "$code" -ne 0 ]; then
+    if [ "$code" -eq 130 ]; then
+      ui_go_back
+      return 0
     fi
+    message="no specs found under $(spec_search_label)"
+    if [ "$USE_TUI" = true ]; then
+      printf '%s\n' "$message" >&2
+      if ui_confirm "Create a spec now?"; then
+        interactive_create_spec
+        return $?
+      fi
+      UI_NOTICE="$message"
+      ui_go_back
+      return 0
+    fi
+    printf '%s\n' "$message" >&2
     return 1
   fi
   interactive_run_setup "$spec"
 }
 
 interactive_create_spec() {
-  local agent context
-  agent="$(ui_choose "Spec agent" "Codex" "Claude Code" "Back")" || return 130
-  if [ "$agent" = "Back" ]; then
+  local agent context code
+  agent="$(ui_choose "Spec agent" "Codex" "Claude Code" "Back")"
+  code=$?
+  if [ "$code" -ne 0 ] || [ "$agent" = "Back" ]; then
     ui_go_back
     return 0
   fi
   agent="$(agent_choice_value "$agent")"
-  context="$(ui_input "Describe the change, or leave blank for interview mode" "")" || return 130
+  context="$(ui_input "Describe the change, or leave blank for interview mode" "")"
+  code=$?
+  if [ "$code" -ne 0 ]; then
+    ui_go_back
+    return 0
+  fi
   if [ -n "$context" ]; then
     spec_command --agent "$agent" "$context"
   else
@@ -1091,7 +1140,7 @@ interactive_create_spec() {
 }
 
 interactive_settings() {
-  local choice custom_spec_dir custom_timeout scope saved value timeout_display
+  local choice custom_spec_dir custom_timeout scope saved value timeout_display code
   local default_spec_dir
   local choices=()
   while true; do
@@ -1116,36 +1165,41 @@ interactive_settings() {
     if [ -n "$custom_timeout" ]; then
       choices=("${choices[@]:0:${#choices[@]}-1}" "Remove timeout" "Back")
     fi
-    choice="$(ui_choose "Spec paths" "${choices[@]}")" || return 130
+    choice="$(ui_choose "Spec paths" "${choices[@]}")"
+    code=$?
+    if [ "$code" -ne 0 ]; then
+      ui_go_back
+      return 0
+    fi
     case "$choice" in
       "Add spec path")
-        value="$(ui_input "Spec path" "")" || return 130
+        value="$(ui_input "Spec path" "")" || continue
         if saved="$(write_config_spec_dir global "$value")"; then
-          printf 'spec path saved: %s\n' "$saved" >&2
+          UI_NOTICE="spec path saved: $saved"
         else
-          printf '%s\n' "spec path not saved" >&2
+          UI_NOTICE="spec path not saved"
         fi
         ;;
       "Remove spec path")
         scope="$(configured_spec_dir_scope || true)"
         if [ -n "$scope" ]; then
           remove_config_spec_dir "$scope"
-          printf '%s\n' "spec path removed" >&2
+          UI_NOTICE="spec path removed"
         fi
         ;;
       "Set timeout")
-        value="$(ui_input "Timeout minutes, 1-1440" "$(devloop_timeout_minutes)")" || return 130
+        value="$(ui_input "Timeout minutes, 1-1440" "$(devloop_timeout_minutes)")" || continue
         if saved="$(write_config_timeout_minutes global "$value")"; then
-          printf 'timeout saved: %s minutes\n' "$saved" >&2
+          UI_NOTICE="timeout saved: $saved minutes"
         else
-          printf '%s\n' "timeout not saved" >&2
+          UI_NOTICE="timeout not saved"
         fi
         ;;
       "Remove timeout")
         scope="$(configured_timeout_minutes_scope || true)"
         if [ -n "$scope" ]; then
           remove_config_timeout_minutes "$scope"
-          printf '%s\n' "timeout removed" >&2
+          UI_NOTICE="timeout removed"
         fi
         ;;
       "Back") ui_go_back; return 0 ;;
@@ -1187,7 +1241,12 @@ interactive_run_setup() {
       "Toggle worktree mode" \
       "Toggle PR creation" \
       "Change report format" \
-      "Back")" || return 130
+      "Back")"
+    code=$?
+    if [ "$code" -ne 0 ]; then
+      ui_go_back
+      return 0
+    fi
     case "$choice" in
       "Start run")
         if [ "$create_pr" = true ] && ! ui_confirm "Push the accepted branch and open a PR after acceptance?"; then
@@ -1200,29 +1259,29 @@ interactive_run_setup() {
         return "$(final_exit_code "$code")"
         ;;
       "Change coder")
-        value="$(ui_choose "Implementation agent" "Codex" "Claude Code" "Back")" || return 130
+        value="$(ui_choose "Implementation agent" "Codex" "Claude Code" "Back")" || continue
         [ "$value" = "Back" ] && continue
         coder="$(agent_choice_value "$value")"
         ;;
       "Change reviewer")
-        value="$(ui_choose "Review agent" "Claude Code" "Codex" "Back")" || return 130
+        value="$(ui_choose "Review agent" "Claude Code" "Codex" "Back")" || continue
         [ "$value" = "Back" ] && continue
         reviewer="$(agent_choice_value "$value")"
         ;;
       "Change pass limit")
-        value="$(ui_input "Pass limit, 1-10" "$max")" || return 130
+        value="$(ui_input "Pass limit, 1-10" "$max")" || continue
         if printf '%s\n' "$value" | grep -Eq '^[0-9]+$' && [ "$value" -ge 1 ] && [ "$value" -le 10 ]; then
           max="$value"
         else
-          printf '%s\n' "pass limit must be an integer between 1 and 10" >&2
+          UI_NOTICE="pass limit must be an integer between 1 and 10"
         fi
         ;;
       "Change timeout")
-        value="$(ui_input "Timeout minutes, 1-1440" "$timeout_minutes")" || return 130
+        value="$(ui_input "Timeout minutes, 1-1440" "$timeout_minutes")" || continue
         if timeout_minutes="$(normalize_timeout_minutes "$value")"; then
           :
         else
-          printf '%s\n' "timeout must be an integer between 1 and 1440 minutes" >&2
+          UI_NOTICE="timeout must be an integer between 1 and 1440 minutes"
           timeout_minutes="$(devloop_timeout_minutes)"
         fi
         ;;
@@ -1236,7 +1295,7 @@ interactive_run_setup() {
         if [ "$create_pr" = true ]; then create_pr=false; else create_pr=true; fi
         ;;
       "Change report format")
-        value="$(ui_choose "Report format" "html" "markdown" "Back")" || return 130
+        value="$(ui_choose "Report format" "html" "markdown" "Back")" || continue
         [ "$value" = "Back" ] && continue
         report_format="$value"
         ;;
@@ -1249,11 +1308,55 @@ select_spec_file() {
   local list selected
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-specs.XXXXXX")"
   list_spec_files > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    return 1
+  fi
   selected="$(ui_pick_from_file "$list" "Select spec")"
   local code=$?
   rm -f "$list"
-  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 1; fi
+  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 130; fi
   printf '%s\n' "$selected"
+}
+
+interactive_open_report() {
+  local list selected code
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-reports.XXXXXX")"
+  list_artifact_files ".codex/reports" > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    UI_NOTICE="no reports found"
+    ui_go_back
+    return 0
+  fi
+  selected="$(ui_pick_from_file "$list" "Open report")"
+  code=$?
+  rm -f "$list"
+  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then
+    ui_go_back
+    return 0
+  fi
+  view_file "$selected"
+}
+
+interactive_continue_run() {
+  local list selected code
+  list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
+  list_artifact_files ".codex/tracks" > "$list"
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    UI_NOTICE="no devloop tracks found"
+    ui_go_back
+    return 0
+  fi
+  selected="$(ui_pick_from_file "$list" "Continue run")"
+  code=$?
+  rm -f "$list"
+  if [ "$code" -ne 0 ] || [ -z "$selected" ]; then
+    ui_go_back
+    return 0
+  fi
+  run_from_track "$selected"
 }
 
 reports_command() {
