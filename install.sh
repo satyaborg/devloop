@@ -18,6 +18,39 @@ BIN_DIR="${DEVLOOP_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/devloop"
 SOURCE="$ROOT/devloop"
 SKILL_STATUS=0
+TOOL_STATUS=0
+
+install_required_ui_tools() {
+  local missing=()
+  local tool
+
+  for tool in gum fzf; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+    fi
+  done
+
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "required UI tools ready"
+    return 0
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "missing required UI tools: ${missing[*]}" >&2
+    echo "install Homebrew, then rerun ./install.sh" >&2
+    return 1
+  fi
+
+  echo "installing required UI tools: ${missing[*]}"
+  brew install "${missing[@]}"
+
+  for tool in "${missing[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "failed to install required UI tool: $tool" >&2
+      return 1
+    fi
+  done
+}
 
 if [ ! -f "$SOURCE" ]; then
   echo "missing devloop executable: $SOURCE" >&2
@@ -29,6 +62,7 @@ chmod +x "$SOURCE"
 ln -sfn "$SOURCE" "$TARGET"
 
 echo "installed devloop -> $SOURCE"
+install_required_ui_tools || TOOL_STATUS=$?
 devloop_install_skills "$ROOT" || SKILL_STATUS=$?
 
 case ":${PATH:-}:" in
@@ -42,4 +76,7 @@ esac
 
 echo
 echo "try: devloop doctor"
-exit "$SKILL_STATUS"
+if [ "$TOOL_STATUS" -ne 0 ] || [ "$SKILL_STATUS" -ne 0 ]; then
+  exit 1
+fi
+exit 0

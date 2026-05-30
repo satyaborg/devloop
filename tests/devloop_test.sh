@@ -19,6 +19,13 @@ contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "$label missing: $needle"
 }
 
+not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local label="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$label should not contain: $needle"
+}
+
 equals() {
   local actual="$1"
   local expected="$2"
@@ -492,9 +499,31 @@ ok "release helpers"
 
 bin_dir="$work/bin"
 install_home="$work/install-home"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-test.out
+tool_bin="$work/tool-bin"
+mkdir -p "$tool_bin"
+cat > "$tool_bin/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" != "install" ]; then exit 1; fi
+shift
+tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+for formula in "$@"; do
+  case "$formula" in
+    gum|fzf)
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$formula"
+      chmod +x "$tool_dir/$formula"
+      ;;
+    *) exit 1 ;;
+  esac
+done
+BREW
+chmod +x "$tool_bin/brew"
+install_path="$tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-test.out
 [[ -x "$REPO_ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
+PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
+PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
 [[ -f "$install_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Codex review skill"
@@ -507,11 +536,11 @@ contains "$(cat /tmp/devloop-help-test.out)" "Spec-driven code and review loop."
 ok "installer"
 
 printf '%s\n' "user edit" >> "$install_home/.agents/skills/devloop-review/SKILL.md"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
 contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
 contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
 contains "$(cat "$install_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
-DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-force.out
+DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-force.out
 if grep -q "user edit" "$install_home/.agents/skills/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
 ok "installer skill updates"
 
@@ -520,10 +549,15 @@ mkdir -p "$fake_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/claude"
 chmod +x "$fake_bin/codex" "$fake_bin/claude"
-doctor_output="$(HOME="$install_home" PATH="$bin_dir:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
+doctor_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
 contains "$doctor_output" "devloop doctor: ready" "doctor"
+contains "$doctor_output" "Required dependencies" "doctor"
+contains "$doctor_output" "[ok] codex:" "doctor"
+contains "$doctor_output" "[ok] claude:" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
-contains "$doctor_output" "Optional UI" "doctor"
+contains "$doctor_output" "[ok] gum:" "doctor"
+contains "$doctor_output" "[ok] fzf:" "doctor"
+not_contains "$doctor_output" "Optional UI" "doctor"
 contains "$doctor_output" "$install_home/.agents/skills/devloop-spec" "doctor Codex skill"
 contains "$doctor_output" "$install_home/.claude/skills/devloop-spec" "doctor Claude skill"
 ok "doctor"

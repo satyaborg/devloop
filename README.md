@@ -8,8 +8,8 @@ By default, Codex makes the change, Claude Code reviews it, and Codex retries un
 
 ## Install
 
-Prereqs: Bash, git, and the agent CLIs you want to use. The default pairing requires `codex` and `claude`.
-For the full interactive UI, install [`gum`](https://github.com/charmbracelet/gum) and [`fzf`](https://github.com/junegunn/fzf). They are optional; `devloop` falls back to plain terminal output when they are missing.
+Required dependencies: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`.
+`install.sh` installs missing `gum` and `fzf` with Homebrew. Install the Codex and Claude Code CLIs before running a loop, then verify everything with `devloop doctor`.
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
@@ -139,11 +139,11 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
 - `Settings`: view or change the shared spec path and set the run timeout.
-- `Doctor`: verify required commands, optional UI tools, and installed skills.
+- `Doctor`: verify required dependencies and installed skills.
 
 Nested menu screens keep `Back` as the final option, and Esc/cancel also returns to the previous menu without exiting Devloop. Interactive screens redraw in place instead of appending a fresh UI after each selection.
 
-`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports.
+`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. Both are required and installed by `install.sh` when missing.
 
 ## What Devloop Does
 
