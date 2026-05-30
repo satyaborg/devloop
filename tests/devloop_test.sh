@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 fail() {
   echo "not ok - $*" >&2
@@ -26,21 +26,21 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$ROOT/devloop" "$ROOT/install.sh" "$ROOT/skill_helpers.sh" "$ROOT/release.sh"
+bash -n "$REPO_ROOT/devloop" "$REPO_ROOT/install.sh" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
-source "$ROOT/devloop"
+source "$REPO_ROOT/devloop"
 unset DEVLOOP_LIB
 equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.5" "codex model args"
 equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
 
-version="$(sed -n '1p' "$ROOT/VERSION")"
-equals "$("$ROOT/devloop" --version)" "devloop $version" "version output"
-equals "$("$ROOT/devloop" -V)" "devloop $version" "short version output"
-equals "$("$ROOT/devloop" --plain --version)" "devloop $version" "version after global flag"
+version="$(sed -n '1p' "$REPO_ROOT/VERSION")"
+equals "$("$REPO_ROOT/devloop" --version)" "devloop $version" "version output"
+equals "$("$REPO_ROOT/devloop" -V)" "devloop $version" "short version output"
+equals "$("$REPO_ROOT/devloop" --plain --version)" "devloop $version" "version after global flag"
 
-help="$("$ROOT/devloop" --help)"
+help="$("$REPO_ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
 contains "$help" "devloop doctor" "help"
 contains "$help" "devloop reports" "help"
@@ -54,12 +54,12 @@ contains "$help" "v$version" "help"
 contains "$help" "--timeout-minutes" "help"
 ok "help output"
 
-skill_path="$("$ROOT/devloop" spec --skill-path)"
-[[ "$skill_path" == "$ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
-contains "$("$ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
+skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
+[[ "$skill_path" == "$REPO_ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
+contains "$("$REPO_ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
 ok "spec skill path"
 
-for skill in "$ROOT"/skills/*/SKILL.md; do
+for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
   name="$(sed -n 's/^name: *//p' "$skill" | head -n 1)"
   description="$(sed -n 's/^description: *//p' "$skill" | head -n 1)"
   dirname="$(basename "$(dirname "$skill")")"
@@ -126,7 +126,7 @@ if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_pas
 
 review_prompt_text="$(review_prompt codex "$criteria_file" ".codex/tracks/test.md" main 1 ".codex/reviews/test-r1.md" test 5 "$criteria_file" true)"
 contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
-contains "$review_prompt_text" "Bundled skill path, for fallback only: $ROOT/skills/devloop-review/SKILL.md" "review prompt"
+contains "$review_prompt_text" "Bundled skill path, for fallback only: $REPO_ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
 
 findings_a="$work/findings-a.md"
@@ -346,7 +346,7 @@ ok "pure helpers"
 
 (
   DEVLOOP_RELEASE_LIB=1
-  source "$ROOT/release.sh"
+  source "$REPO_ROOT/release.sh"
   release_version_valid "0.1.0" || fail "release version rejected valid patch"
   release_version_valid "1.2.3-alpha.1+build.7" || fail "release version rejected valid prerelease"
   if release_version_valid "01.2.3"; then fail "release version accepted leading zero"; fi
@@ -364,8 +364,8 @@ ok "release helpers"
 
 bin_dir="$work/bin"
 install_home="$work/install-home"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-test.out
-[[ -x "$ROOT/devloop" ]] || fail "devloop is not executable"
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-test.out
+[[ -x "$REPO_ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
@@ -379,11 +379,11 @@ contains "$(cat /tmp/devloop-help-test.out)" "Spec-driven code and review loop."
 ok "installer"
 
 printf '%s\n' "user edit" >> "$install_home/.agents/skills/devloop-review/SKILL.md"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
 contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
 contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
 contains "$(cat "$install_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
-DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$ROOT/install.sh" >/tmp/devloop-install-force.out
+DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" "$REPO_ROOT/install.sh" >/tmp/devloop-install-force.out
 if grep -q "user edit" "$install_home/.agents/skills/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
 ok "installer skill updates"
 
@@ -415,7 +415,7 @@ repo_specs="$work/repo-specs"
 printf 'spec_dir=%s\n' "$repo_specs" > "$repo/.devloop/config"
 (
   cd "$repo"
-  "$ROOT/devloop" spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
+  "$REPO_ROOT/devloop" spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
 [[ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec under absolute configured dir"
@@ -564,12 +564,12 @@ run_loop() {
   if [ -n "$extra" ]; then
     (
       cd "$repo_path"
-      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$ROOT/devloop" --plain --no-shell "$extra" ".specs/$slug.md" "$max"
+      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$REPO_ROOT/devloop" --plain --no-shell "$extra" ".specs/$slug.md" "$max"
     )
   else
     (
       cd "$repo_path"
-      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$ROOT/devloop" --plain --no-shell ".specs/$slug.md" "$max"
+      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$REPO_ROOT/devloop" --plain --no-shell ".specs/$slug.md" "$max"
     )
   fi
 }
@@ -591,8 +591,8 @@ contains "$accept_output" "accepted" "accept loop"
 accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^worktree:[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
 contains "$(cat "$accept_worktree/.codex/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" status)" "e2e-accept" "status command"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --dry-run)" "skip:" "clean skips accepted"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" status)" "e2e-accept" "status command"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --dry-run)" "skip:" "clean skips accepted"
 ok "e2e accept and verify"
 
 loop_repo="$work/loop-retry"
@@ -669,9 +669,9 @@ if verify_fail_output="$(run_loop "$loop_repo" "e2e-verify-fail" accept 1 2>&1)"
   fail "verify failure loop unexpectedly passed"
 fi
 contains "$verify_fail_output" "verify-error" "verify failure loop"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" status)" "verify-error" "verify failure status"
-clean_output="$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --dry-run)"
+contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" status)" "verify-error" "verify failure status"
+clean_output="$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --dry-run)"
 contains "$clean_output" "would remove:" "clean dry run"
-(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$ROOT/devloop" clean --force >/tmp/devloop-clean-force.out)
+(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --force >/tmp/devloop-clean-force.out)
 contains "$(cat /tmp/devloop-clean-force.out)" "removed:" "clean force"
 ok "e2e verify failure and clean"
