@@ -15,14 +15,14 @@ ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
 
 release_usage() {
   cat <<'EOF'
-usage: ./release.sh <version> [--dry-run] [--push]
+usage: ./release.sh <patch|minor|major> [--dry-run] [--push]
 
-Creates a release commit and annotated tag from a SemVer version.
+Bumps VERSION, creates a release commit, and creates an annotated tag.
 
 Examples:
-  ./release.sh 0.1.0 --dry-run
-  ./release.sh 0.1.0
-  ./release.sh 0.1.0 --push
+  ./release.sh patch --dry-run
+  ./release.sh minor
+  ./release.sh major --push
 EOF
 }
 
@@ -33,6 +33,52 @@ release_version_valid() {
 
 release_tag_for_version() {
   printf 'v%s\n' "$1"
+}
+
+release_current_version() {
+  sed -n '1p' "$ROOT/VERSION" 2>/dev/null || true
+}
+
+release_next_version() {
+  local bump="$1"
+  local current="$2"
+  local major minor patch
+
+  if ! release_version_valid "$current"; then
+    printf 'invalid current VERSION: %s\n' "$current" >&2
+    return 2
+  fi
+
+  case "$current" in
+    *-*|*+*)
+      printf 'cannot bump prerelease/build VERSION: %s\n' "$current" >&2
+      return 2
+      ;;
+  esac
+
+  IFS=. read -r major minor patch <<EOF
+$current
+EOF
+  case "$bump" in
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    patch)
+      patch=$((patch + 1))
+      ;;
+    *)
+      printf 'unknown bump: %s\n' "$bump" >&2
+      return 2
+      ;;
+  esac
+
+  printf '%s.%s.%s\n' "$major" "$minor" "$patch"
 }
 
 release_require_command() {
@@ -74,7 +120,8 @@ release_assert_push_branch() {
 }
 
 release_main() {
-  local version=""
+  local bump=""
+  local current version
   local dry_run=false
   local push=false
   local tag branch
@@ -90,16 +137,31 @@ release_main() {
         return 2
         ;;
       *)
-        if [ -n "$version" ]; then
+        if [ -n "$bump" ]; then
           release_usage >&2
           return 2
         fi
-        version="$1"
+        bump="$1"
         ;;
     esac
     shift
   done
 
+  case "$bump" in
+    patch|minor|major) ;;
+    "")
+      release_usage >&2
+      return 2
+      ;;
+    *)
+      printf 'invalid bump: %s\n' "$bump" >&2
+      release_usage >&2
+      return 2
+      ;;
+  esac
+
+  current="$(release_current_version)"
+  version="$(release_next_version "$bump" "$current")" || return $?
   if [ -z "$version" ]; then
     release_usage >&2
     return 2
@@ -113,7 +175,8 @@ release_main() {
   release_require_command git
   if [ "$dry_run" = true ]; then
     release_assert_tag_available "$tag"
-    printf 'release: %s\n' "$tag"
+    printf 'current: %s\n' "$current"
+    printf 'next: %s (%s)\n' "$version" "$tag"
     if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
       printf '%s\n' "note: actual release requires a clean working tree"
     fi

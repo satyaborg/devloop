@@ -164,14 +164,14 @@ Release notes in [`CHANGELOG.md`](CHANGELOG.md) are generated from Conventional 
 brew install git-cliff
 ```
 
-Cut a release from a clean tree:
+Cut a release from a clean tree by choosing the bump:
 
 ```sh
-./release.sh 0.1.0 --dry-run
-./release.sh 0.1.0
+./release.sh patch --dry-run
+./release.sh patch
 ```
 
-That updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release 0.1.0`, and creates an annotated `v0.1.0` tag. Add `--push` to push the release branch and tag. By default, pushed releases must run from `main`.
+Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--push` to push the release branch and tag. By default, pushed releases must run from `main`.
 
 ## License
 
