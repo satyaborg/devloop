@@ -417,7 +417,7 @@ devloop_spec_dir() {
 
 is_default_spec_dir() {
   case "$1" in
-    ".specs"|".devloop/specs") return 0 ;;
+    ".specs") return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -453,7 +453,7 @@ spec_search_dirs() {
   local configured dir seen
   configured="$(devloop_spec_dir)"
   seen=""
-  for dir in "$configured" ".specs" ".devloop/specs"; do
+  for dir in "$configured" ".specs"; do
     [ -n "$dir" ] || continue
     case "$seen" in
       *"|$dir|"*) continue ;;
@@ -1046,13 +1046,11 @@ interactive_settings() {
       ui_print_key_values \
         "custom" "$custom_spec_dir" \
         "default" ".specs" \
-        "" ".devloop/specs" \
         "timeout" "$timeout_display"
       choices=("Remove spec path" "Set timeout" "Back")
     else
       ui_print_key_values \
         "default" ".specs" \
-        "" ".devloop/specs" \
         "timeout" "$timeout_display"
       choices=("Add spec path" "Set timeout" "Back")
     fi
@@ -2958,7 +2956,7 @@ Rules:
 - The verdict line must appear verbatim.
 - ACCEPT requires every acceptance criterion PASS with concrete implementation evidence and concrete test evidence.$strict_rule
 - ACCEPT requires a complete Engineering quality matrix. Reject if any engineering quality row is FAIL.
-- Flag a silent decision when the diff makes a tradeoff, default choice, compatibility choice, migration choice, or risk acceptance that is not recorded in the spec or track.
+- Flag a silent decision when the diff makes a tradeoff, default choice, migration choice, or risk acceptance that is not recorded in the spec or track.
 - Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the acceptance criteria, or includes a broad refactor not needed for the spec.
 - Flag a missing test when behavior changed without targeted test evidence, even if the full suite passed.
 - Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes.

@@ -81,7 +81,7 @@ devloop spec
 devloop spec --agent claude --output .specs/chat-retry.md notes.md
 ```
 
-By default, generated specs are written under `.specs/`, and the interactive spec picker searches `.specs/` and `.devloop/specs/`. If your specs live somewhere else, open `devloop`, choose `Settings`, and add one extra spec path. Generated specs will be written there too.
+By default, generated specs are written under `.specs/`, and the interactive spec picker searches `.specs/`. If your specs live somewhere else, open `devloop`, choose `Settings`, and add one extra spec path. Generated specs will be written there too.
 
 The custom path is saved in `.devloop/config` and can be repo-relative or absolute:
 
@@ -134,7 +134,7 @@ devloop [options] <spec.md> [max=5]
 
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
-- `Run a spec`: pick a spec from the configured spec path, `.specs/`, or `.devloop/specs/`.
+- `Run a spec`: pick a spec from the configured spec path or `.specs/`.
 - `Create a spec`: choose the spec agent and provide source context.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.

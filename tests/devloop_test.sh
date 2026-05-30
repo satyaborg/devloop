@@ -220,20 +220,20 @@ config_repo="$work/config-repo"
 config_home="$work/config-home"
 mkdir -p "$config_repo/.specs" "$config_repo/.devloop/specs" "$config_home"
 config_repo_real="$(cd "$config_repo" && pwd)"
-printf '%s\n' "# Legacy" > "$config_repo/.specs/legacy.md"
+printf '%s\n' "# Default" > "$config_repo/.specs/default.md"
 printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
 config_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
-contains "$config_specs" ".specs/legacy.md" "default spec search"
-contains "$config_specs" ".devloop/specs/devloop.md" "default spec search"
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs, .devloop/specs" "spec search label"
+contains "$config_specs" ".specs/default.md" "default spec search"
+if printf '%s\n' "$config_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "default spec search included .devloop/specs"; fi
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs" "spec search label"
 equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir "custom-specs")" "custom-specs" "write config spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "custom-specs" "configured spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "custom-specs" "custom spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir_scope)" "local" "custom spec dir scope"
 [[ -d "$config_repo/custom-specs" ]] || fail "configured spec dir was not created"
 configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
-contains "$configured_specs" ".specs/legacy.md" "configured spec search includes legacy dir"
-contains "$configured_specs" ".devloop/specs/devloop.md" "configured spec search includes devloop dir"
+contains "$configured_specs" ".specs/default.md" "configured spec search includes default dir"
+if printf '%s\n' "$configured_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "configured spec search included .devloop/specs"; fi
 equals "$(cd "$config_repo" && HOME="$config_home" generated_spec_path "$spec_output" "" "2026-05-29" false)" "$config_repo_real/custom-specs/2026-05-29-generated.md" "configured generated spec path"
 if (cd "$config_repo" && HOME="$config_home" write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
 
@@ -245,14 +245,14 @@ equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "$absol
 printf '%s\n' "# Shared" > "$absolute_specs/shared.md"
 absolute_configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 contains "$absolute_configured_specs" "$absolute_specs/shared.md" "configured spec search includes absolute dir"
-contains "$absolute_configured_specs" ".specs/legacy.md" "absolute spec search includes legacy dir"
+contains "$absolute_configured_specs" ".specs/default.md" "absolute spec search includes default dir"
 equals "$(cd "$config_repo" && HOME="$config_home" generated_spec_path "$spec_output" "" "2026-05-29" false)" "$absolute_specs/2026-05-29-generated.md" "absolute generated spec path"
 equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
 equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
 (cd "$config_repo" && HOME="$config_home" remove_config_spec_dir local)
 if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "custom spec dir was not removed"; fi
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" ".specs" "removed custom spec dir falls back"
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs, .devloop/specs" "removed custom spec search label"
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" ".specs" "removed custom spec search label"
 
 global_repo="$work/global-repo"
 global_home="$work/global-home"
