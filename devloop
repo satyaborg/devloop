@@ -207,7 +207,7 @@ welcome_tui() {
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Usage"
   printf '  devloop [options] <spec.md> [max=5]\n\n'
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Common commands"
-  printf '  %-42s %s\n' "devloop doctor" "check required and optional tools"
+  printf '  %-42s %s\n' "devloop doctor" "check required tools"
   printf '  %-42s %s\n' "devloop reports" "open previous run reports"
   printf '  %-42s %s\n' "devloop status" "summarize tracked runs"
   printf '  %-42s %s\n' "devloop clean" "show safe cleanup candidates"
