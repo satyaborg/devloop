@@ -78,6 +78,56 @@ ok "skill metadata"
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
+coverage_functions="$work/project-functions.txt"
+coverage_hits="$work/project-function-hits.txt"
+coverage_set=""
+sed -nE 's/^([[:alpha:]_][[:alnum:]_]*)\(\)[[:space:]]*\{/\1/p' \
+  "$REPO_ROOT/devloop" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh" |
+  LC_ALL=C sort -u > "$coverage_functions"
+while IFS= read -r fn; do
+  coverage_set="${coverage_set}|${fn}|"
+done < "$coverage_functions"
+
+record_project_function_coverage() {
+  local fn="${FUNCNAME[1]:-}"
+  case "$coverage_set" in
+    *"|$fn|"*) printf '%s\n' "$fn" >> "$coverage_hits" ;;
+  esac
+}
+
+assert_project_function_coverage() {
+  local covered missing fn
+  covered="$work/project-function-covered.txt"
+  missing="$work/project-function-missing.txt"
+  LC_ALL=C sort -u "$coverage_hits" > "$covered"
+  : > "$missing"
+  while IFS= read -r fn; do
+    grep -Fxq "$fn" "$covered" || printf '%s\n' "$fn" >> "$missing"
+  done < "$coverage_functions"
+  if [ -s "$missing" ]; then
+    printf '%s\n' "missing project function coverage:" >&2
+    cat "$missing" >&2
+    fail "project function coverage is not 100%"
+  fi
+  ok "100% project function coverage"
+}
+
+set -T
+trap record_project_function_coverage DEBUG
+
+contains "$(usage)" "usage: devloop" "usage"
+contains "$(spec_usage)" "devloop spec" "spec usage"
+old_use_tui="$USE_TUI"
+USE_TUI=false
+contains "$(welcome)" "Spec-driven code and review loop." "plain welcome"
+USE_TUI="$old_use_tui"
+gum() { return 0; }
+old_use_tui="$USE_TUI"
+USE_TUI=true
+welcome_tui >/dev/null
+USE_TUI="$old_use_tui"
+unset -f gum
+
 criteria_file="$work/criteria.md"
 cat > "$criteria_file" <<'MARKDOWN'
 # Spec
@@ -155,6 +205,7 @@ equals "$(slugify "Feat: Chat Retry's")" "feat-chat-retrys" "slugify"
 equals "$(normalize_agent "Codex")" "codex" "normalize_agent Codex label"
 equals "$(normalize_agent "Claude Code")" "claude" "normalize_agent Claude Code label"
 equals "$(agent_label claude)" "Claude Code" "agent_label Claude"
+equals "$(agent_choice_value "Claude Code")" "claude" "agent_choice_value"
 equals "$(parse_bool yes)" "true" "parse_bool true"
 equals "$(parse_bool 0)" "false" "parse_bool false"
 if parse_bool maybe >/dev/null 2>&1; then fail "parse_bool accepted invalid value"; fi
@@ -184,6 +235,9 @@ git -C "$branch_repo" add file.txt
 git -C "$branch_repo" commit -q -m init
 git -C "$branch_repo" branch feat/chat-retry
 equals "$(next_branch "$branch_repo" feat false chat-retry "")" "feat/chat-retry-2" "next_branch suffix"
+PULL_REQUEST_ERROR=""
+if create_pull_request "$branch_repo" "feat/chat-retry" "main" >/dev/null 2>&1; then fail "pull request creation unexpectedly passed without remote"; fi
+contains "$PULL_REQUEST_ERROR" "repository exists" "pull request push failure"
 mkdir -p "$branch_repo/.codex/reports" "$branch_repo/.codex/tracks" "$branch_repo/.codex/reviews"
 printf '%s\n' "# Report" > "$branch_repo/.codex/reports/chat-retry.md"
 branch_repo_real="$(cd "$branch_repo" && pwd -P)"
@@ -220,6 +274,7 @@ config_repo="$work/config-repo"
 config_home="$work/config-home"
 mkdir -p "$config_repo/.specs" "$config_repo/.devloop/specs" "$config_home"
 config_repo_real="$(cd "$config_repo" && pwd)"
+equals "$(devloop_config_file)" ".devloop/config" "default config file"
 printf '%s\n' "# Default" > "$config_repo/.specs/default.md"
 printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
 config_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
@@ -292,6 +347,7 @@ if normalize_timeout_minutes nope >/dev/null 2>&1; then fail "timeout accepted n
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "default timeout"
 equals "$(cd "$config_repo" && HOME="$config_home" write_config_timeout_minutes 45)" "45" "write timeout"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "45" "configured timeout"
+equals "$(cd "$config_repo" && HOME="$config_home" configured_timeout_minutes_scope)" "local" "configured timeout scope"
 (cd "$config_repo" && HOME="$config_home" remove_config_timeout_minutes local)
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "removed timeout falls back"
 
@@ -318,20 +374,39 @@ equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222
 
 contains "$(devloop_logo)" "░█▀▄░█▀▀" "devloop logo"
 contains "$(devloop_logo)" "v$version" "devloop logo version"
+ui_logo stdout >/dev/null
 equals "$(ui_color_code accent)" "38;5;141" "accent color"
 equals "$(ui_color_code rec)" "38;5;135" "run color"
 equals "$(ui_color_code ok)" "38;5;141" "ok color"
 equals "$(ui_color_code dim)" "38;5;244" "dim color"
+old_use_tui="$USE_TUI"
+USE_TUI=false
+equals "$(ui_input "Prompt" "fallback")" "fallback" "ui input fallback"
+if ui_confirm "Confirm?"; then fail "ui_confirm accepted non-tui input"; fi
+USE_TUI="$old_use_tui"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec back navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup back navigation"; fi
+if ! ( ui_choose() { printf '%s\n' "Quit"; }; UI_BACK=false; interactive_menu >/dev/null 2>&1 ); then fail "menu quit failed"; fi
+empty_spec_repo="$work/empty-spec-repo"
+mkdir -p "$empty_spec_repo"
+old_use_tui="$USE_TUI"
+USE_TUI=false
+if ( cd "$empty_spec_repo" && interactive_run_spec >/dev/null 2>&1 ); then fail "interactive_run_spec accepted missing specs"; fi
+USE_TUI="$old_use_tui"
 
 picker_file="$work/picker.txt"
 printf '%s\n' "alpha" "beta" > "$picker_file"
 old_use_tui="$USE_TUI"
 USE_TUI=false
 equals "$(ui_pick_from_file "$picker_file" "Pick")" "alpha" "non-tui picker fallback"
+equals "$(USE_TUI=true; ui_numbered_pick "$picker_file" "Pick" 2>/dev/null <<<"2")" "beta" "numbered picker"
 USE_TUI="$old_use_tui"
+view_file "$picker_file" >/dev/null
+equals "$(title_from_slug "chat-retry")" "Chat Retry" "title from slug"
+RUN_TIMEOUT_MINUTES=7
+contains "$(timeout_message)" "7 minutes" "timeout message"
+terminate_pid_tree 999999
 
 old_path="$PATH"
 no_uuid_path="$work/no-uuid"
@@ -347,6 +422,7 @@ ok "pure helpers"
 (
   DEVLOOP_RELEASE_LIB=1
   source "$REPO_ROOT/release.sh"
+  contains "$(release_usage)" "usage: ./release.sh" "release usage"
   release_version_valid "0.1.0" || fail "release version rejected valid patch"
   release_version_valid "1.2.3-alpha.1+build.7" || fail "release version rejected valid prerelease"
   if release_version_valid "01.2.3"; then fail "release version accepted leading zero"; fi
@@ -368,6 +444,19 @@ ok "pure helpers"
   dry_run_output="$(release_main "patch" --dry-run)" || fail "release dry-run required git-cliff"
   contains "$dry_run_output" "next: 9.9.10 (v9.9.10)" "release dry-run"
   contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
+  publish_dry_run_output="$(release_main "patch" --publish --dry-run)" || fail "release publish dry-run required git-cliff"
+  contains "$publish_dry_run_output" "would push branch and tag" "release publish dry-run"
+  contains "$publish_dry_run_output" "would create GitHub release: gh release create v9.9.10 --verify-tag --generate-notes" "release publish dry-run"
+  git -C "$ROOT" config user.email devloop-test@example.com
+  git -C "$ROOT" config user.name "devloop test"
+  git -C "$ROOT" add VERSION
+  git -C "$ROOT" commit -q -m init
+  release_assert_clean_tree || fail "release clean tree rejected"
+  printf '%s\n' "dirty" > "$ROOT/dirty"
+  if release_assert_clean_tree >/dev/null 2>&1; then fail "release clean tree accepted dirty repo"; fi
+  rm "$ROOT/dirty"
+  [ -n "$(release_current_branch)" ] || fail "release current branch missing"
+  DEVLOOP_RELEASE_ALLOW_BRANCH=1 release_assert_push_branch || fail "release push branch rejected"
 )
 ok "release helpers"
 
@@ -422,14 +511,18 @@ repo="$work/repo"
 mkdir -p "$repo/.devloop"
 repo_specs="$work/repo-specs"
 printf 'spec_dir=%s\n' "$repo_specs" > "$repo/.devloop/config"
+old_use_tui="$USE_TUI"
+USE_TUI=false
 (
   cd "$repo"
-  "$REPO_ROOT/devloop" spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
+  main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
+USE_TUI="$old_use_tui"
 contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
 [[ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec under absolute configured dir"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Output path: choose a $repo_specs/" "spec prompt configured output"
+contains "$(absolute_path "$work/absolute-path/nested.md")" "/absolute-path/nested.md" "absolute path"
 ok "spec generation"
 
 cat > "$fake_bin/codex" <<'AGENT'
@@ -537,6 +630,18 @@ MARKDOWN
 AGENT
 chmod +x "$fake_bin/codex" "$fake_bin/claude"
 
+helper_home="$work/helper-home"
+mkdir -p "$helper_home"
+helper_output="$(HOME="$helper_home" DEVLOOP_FORCE=1 devloop_install_skills "$REPO_ROOT" 2>&1)" || fail "direct skill install failed"
+contains "$helper_output" "installed skill devloop-spec" "direct skill install"
+contains "$(HOME="$helper_home" devloop_skills_dirs)" "$helper_home/.agents/skills" "skill dirs"
+devloop_can_replace_skill "$helper_home/.agents/skills/devloop-spec" || fail "installed skill should be replaceable"
+devloop_valid_skill_name "devloop-spec" || fail "valid skill name rejected"
+equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md")" "devloop-spec" "skill name"
+helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$PATH" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
+contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
+ok "direct skill helpers"
+
 make_loop_repo() {
   local repo_path="$1"
   local slug="$2"
@@ -564,23 +669,113 @@ pr: null
 MARKDOWN
 }
 
+naming_repo="$work/naming-repo"
+mkdir -p "$naming_repo"
+naming_spec="$naming_repo/partial.md"
+cat > "$naming_spec" <<'MARKDOWN'
+---
+type: feat
+---
+
+# Partial Naming
+MARKDOWN
+old_path="$PATH"
+PATH="$fake_bin:$PATH"
+resolve_work_item codex "$naming_repo" "$naming_spec" "$(cat "$naming_spec")" >/dev/null 2>&1 || fail "naming fallback failed"
+PATH="$old_path"
+equals "$WORK_TYPE" "feat" "naming fallback type override"
+equals "$WORK_SLUG" "fake-loop" "naming fallback slug"
+equals "$WORK_BREAKING" "false" "naming fallback breaking"
+ok "naming fallback"
+
 run_loop() {
   local repo_path="$1"
   local slug="$2"
   local mode="$3"
   local max="${4:-1}"
   local extra="${5:-}"
-  if [ -n "$extra" ]; then
-    (
-      cd "$repo_path"
-      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$REPO_ROOT/devloop" --plain --no-shell "$extra" ".specs/$slug.md" "$max"
-    )
-  else
-    (
-      cd "$repo_path"
-      HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" DEVLOOP_FAKE_MODE="$mode" "$REPO_ROOT/devloop" --plain --no-shell ".specs/$slug.md" "$max"
-    )
-  fi
+  local args=()
+  local old_home="$HOME"
+  local old_path="$PATH"
+  local old_mode="${DEVLOOP_FAKE_MODE-}"
+  local had_mode=false
+  local old_use_tui="$USE_TUI"
+  local old_enter_worktree="$ENTER_WORKTREE"
+  local old_start_pass="$RUN_START_PASS"
+  local code
+  if [ "${DEVLOOP_FAKE_MODE+x}" = "x" ]; then had_mode=true; fi
+  if [ -n "$extra" ]; then args+=("$extra"); fi
+  args+=(".specs/$slug.md" "$max")
+  HOME="$install_home"
+  PATH="$fake_bin:$bin_dir:$PATH"
+  DEVLOOP_FAKE_MODE="$mode"
+  export HOME PATH DEVLOOP_FAKE_MODE
+  USE_TUI=false
+  ENTER_WORKTREE=false
+  RUN_START_PASS=1
+  (
+    cd "$repo_path"
+    main --plain --no-shell "${args[@]}"
+  )
+  code=$?
+  HOME="$old_home"
+  PATH="$old_path"
+  if [ "$had_mode" = true ]; then DEVLOOP_FAKE_MODE="$old_mode"; export DEVLOOP_FAKE_MODE; else unset DEVLOOP_FAKE_MODE; fi
+  USE_TUI="$old_use_tui"
+  ENTER_WORKTREE="$old_enter_worktree"
+  RUN_START_PASS="$old_start_pass"
+  export HOME PATH
+  return "$code"
+}
+
+run_repo_main() {
+  local repo_path="$1"
+  shift
+  local old_home="$HOME"
+  local old_path="$PATH"
+  local old_use_tui="$USE_TUI"
+  local code
+  HOME="$install_home"
+  PATH="$fake_bin:$bin_dir:$PATH"
+  USE_TUI=false
+  export HOME PATH
+  (
+    cd "$repo_path"
+    main "$@"
+  )
+  code=$?
+  HOME="$old_home"
+  PATH="$old_path"
+  USE_TUI="$old_use_tui"
+  export HOME PATH
+  return "$code"
+}
+
+continue_track_with_fake_agents() {
+  local track="$1"
+  local old_home="$HOME"
+  local old_path="$PATH"
+  local old_mode="${DEVLOOP_FAKE_MODE-}"
+  local had_mode=false
+  local old_use_tui="$USE_TUI"
+  local old_enter_worktree="$ENTER_WORKTREE"
+  local code
+  if [ "${DEVLOOP_FAKE_MODE+x}" = "x" ]; then had_mode=true; fi
+  HOME="$install_home"
+  PATH="$fake_bin:$bin_dir:$PATH"
+  DEVLOOP_FAKE_MODE=accept
+  export HOME PATH DEVLOOP_FAKE_MODE
+  USE_TUI=false
+  ENTER_WORKTREE=false
+  run_from_track "$track" 2>&1
+  code=$?
+  HOME="$old_home"
+  PATH="$old_path"
+  if [ "$had_mode" = true ]; then DEVLOOP_FAKE_MODE="$old_mode"; export DEVLOOP_FAKE_MODE; else unset DEVLOOP_FAKE_MODE; fi
+  USE_TUI="$old_use_tui"
+  ENTER_WORKTREE="$old_enter_worktree"
+  export HOME PATH
+  return "$code"
 }
 
 loop_repo="$work/loop-accept"
@@ -600,8 +795,15 @@ contains "$accept_output" "accepted" "accept loop"
 accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^worktree:[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
 contains "$(cat "$accept_worktree/.codex/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" status)" "e2e-accept" "status command"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --dry-run)" "skip:" "clean skips accepted"
+contains "$(run_repo_main "$loop_repo" status)" "e2e-accept" "status command"
+contains "$(run_repo_main "$loop_repo" clean --dry-run)" "skip:" "clean skips accepted"
+if ! continue_output="$(continue_track_with_fake_agents "$accept_worktree/.codex/tracks/e2e-accept.md")" ; then
+  printf '%s\n' "$continue_output" >&2
+  fail "continue run failed"
+fi
+contains "$continue_output" "accepted" "continue run"
+contains "$(run_repo_main "$loop_repo" reports)" ".codex/reports/e2e-accept" "reports command"
+contains "$(run_repo_main "$loop_repo" continue)" ".codex/tracks/e2e-accept.md" "continue command lists tracks"
 ok "e2e accept and verify"
 
 loop_repo="$work/loop-retry"
@@ -678,9 +880,11 @@ if verify_fail_output="$(run_loop "$loop_repo" "e2e-verify-fail" accept 1 2>&1)"
   fail "verify failure loop unexpectedly passed"
 fi
 contains "$verify_fail_output" "verify-error" "verify failure loop"
-contains "$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" status)" "verify-error" "verify failure status"
-clean_output="$(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --dry-run)"
+contains "$(run_repo_main "$loop_repo" status)" "verify-error" "verify failure status"
+clean_output="$(run_repo_main "$loop_repo" clean --dry-run)"
 contains "$clean_output" "would remove:" "clean dry run"
-(cd "$loop_repo" && HOME="$install_home" PATH="$fake_bin:$bin_dir:$PATH" "$REPO_ROOT/devloop" clean --force >/tmp/devloop-clean-force.out)
+run_repo_main "$loop_repo" clean --force >/tmp/devloop-clean-force.out
 contains "$(cat /tmp/devloop-clean-force.out)" "removed:" "clean force"
 ok "e2e verify failure and clean"
+
+assert_project_function_coverage

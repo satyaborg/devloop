@@ -15,13 +15,14 @@ ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
 
 release_usage() {
   cat <<'EOF'
-usage: ./release.sh <patch|minor|major> [--dry-run] [--push]
+usage: ./release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
 
 Bumps VERSION, creates a release commit, and creates an annotated tag.
+Use --publish to push the commit and tag, then create a GitHub Release.
 
 Examples:
   ./release.sh patch --dry-run
-  ./release.sh minor
+  ./release.sh minor --publish
   ./release.sh major --push
 EOF
 }
@@ -123,12 +124,14 @@ release_main() {
   local bump=""
   local current version
   local dry_run=false
+  local publish=false
   local push=false
   local tag branch
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dry-run) dry_run=true ;;
+      --publish) publish=true ;;
       --push) push=true ;;
       -h|--help) release_usage; return 0 ;;
       --*)
@@ -184,14 +187,16 @@ release_main() {
     printf '%s\n' "would update VERSION and CHANGELOG.md"
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
-    if [ "$push" = true ]; then printf '%s\n' "would push branch and tag"; fi
+    if [ "$publish" = true ] || [ "$push" = true ]; then printf '%s\n' "would push branch and tag"; fi
+    if [ "$publish" = true ]; then printf 'would create GitHub release: gh release create %s --verify-tag --generate-notes\n' "$tag"; fi
     return 0
   fi
 
   release_require_command git-cliff
+  if [ "$publish" = true ]; then release_require_command gh; fi
   release_assert_tag_available "$tag"
   release_assert_clean_tree
-  if [ "$push" = true ]; then release_assert_push_branch; fi
+  if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_push_branch; fi
 
   bash "$ROOT/tests/devloop_test.sh"
   printf '%s\n' "$version" > "$ROOT/VERSION"
@@ -200,10 +205,14 @@ release_main() {
   git -C "$ROOT" commit -m "chore: release $version"
   git -C "$ROOT" tag -a "$tag" -m "devloop $version"
 
-  if [ "$push" = true ]; then
+  if [ "$publish" = true ] || [ "$push" = true ]; then
     branch="$(release_current_branch)"
     git -C "$ROOT" push origin "$branch"
     git -C "$ROOT" push origin "$tag"
+  fi
+
+  if [ "$publish" = true ]; then
+    gh release create "$tag" --verify-tag --generate-notes
   fi
 
   printf 'released %s\n' "$tag"
