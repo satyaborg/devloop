@@ -2,13 +2,14 @@
 
 ## Project Structure & Module Organization
 
-This is a Bash CLI project. The active runtime is the root `devloop` executable. `install.sh` links it into a local bin directory and installs bundled skills into `~/.agents/skills`, `tests/devloop_test.sh` covers the shell runtime, `skills/devloop-spec/SKILL.md` is the spec-generation skill, `skills/devloop-review/SKILL.md` is the review skill, and `skills/devloop-spec/references/spec-template.md` is the starter spec. Generated runtime output belongs under `.codex/` in target repositories and should not be committed here.
+This is a Bash CLI project. The active runtime is the root `devloop` executable. `VERSION` is the single version source, `release.sh` cuts local release commits and annotated tags, `install.sh` links the CLI into a local bin directory and installs bundled skills into `~/.agents/skills` and `~/.claude/skills`, `tests/devloop_test.sh` covers the shell runtime, `skills/devloop-spec/SKILL.md` is the spec-generation skill, `skills/devloop-review/SKILL.md` is the review skill, and `skills/devloop-spec/references/spec-template.md` is the starter spec. Generated runtime output belongs under `.codex/` in target repositories and should not be committed here.
 
 ## Build, Test, and Development Commands
 
 - `bash tests/devloop_test.sh`: run the shell test suite.
 - `./install.sh`: link `devloop` into `~/.local/bin` or `DEVLOOP_BIN_DIR`.
 - `./devloop --plain .specs/change.md`: example local CLI invocation from a target git worktree.
+- `./release.sh 0.1.0 --dry-run`: validate the release path without changing files.
 
 ## Coding Style & Naming Conventions
 
@@ -24,4 +25,4 @@ Git history follows Conventional Commits, for example `fix: surface devloop comm
 
 ## Agent-Specific Instructions
 
-Keep changes narrow and regression-first. Do not commit `.codex/`, coverage artifacts, local specs, or dependency caches unless explicitly requested. When modifying acceptance or reporting behavior, update both tests and `README.md` examples if user-facing output changes.
+Keep changes narrow and regression-first. Do not commit `.codex/`, coverage artifacts, local specs, or dependency caches unless explicitly requested. When modifying acceptance, reporting, versioning, or release behavior, update tests and `README.md` examples if user-facing output changes.

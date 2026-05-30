@@ -26,7 +26,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$ROOT/devloop" "$ROOT/install.sh" "$ROOT/skill_helpers.sh"
+bash -n "$ROOT/devloop" "$ROOT/install.sh" "$ROOT/skill_helpers.sh" "$ROOT/release.sh"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -35,6 +35,11 @@ unset DEVLOOP_LIB
 equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.5" "codex model args"
 equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
 
+version="$(sed -n '1p' "$ROOT/VERSION")"
+equals "$("$ROOT/devloop" --version)" "devloop $version" "version output"
+equals "$("$ROOT/devloop" -V)" "devloop $version" "short version output"
+equals "$("$ROOT/devloop" --plain --version)" "devloop $version" "version after global flag"
+
 help="$("$ROOT/devloop" --help)"
 contains "$help" "Common commands:" "help"
 contains "$help" "devloop doctor" "help"
@@ -42,6 +47,8 @@ contains "$help" "devloop reports" "help"
 contains "$help" "--create-pr" "help"
 contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
+contains "$help" "--version" "help"
+contains "$help" "v$version" "help"
 ok "help output"
 
 skill_path="$("$ROOT/devloop" spec --skill-path)"
@@ -262,6 +269,7 @@ session_output=$'unrelated 11111111-1111-4111-8111-111111111111\nTo continue thi
 equals "$(extract_session_id "$session_output")" "22222222-2222-4222-8222-222222222222" "extract_session_id uses session marker"
 
 contains "$(devloop_logo)" "░█▀▄░█▀▀" "devloop logo"
+contains "$(devloop_logo)" "v$version" "devloop logo version"
 equals "$(ui_color_code accent)" "38;5;141" "accent color"
 equals "$(ui_color_code rec)" "38;5;135" "run color"
 equals "$(ui_color_code ok)" "38;5;141" "ok color"
@@ -287,6 +295,24 @@ PATH="$old_path"
 [[ "$uuid_one" != "$uuid_two" ]] || fail "new_uuid fallback returned duplicate values"
 contains "$uuid_one" "00000000-0000-4000-8000-" "new_uuid fallback format"
 ok "pure helpers"
+
+(
+  DEVLOOP_RELEASE_LIB=1
+  source "$ROOT/release.sh"
+  release_version_valid "0.1.0" || fail "release version rejected valid patch"
+  release_version_valid "1.2.3-alpha.1+build.7" || fail "release version rejected valid prerelease"
+  if release_version_valid "01.2.3"; then fail "release version accepted leading zero"; fi
+  if release_version_valid "1.2"; then fail "release version accepted missing patch"; fi
+  if release_version_valid "1.2.3-alpha.01"; then fail "release version accepted leading zero prerelease"; fi
+  equals "$(release_tag_for_version "1.2.3")" "v1.2.3" "release tag"
+  release_require_command() {
+    if [ "$1" = "git-cliff" ]; then return 1; fi
+    return 0
+  }
+  dry_run_output="$(release_main "9.9.9" --dry-run)" || fail "release dry-run required git-cliff"
+  contains "$dry_run_output" "would tag: v9.9.9" "release dry-run"
+)
+ok "release helpers"
 
 bin_dir="$work/bin"
 install_home="$work/install-home"
