@@ -305,12 +305,21 @@ ok "pure helpers"
   if release_version_valid "1.2"; then fail "release version accepted missing patch"; fi
   if release_version_valid "1.2.3-alpha.01"; then fail "release version accepted leading zero prerelease"; fi
   equals "$(release_tag_for_version "1.2.3")" "v1.2.3" "release tag"
+  equals "$(release_next_version patch "0.1.0")" "0.1.1" "patch bump"
+  equals "$(release_next_version minor "0.1.0")" "0.2.0" "minor bump"
+  equals "$(release_next_version major "0.1.0")" "1.0.0" "major bump"
+  if release_next_version patch "0.1.0-alpha.1" >/dev/null 2>&1; then fail "release bump accepted prerelease"; fi
   release_require_command() {
     if [ "$1" = "git-cliff" ]; then return 1; fi
     return 0
   }
-  dry_run_output="$(release_main "9.9.9" --dry-run)" || fail "release dry-run required git-cliff"
-  contains "$dry_run_output" "would tag: v9.9.9" "release dry-run"
+  ROOT="$work/release-root"
+  mkdir -p "$ROOT"
+  git init -q "$ROOT"
+  printf '%s\n' "9.9.9" > "$ROOT/VERSION"
+  dry_run_output="$(release_main "patch" --dry-run)" || fail "release dry-run required git-cliff"
+  contains "$dry_run_output" "next: 9.9.10 (v9.9.10)" "release dry-run"
+  contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
 )
 ok "release helpers"
 
