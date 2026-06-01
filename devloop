@@ -194,7 +194,7 @@ Options:
   --timeout-minutes N           cap one run, default 30
   --no-strict                   weaken strict review gates
   --in-place                    run in the current worktree
-  --create-pr, --pr             push accepted branch and open a PR
+  --create-pr, --pr             open and maintain a draft PR during the loop
   --no-shell, --stay            do not open a shell in the run worktree after completion
   --shell, --enter-worktree     open a shell in the run worktree after completion
   -V, --version                 show version
@@ -217,7 +217,7 @@ welcome_tui() {
   printf '  %-42s %s\n' "devloop menu" "open the guided UI"
   printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "generate a spec"
   printf '  %-42s %s\n' "devloop .specs/change.md" "run a spec"
-  printf '  %-42s %s\n' "devloop --create-pr .specs/change.md" "open a PR after acceptance"
+  printf '  %-42s %s\n' "devloop --create-pr .specs/change.md" "open and maintain a draft PR during the loop"
   printf '\n'
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Options"
   printf '  %-30s %s\n' "--tui" "force terminal UI output"
@@ -228,7 +228,7 @@ welcome_tui() {
   printf '  %-30s %s\n' "--timeout-minutes N" "cap one run, default 30"
   printf '  %-30s %s\n' "--no-strict" "weaken strict review gates"
   printf '  %-30s %s\n' "--in-place" "run in the current worktree"
-  printf '  %-30s %s\n' "--create-pr, --pr" "push accepted branch and open a PR"
+  printf '  %-30s %s\n' "--create-pr, --pr" "open and maintain a draft PR during the loop"
   printf '  %-30s %s\n' "--no-shell, --stay" "do not open a shell after completion"
   printf '  %-30s %s\n' "--shell, --enter-worktree" "open a shell after completion"
   printf '  %-30s %s\n' "-V, --version" "show version"
@@ -799,8 +799,20 @@ ui_choose() {
 
 ui_confirm() {
   local prompt="$1"
+  local default="${2:-false}"
   local answer
   if ui_has_gum; then
+    if [ "$default" = true ]; then
+      gum confirm \
+        --default \
+        --prompt.foreground "$UI_ACCENT_COLOR" \
+        --selected.foreground "$UI_REC_COLOR" \
+        --selected.background "" \
+        --unselected.foreground "$UI_DIM_COLOR" \
+        --unselected.background "" \
+        "$prompt"
+      return $?
+    fi
     gum confirm \
       --prompt.foreground "$UI_ACCENT_COLOR" \
       --selected.foreground "$UI_REC_COLOR" \
@@ -811,12 +823,23 @@ ui_confirm() {
     return $?
   fi
   if [ "$USE_TUI" = true ] && [ -t 0 ]; then
-    printf '%s [y/N] ' "$prompt" >&2
+    if [ "$default" = true ]; then
+      printf '%s [Y/n] ' "$prompt" >&2
+    else
+      printf '%s [y/N] ' "$prompt" >&2
+    fi
     read -r answer || return 1
     case "$answer" in
       y|Y|yes|YES) return 0 ;;
+      n|N|no|NO) return 1 ;;
+      "")
+        [ "$default" = true ]
+        return $?
+        ;;
     esac
+    return 1
   fi
+  if [ "$default" = true ]; then return 0; fi
   return 1
 }
 
@@ -1245,6 +1268,24 @@ interactive_settings() {
   done
 }
 
+interactive_create_pr_choice() {
+  local repo="$1"
+  if github_pr_prompt_default "$repo"; then
+    if ui_confirm "Create a draft PR during this loop?" true; then
+      printf '%s\n' "true"
+    else
+      printf '%s\n' "false"
+    fi
+    return 0
+  fi
+  UI_NOTICE="GitHub PR mode is unavailable in this repo; continuing local-only."
+  if ui_confirm "GitHub PR mode is unavailable. Continue local-only?" true; then
+    printf '%s\n' "false"
+    return 0
+  fi
+  return 130
+}
+
 interactive_run_setup() {
   local spec="$1"
   local report_format="html"
@@ -1287,9 +1328,7 @@ interactive_run_setup() {
     fi
     case "$choice" in
       "Start run")
-        if [ "$create_pr" = true ] && ! ui_confirm "Push the accepted branch and open a PR after acceptance?"; then
-          continue
-        fi
+        create_pr="$(interactive_create_pr_choice "$PWD")" || continue
         run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
         run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
         code=$?
@@ -2049,21 +2088,45 @@ run_devloop() {
 
   init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
+  if [ "$create_pr" = true ]; then
+    event_step "pull-request-lookup" "find existing PR"
+    if lookup_pull_request "$repo" "$run_branch"; then
+      event_done "pull-request-lookup" true "${PULL_REQUEST:-none}"
+    else
+      STATUS="pr-error"
+      event_done "pull-request-lookup" false "$PULL_REQUEST_ERROR"
+    fi
+  fi
+
   local pass prior_hash
   prior_hash=""
   if [ "$start_pass" -gt 1 ] && [ -f "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md" ]; then
     prior_hash="$(findings_hash "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md")"
   fi
+  if [ "$STATUS" != "pr-error" ]; then
   for pass in $(seq "$start_pass" "$max"); do
     if run_deadline_reached; then
       STATUS="timeout"
       break
     fi
     PASSES="$pass"
+    local pr_review_context=""
+    if [ "$create_pr" = true ] && [ "$pass" -gt 1 ] && [ -n "$PULL_REQUEST" ]; then
+      local pr_context_id="pr-review-context-$pass"
+      event_step "$pr_context_id" "load latest PR review"
+      if pr_review_context="$(latest_pr_review_comment "$repo" "$PULL_REQUEST")" && [ -n "$pr_review_context" ]; then
+        event_done "$pr_context_id" true "loaded"
+      else
+        STATUS="pr-error"
+        if [ -z "$PULL_REQUEST_ERROR" ]; then PULL_REQUEST_ERROR="PR review lookup failed: no devloop round review comment found"; fi
+        event_done "$pr_context_id" false "$PULL_REQUEST_ERROR"
+        break
+      fi
+    fi
     local coder_log=".codex/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
     event_step "$coder_id" "pass $pass/$max $(agent_label "$coder") implementation"
-    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".codex/reviews/$slug-r$((pass - 1)).md" "$criteria_file")" "$coder_id"; then
+    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".codex/reviews/$slug-r$((pass - 1)).md" "$criteria_file" "$pr_review_context")" "$coder_id"; then
       event_done "$coder_id" true "completed"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="coder-error"; fi
@@ -2092,6 +2155,18 @@ run_devloop() {
       STATUS="commit-error"
       event_done "$commit_id" false "$COMMIT_ERROR"
       break
+    fi
+
+    if [ "$create_pr" = true ] && [ -n "$PASS_COMMIT" ]; then
+      local pr_id="pull-request-$pass"
+      event_step "$pr_id" "push branch and ensure draft PR"
+      if create_pull_request "$repo" "$FINAL_BRANCH" "$base"; then
+        event_done "$pr_id" true "$PULL_REQUEST"
+      else
+        STATUS="pr-error"
+        event_done "$pr_id" false "$PULL_REQUEST_ERROR"
+        break
+      fi
     fi
 
     local verify_id="verify-$pass"
@@ -2134,6 +2209,18 @@ run_devloop() {
       break
     fi
 
+    if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ]; then
+      local pr_comment_id="pr-review-comment-$pass"
+      event_step "$pr_comment_id" "post round review to PR"
+      if post_pr_round_review "$repo" "$PULL_REQUEST" "$repo/$review" "$pass" "$slug"; then
+        event_done "$pr_comment_id" true "posted"
+      else
+        STATUS="pr-error"
+        event_done "$pr_comment_id" false "$PULL_REQUEST_ERROR"
+        break
+      fi
+    fi
+
     local verdict
     verdict="$(parse_verdict "$repo/$review")"
     if [ "$verdict" = "ACCEPT" ]; then
@@ -2164,21 +2251,23 @@ run_devloop() {
       break
     fi
   done
+  fi
 
   if [ "$PASSES" -gt "$max" ]; then PASSES="$max"; fi
-
-  if [ "$create_pr" = true ] && [ "$STATUS" = "accepted" ]; then
-    if create_pull_request "$repo" "$FINAL_BRANCH" "$base"; then
-      event_gate "pull request" 1 "${PULL_REQUEST:-origin/$FINAL_BRANCH}"
-    else
-      STATUS="pr-error"
-      event_gate "pull request" 0 "$PULL_REQUEST_ERROR"
-    fi
-  fi
 
   CODER_SESSION_ID="$(read_first_line "$repo/$coder_session")"
   REVIEWER_SESSION_ID="$(read_first_line "$repo/$reviewer_session")"
   synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID" "$report_format"
+
+  if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" != "pr-error" ]; then
+    event_step "pr-final-report" "post final report to PR"
+    if post_pr_final_report "$repo" "$PULL_REQUEST" "$slug" "$STATUS" "$PASSES" "$max" "$FINAL_BRANCH" "$REPORT" "$report_format"; then
+      event_done "pr-final-report" true "posted"
+    else
+      STATUS="pr-error"
+      event_done "pr-final-report" false "$PULL_REQUEST_ERROR"
+    fi
+  fi
 
   print_result
   rm -f "$criteria_file" "$initial_dirty"
@@ -2298,8 +2387,41 @@ preflight_run() {
   if ! preflight_agent "$reviewer"; then return 1; fi
   if ! preflight_agent_skills "$coder"; then return 1; fi
   if ! preflight_agent_skills "$reviewer"; then return 1; fi
-  if [ "$create_pr" = true ] && ! command -v gh >/dev/null 2>&1; then
+  if [ "$create_pr" = true ] && ! preflight_github_pr "$repo"; then return 1; fi
+}
+
+gh_error_detail() {
+  local text="$1"
+  local detail
+  detail="$(printf '%s\n' "$text" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+  if [ -z "$detail" ]; then detail="unknown gh error"; fi
+  printf '%s\n' "$detail"
+}
+
+github_pr_prompt_default() {
+  local repo="$1"
+  command -v gh >/dev/null 2>&1 || return 1
+  gh auth status >/dev/null 2>&1 || return 1
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 || return 1
+}
+
+preflight_github_pr() {
+  local repo="$1"
+  local out
+  if ! command -v gh >/dev/null 2>&1; then
     PREFLIGHT_ERROR="missing command: gh"
+    return 1
+  fi
+  if ! out="$(gh auth status 2>&1)"; then
+    PREFLIGHT_ERROR="gh auth status failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  if ! out="$(git -C "$repo" remote get-url origin 2>&1)"; then
+    PREFLIGHT_ERROR="missing origin remote: $(gh_error_detail "$out")"
+    return 1
+  fi
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh repo view 2>&1)"; then
+    PREFLIGHT_ERROR="GitHub repo lookup failed: $(gh_error_detail "$out")"
     return 1
   fi
 }
@@ -3063,6 +3185,7 @@ coder_prompt() {
   local strict="$4"
   local previous="$5"
   local criteria_file="$6"
+  local pr_review_context="${7:-}"
   local criteria
   criteria="$(criteria_block "$criteria_file")"
   local strict_block=""
@@ -3095,17 +3218,24 @@ Constraints:
 - Do not revert unrelated dirty files.
 EOF
   else
+    local review_context
+    if [ -n "$pr_review_context" ]; then
+      review_context="Latest durable PR review comment (canonical when --create-pr is active):
+$pr_review_context"
+    else
+      review_context="Review: $previous"
+    fi
     cat <<EOF
 Fix only the findings in the review. Do not refactor unrelated code.
 
 Spec: $spec
 Track: $track
-Review: $previous
+$review_context
 Pass: $pass
 Acceptance criteria:
 $criteria$strict_block
 Tasks:
-1. Read the review file.
+1. Read the review context.
 2. Fix each finding or explain why it is wrong in the track.
 3. Re-run relevant tests.
 4. Append "## Pass $pass - fix" to $track with per-finding outcomes.
@@ -3405,21 +3535,206 @@ create_pull_request() {
   local repo="$1"
   local branch="$2"
   local base="$3"
+  ensure_pull_request "$repo" "$branch" "$base"
+}
+
+push_pull_request_branch() {
+  local repo="$1"
+  local branch="$2"
   local remote="origin"
   local out
   if ! run_compact_command "$repo" "push branch" git push -u "$remote" "$branch"; then
     out="$RUN_OUTPUT"
-    PULL_REQUEST_ERROR="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    PULL_REQUEST_ERROR="branch push failed: $(gh_error_detail "$out")"
     return 1
   fi
-  if ! run_compact_command "$repo" "open pull request" gh pr create --fill --base "$base" --head "$branch"; then
+}
+
+lookup_pull_request() {
+  local repo="$1"
+  local branch="$2"
+  local out
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr list --head "$branch" --state open --json url --jq '.[0].url // ""' 2>&1)"; then
+    PULL_REQUEST_ERROR="PR lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  PULL_REQUEST="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+}
+
+create_draft_pull_request() {
+  local repo="$1"
+  local branch="$2"
+  local base="$3"
+  local out
+  if ! run_compact_command "$repo" "open draft pull request" gh pr create --draft --fill --base "$base" --head "$branch"; then
     out="$RUN_OUTPUT"
-    PULL_REQUEST_ERROR="pushed $remote/$branch, but PR creation failed: $(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+    PULL_REQUEST_ERROR="PR creation failed: $(gh_error_detail "$out")"
     return 1
   fi
   out="$RUN_OUTPUT"
   PULL_REQUEST="$(printf '%s\n' "$out" | awk '/^https?:\/\// { print; exit }')"
   if [ -z "$PULL_REQUEST" ]; then PULL_REQUEST="$(printf '%s\n' "$out" | tail -n 1)"; fi
+}
+
+ensure_pull_request() {
+  local repo="$1"
+  local branch="$2"
+  local base="$3"
+  PULL_REQUEST_ERROR=""
+  if ! push_pull_request_branch "$repo" "$branch"; then return 1; fi
+  if ! lookup_pull_request "$repo" "$branch"; then return 1; fi
+  if [ -n "$PULL_REQUEST" ]; then return 0; fi
+  create_draft_pull_request "$repo" "$branch" "$base"
+}
+
+round_review_comment_body() {
+  local review_file="$1"
+  local pass="$2"
+  local slug="$3"
+  local verdict
+  verdict="$(parse_verdict "$review_file")"
+  if [ -z "$verdict" ]; then verdict="UNCLEAR"; fi
+  cat <<EOF
+# Devloop Review Round $pass
+
+- Verdict: $verdict
+- Local cache: \`.codex/reviews/$slug-r$pass.md\`
+
+$(cat "$review_file")
+EOF
+}
+
+post_pr_round_review() {
+  local repo="$1"
+  local pr="$2"
+  local review_file="$3"
+  local pass="$4"
+  local slug="$5"
+  local body_file out
+  body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-review.XXXXXX")"
+  round_review_comment_body "$review_file" "$pass" "$slug" > "$body_file"
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr comment "$pr" --body-file "$body_file" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR comment failed: $(gh_error_detail "$out")"
+    rm -f "$body_file"
+    return 1
+  fi
+  rm -f "$body_file"
+}
+
+latest_pr_review_comment() {
+  local repo="$1"
+  local pr="$2"
+  local out
+  local query='[.comments[].body | select(contains("# Devloop Review Round "))] | last // ""'
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json comments --jq "$query" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR review lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+review_section() {
+  local file="$1"
+  local heading="$2"
+  [ -f "$file" ] || return 1
+  awk -v heading="$heading" '
+    BEGIN { inside = 0 }
+    $0 == "## " heading { inside = 1; print; next }
+    inside && /^##[[:space:]]+/ { exit }
+    inside { print }
+  ' "$file"
+}
+
+final_pr_report_body() {
+  local repo="$1"
+  local slug="$2"
+  local status="$3"
+  local pass="$4"
+  local max="$5"
+  local pr="$6"
+  local branch="$7"
+  local report="$8"
+  local report_format="$9"
+  local latest_review="$repo/.codex/reviews/$slug-r$pass.md"
+  local final_verdict acceptance engineering html_path risk
+  final_verdict=""
+  if [ -f "$latest_review" ]; then final_verdict="$(parse_verdict "$latest_review")"; fi
+  if [ -z "$final_verdict" ]; then final_verdict="none"; fi
+  acceptance="$(review_section "$latest_review" "Acceptance matrix" || true)"
+  engineering="$(review_section "$latest_review" "Engineering quality matrix" || true)"
+  if [ -z "$acceptance" ]; then acceptance="- Not available."; fi
+  if [ -z "$engineering" ]; then engineering="- Not available."; fi
+  html_path="Not generated."
+  if [ "$report_format" = "html" ] && [ -f "$repo/$report" ]; then
+    html_path="$repo/$report"
+  fi
+  case "$status" in
+    accepted) risk="No blocking residual risk was recorded by the final review." ;;
+    *) risk="The run ended as $status. Inspect the latest findings and missing tests before merging." ;;
+  esac
+  cat <<EOF
+# Devloop Final Report
+
+| Field | Value |
+| --- | --- |
+| Final status | $status |
+| Pass count | $pass / $max |
+| Final verdict | $final_verdict |
+| PR URL | $pr |
+| Branch | $branch |
+
+## Acceptance Matrix Summary
+
+$acceptance
+
+## Engineering Quality Summary
+
+$engineering
+
+## Implementation Summary
+
+- Final branch: \`$branch\`
+- Final commit: \`${FINAL_COMMIT:-none}\`
+- Commit message: ${FINAL_COMMIT_MESSAGE:-none}
+
+## Commit References
+
+$(commit_lines)
+
+## Tests Run
+
+- Verification hook log: ${VERIFY_LOG:-not configured}
+- Review test evidence: see the acceptance matrix summary above.
+
+## Residual Risk
+
+- $risk
+
+## Local Report
+
+- HTML report path: $html_path
+EOF
+}
+
+post_pr_final_report() {
+  local repo="$1"
+  local pr="$2"
+  local slug="$3"
+  local status="$4"
+  local pass="$5"
+  local max="$6"
+  local branch="$7"
+  local report="$8"
+  local report_format="$9"
+  local body_file out
+  body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-final.XXXXXX")"
+  final_pr_report_body "$repo" "$slug" "$status" "$pass" "$max" "$pr" "$branch" "$report" "$report_format" > "$body_file"
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr comment "$pr" --body-file "$body_file" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR final report comment failed: $(gh_error_detail "$out")"
+    rm -f "$body_file"
+    return 1
+  fi
+  rm -f "$body_file"
 }
 
 synthesize_report() {

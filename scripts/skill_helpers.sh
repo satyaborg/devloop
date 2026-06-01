@@ -224,6 +224,79 @@ devloop_doctor_skills_in_dir() {
   return "$status"
 }
 
+devloop_doctor_github_line() {
+  local status="$1"
+  local label="$2"
+  local detail="$3"
+  printf '[%s] %s: %s\n' "$status" "$label" "$detail"
+}
+
+devloop_doctor_github() {
+  local ready=0
+  local gh_path=""
+  local repo=""
+  local out=""
+  local has_gh=false
+  local has_auth=false
+  local has_origin=false
+
+  printf '\nGitHub PR integration\n'
+  gh_path="$(command -v gh 2>/dev/null || true)"
+  if [ -n "$gh_path" ]; then
+    has_gh=true
+    devloop_doctor_github_line "PASS" "gh installed" "$gh_path"
+  else
+    ready=1
+    devloop_doctor_github_line "FAIL" "gh installed" "missing command: gh"
+  fi
+
+  if [ "$has_gh" = true ]; then
+    if out="$(gh auth status 2>&1)"; then
+      has_auth=true
+      devloop_doctor_github_line "PASS" "gh authenticated" "ok"
+    else
+      ready=1
+      out="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+      devloop_doctor_github_line "FAIL" "gh authenticated" "${out:-gh auth status failed}"
+    fi
+  else
+    devloop_doctor_github_line "N/A" "gh authenticated" "gh unavailable"
+  fi
+
+  if repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+    if out="$(git -C "$repo" remote get-url origin 2>&1)"; then
+      has_origin=true
+      devloop_doctor_github_line "PASS" "current repo has origin" "$out"
+    else
+      ready=1
+      out="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+      devloop_doctor_github_line "FAIL" "current repo has origin" "${out:-origin remote missing}"
+    fi
+  else
+    ready=1
+    devloop_doctor_github_line "N/A" "current repo has origin" "not inside a git repo"
+  fi
+
+  if [ "$has_gh" = true ] && [ "$has_auth" = true ] && [ "$has_origin" = true ]; then
+    if out="$(cd "$repo" >/dev/null 2>&1 && gh repo view 2>&1)"; then
+      devloop_doctor_github_line "PASS" "current repo resolves on GitHub" "$(printf '%s\n' "$out" | sed -n '1p')"
+    else
+      ready=1
+      out="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+      devloop_doctor_github_line "FAIL" "current repo resolves on GitHub" "${out:-gh repo view failed}"
+    fi
+  else
+    devloop_doctor_github_line "N/A" "current repo resolves on GitHub" "prerequisite unavailable"
+  fi
+
+  if [ "$ready" -eq 0 ]; then
+    printf '%s\n' "PR-backed loop readiness available"
+  else
+    printf '%s\n' "PR-backed loop readiness unavailable"
+  fi
+  return 0
+}
+
 devloop_doctor() {
   local root="$1"
   local status=0
@@ -238,6 +311,7 @@ devloop_doctor() {
   devloop_doctor_command fzf || status=1
   printf '\nSkills\n'
   devloop_doctor_skills "$root" || status=1
+  devloop_doctor_github
 
   if [ "$status" -eq 0 ]; then
     printf 'devloop doctor: ready\n'

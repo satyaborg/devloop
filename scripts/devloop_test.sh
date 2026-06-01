@@ -57,6 +57,7 @@ contains "$help" "devloop reports" "help"
 contains "$help" "devloop status" "help"
 contains "$help" "devloop clean" "help"
 contains "$help" "--create-pr" "help"
+contains "$help" "draft PR during the loop" "help"
 contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
 contains "$help" "--version" "help"
@@ -89,6 +90,15 @@ skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
 [[ "$skill_path" == "$REPO_ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
 contains "$("$REPO_ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
 ok "spec skill path"
+
+contains "$(cat "$REPO_ROOT/README.md")" "opens and maintains a draft PR during the loop" "README PR mode"
+contains "$(cat "$REPO_ROOT/README.md")" "plain non-interactive" "README local-only"
+contains "$(cat "$REPO_ROOT/README.md")" "remains local-only" "README local-only"
+contains "$(cat "$REPO_ROOT/README.md")" "With \`--create-pr\`, \`devloop\` opens and maintains a draft PR during the loop" "README PR mode"
+not_contains "$(tr '\n' ' ' < "$REPO_ROOT/README.md")" "A plain non-interactive \`devloop <spec>\` remains local-only. This mode opens and maintains a draft PR during the loop." "README local-only coherence"
+contains "$(cat "$REPO_ROOT/README.md")" "PR is canonical" "README PR canonical"
+contains "$(cat "$REPO_ROOT/README.md")" "gh auth login" "README optional gh auth"
+ok "README PR guidance"
 
 for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
   name="$(sed -n 's/^name: *//p' "$skill" | head -n 1)"
@@ -283,6 +293,7 @@ git -C "$branch_repo" branch feat/chat-retry
 equals "$(next_branch "$branch_repo" feat false chat-retry "")" "feat/chat-retry-2" "next_branch suffix"
 PULL_REQUEST_ERROR=""
 if create_pull_request "$branch_repo" "feat/chat-retry" "main" >/dev/null 2>&1; then fail "pull request creation unexpectedly passed without remote"; fi
+contains "$PULL_REQUEST_ERROR" "branch push failed" "pull request push failure"
 contains "$PULL_REQUEST_ERROR" "repository exists" "pull request push failure"
 mkdir -p "$branch_repo/.codex/reports" "$branch_repo/.codex/tracks" "$branch_repo/.codex/reviews"
 printf '%s\n' "# Report" > "$branch_repo/.codex/reports/chat-retry.md"
@@ -709,6 +720,7 @@ install_path="$tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-test.out
 [[ -x "$REPO_ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
+contains "$(cat /tmp/devloop-install-test.out)" "gh auth login" "installer optional gh auth"
 PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
@@ -735,6 +747,113 @@ fake_bin="$work/fake-bin"
 mkdir -p "$fake_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/claude"
+cat > "$fake_bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${DEVLOOP_GH_STATE:-${TMPDIR:-/tmp}/devloop-gh-state}"
+mkdir -p "$state/comments"
+if [ -n "${DEVLOOP_GH_LOG:-}" ]; then
+  printf 'gh %s\n' "$*" >> "$DEVLOOP_GH_LOG"
+fi
+
+case "${1:-}" in
+  auth)
+    if [ "${2:-}" != "status" ]; then exit 1; fi
+    if [ "${DEVLOOP_GH_AUTH_FAIL:-0}" = "1" ]; then
+      printf '%s\n' "gh auth exploded" >&2
+      exit 1
+    fi
+    printf '%s\n' "Logged in to github.com"
+    ;;
+  repo)
+    if [ "${2:-}" != "view" ]; then exit 1; fi
+    if [ "${DEVLOOP_GH_REPO_FAIL:-0}" = "1" ]; then
+      printf '%s\n' "gh repo exploded" >&2
+      exit 1
+    fi
+    printf '%s\n' "satyaborg/devloop"
+    ;;
+  pr)
+    shift
+    case "${1:-}" in
+      list)
+        if [ "${DEVLOOP_GH_LOOKUP_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh pr lookup exploded" >&2
+          exit 1
+        fi
+        if [ -f "$state/pr_url" ]; then cat "$state/pr_url"; fi
+        ;;
+      create)
+        if [ "${DEVLOOP_GH_CREATE_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh pr create exploded" >&2
+          exit 1
+        fi
+        head=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --head)
+              shift
+              head="${1:-}"
+              ;;
+          esac
+          shift || true
+        done
+        if [ -n "$head" ] && ! git ls-remote --heads origin "$head" | grep -q .; then
+          printf 'head branch was not pushed before PR creation: %s\n' "$head" >&2
+          exit 1
+        fi
+        url="${DEVLOOP_GH_PR_URL:-https://github.com/satyaborg/devloop/pull/123}"
+        printf '%s\n' "$url" > "$state/pr_url"
+        printf '%s\n' "$url"
+        ;;
+      comment)
+        if [ "${DEVLOOP_GH_COMMENT_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh comment exploded" >&2
+          exit 1
+        fi
+        body_file=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --body-file)
+              shift
+              body_file="${1:-}"
+              ;;
+          esac
+          shift || true
+        done
+        [ -n "$body_file" ] || exit 1
+        count="$(find "$state/comments" -type f | wc -l | tr -d ' ')"
+        body="$state/comments/comment-$((count + 1)).md"
+        cp "$body_file" "$body"
+        if grep -q '^# Devloop Review Round ' "$body"; then
+          round_count="$(find "$state/comments" -name 'round-*.md' | wc -l | tr -d ' ')"
+          cp "$body" "$state/comments/round-$((round_count + 1)).md"
+          cp "$body" "$state/latest_round_comment"
+        elif grep -q '^# Devloop Final Report' "$body"; then
+          final_count="$(find "$state/comments" -name 'final-*.md' | wc -l | tr -d ' ')"
+          cp "$body" "$state/comments/final-$((final_count + 1)).md"
+        fi
+        printf '%s\n' "commented"
+        ;;
+      view)
+        if [ "${DEVLOOP_GH_VIEW_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh pr view exploded" >&2
+          exit 1
+        fi
+        if [ -f "$state/latest_round_comment" ]; then cat "$state/latest_round_comment"; fi
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+GH
+chmod +x "$fake_bin/gh"
 chmod +x "$fake_bin/codex" "$fake_bin/claude"
 doctor_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)"
 contains "$doctor_output" "devloop doctor: ready" "doctor"
@@ -744,10 +863,26 @@ contains "$doctor_output" "[ok] claude:" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
 contains "$doctor_output" "[ok] gum:" "doctor"
 contains "$doctor_output" "[ok] fzf:" "doctor"
+contains "$doctor_output" "GitHub PR integration" "doctor"
+contains "$doctor_output" "[PASS] gh installed" "doctor"
+contains "$doctor_output" "[PASS] gh authenticated" "doctor"
+contains "$doctor_output" "[PASS] current repo has origin" "doctor"
+contains "$doctor_output" "[PASS] current repo resolves on GitHub" "doctor"
 not_contains "$doctor_output" "Optional UI" "doctor"
 contains "$doctor_output" "$install_home/.agents/skills/devloop-spec" "doctor Codex skill"
 contains "$doctor_output" "$install_home/.claude/skills/devloop-spec" "doctor Claude skill"
 ok "doctor"
+
+no_gh_bin="$work/no-gh-bin"
+mkdir -p "$no_gh_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
+chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude"
+doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:/usr/bin:/bin" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
+contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
+contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
+contains "$doctor_no_gh_output" "PR-backed loop readiness unavailable" "doctor no gh"
+ok "doctor optional GitHub readiness"
 
 agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'
@@ -767,9 +902,7 @@ old_use_tui="$USE_TUI"
 USE_TUI=false
 (
   cd "$repo"
-  HOME="$spec_home"
-  export HOME
-  main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
+  HOME="$spec_home" main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 USE_TUI="$old_use_tui"
 contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
@@ -790,6 +923,16 @@ fi
 pass="$(printf '%s\n' "$prompt" | sed -nE 's/^Pass: ([0-9]+).*/\1/p' | head -n 1)"
 track="$(printf '%s\n' "$prompt" | sed -nE 's/^Track: (.+)$/\1/p' | head -n 1)"
 mode="${DEVLOOP_FAKE_MODE:-accept}"
+if [ -n "${DEVLOOP_AGENT_LOG:-}" ]; then
+  printf 'agent coder %s\n' "${pass:-1}" >> "$DEVLOOP_AGENT_LOG"
+  if [ "${pass:-1}" = "2" ]; then
+    if printf '%s\n' "$prompt" | grep -q "# Devloop Review Round 1"; then
+      printf '%s\n' "coder-pr-prior:yes" >> "$DEVLOOP_AGENT_LOG"
+    else
+      printf '%s\n' "coder-pr-prior:no" >> "$DEVLOOP_AGENT_LOG"
+    fi
+  fi
+fi
 case "$mode" in
   no-changes) ;;
   *) printf 'pass %s\n' "${pass:-1}" >> result.txt ;;
@@ -817,6 +960,9 @@ fi
 output="$(printf '%s\n' "$prompt" | sed -nE 's/^Output path: (.+)$/\1/p' | head -n 1)"
 pass="$(printf '%s\n' "$prompt" | sed -nE 's/^Pass: ([0-9]+).*/\1/p' | head -n 1)"
 mode="${DEVLOOP_FAKE_MODE:-accept}"
+if [ -n "${DEVLOOP_AGENT_LOG:-}" ] && [ -n "$pass" ]; then
+  printf 'agent reviewer %s\n' "$pass" >> "$DEVLOOP_AGENT_LOG"
+fi
 if [ "$mode" = "missing-review" ]; then exit 0; fi
 verdict="ACCEPT"
 ac_status="PASS"
@@ -921,6 +1067,17 @@ pr: null
 ## Acceptance criteria
 1. Write the result file.
 MARKDOWN
+}
+
+add_origin_remote() {
+  local repo_path="$1"
+  local remote_path="$2"
+  local branch
+  git init -q --bare "$remote_path"
+  branch="$(git -C "$repo_path" branch --show-current)"
+  git -C "$repo_path" remote add origin "$remote_path"
+  git -C "$repo_path" push -q -u origin "$branch"
+  git -C "$remote_path" symbolic-ref HEAD "refs/heads/$branch"
 }
 
 naming_repo="$work/naming-repo"
@@ -1032,8 +1189,60 @@ continue_track_with_fake_agents() {
   return "$code"
 }
 
+preflight_pr_repo="$work/preflight-pr-repo"
+make_loop_repo "$preflight_pr_repo" "preflight-pr" "Preflight PR"
+add_origin_remote "$preflight_pr_repo" "$work/preflight-pr-remote.git"
+old_home="$HOME"
+old_path="$PATH"
+HOME="$install_home"
+PATH="$no_gh_bin:$bin_dir:$tool_bin:/usr/bin:/bin"
+export HOME PATH
+if preflight_run "$preflight_pr_repo" codex claude true >/dev/null 2>&1; then fail "PR preflight accepted missing gh"; fi
+contains "$PREFLIGHT_ERROR" "missing command: gh" "PR preflight missing gh"
+PATH="$fake_bin:$bin_dir:$tool_bin:$old_path"
+DEVLOOP_GH_AUTH_FAIL=1
+export DEVLOOP_GH_AUTH_FAIL
+if preflight_run "$preflight_pr_repo" codex claude true >/dev/null 2>&1; then fail "PR preflight accepted failed gh auth"; fi
+contains "$PREFLIGHT_ERROR" "gh auth status failed: gh auth exploded" "PR preflight auth"
+unset DEVLOOP_GH_AUTH_FAIL
+preflight_no_origin="$work/preflight-no-origin"
+make_loop_repo "$preflight_no_origin" "preflight-no-origin" "Preflight No Origin"
+if preflight_run "$preflight_no_origin" codex claude true >/dev/null 2>&1; then fail "PR preflight accepted missing origin"; fi
+contains "$PREFLIGHT_ERROR" "missing origin remote" "PR preflight origin"
+DEVLOOP_GH_REPO_FAIL=1
+export DEVLOOP_GH_REPO_FAIL
+if preflight_run "$preflight_pr_repo" codex claude true >/dev/null 2>&1; then fail "PR preflight accepted failed repo lookup"; fi
+contains "$PREFLIGHT_ERROR" "GitHub repo lookup failed: gh repo exploded" "PR preflight repo"
+unset DEVLOOP_GH_REPO_FAIL
+PATH="$old_path"
+HOME="$old_home"
+export HOME PATH
+ok "PR preflight failures"
+
+interactive_pr_repo="$work/interactive-pr-repo"
+make_loop_repo "$interactive_pr_repo" "interactive-pr" "Interactive PR"
+add_origin_remote "$interactive_pr_repo" "$work/interactive-pr-remote.git"
+old_home="$HOME"
+old_path="$PATH"
+old_use_tui="$USE_TUI"
+HOME="$install_home"
+PATH="$fake_bin:$bin_dir:$tool_bin:$PATH"
+USE_TUI=false
+export HOME PATH
+equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "true" "interactive PR prompt defaults yes when ready"
+PATH="$no_gh_bin:$bin_dir:$tool_bin:/usr/bin:/bin"
+equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "false" "interactive PR prompt falls back local-only when unavailable"
+PATH="$old_path"
+HOME="$old_home"
+USE_TUI="$old_use_tui"
+export HOME PATH
+ok "interactive PR prompt"
+
 loop_repo="$work/loop-accept"
 make_loop_repo "$loop_repo" "e2e-accept" "E2E Accept"
+no_pr_gh_log="$work/no-pr-gh.log"
+DEVLOOP_GH_LOG="$no_pr_gh_log"
+export DEVLOOP_GH_LOG
 mkdir -p "$loop_repo/.devloop"
 cat > "$loop_repo/.devloop/verify" <<'VERIFY'
 #!/usr/bin/env bash
@@ -1058,6 +1267,8 @@ fi
 contains "$continue_output" "accepted" "continue run"
 contains "$(run_repo_main "$loop_repo" reports)" ".codex/reports/e2e-accept" "reports command"
 contains "$(run_repo_main "$loop_repo" continue)" ".codex/tracks/e2e-accept.md" "continue command lists tracks"
+if grep -Eq '^gh pr (create|comment|list|view)' "$no_pr_gh_log" 2>/dev/null; then fail "local-only loop touched PR commands"; fi
+unset DEVLOOP_GH_LOG
 ok "e2e accept and verify"
 
 loop_repo="$work/loop-retry"
@@ -1069,6 +1280,187 @@ fi
 contains "$retry_output" "accepted" "retry loop"
 contains "$retry_output" "2 / 2" "retry loop passes"
 ok "e2e reject then accept"
+
+pr_repo="$work/loop-pr-accept"
+make_loop_repo "$pr_repo" "e2e-pr-accept" "E2E PR Accept"
+add_origin_remote "$pr_repo" "$work/loop-pr-accept-remote.git"
+pr_state="$work/gh-pr-accept"
+pr_log="$work/gh-pr-accept.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+if ! pr_accept_output="$(run_loop "$pr_repo" "e2e-pr-accept" accept 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_accept_output" >&2
+  fail "PR accept loop failed"
+fi
+contains "$pr_accept_output" "accepted" "PR accept loop"
+contains "$pr_accept_output" "pr:" "PR accept loop"
+create_line="$(grep -n 'gh pr create' "$pr_log" | cut -d: -f1 | head -n 1)"
+review_line="$(grep -n 'agent reviewer 1' "$pr_log" | cut -d: -f1 | head -n 1)"
+[[ -n "$create_line" && -n "$review_line" && "$create_line" -lt "$review_line" ]] || fail "PR was not created before reviewer pass 1"
+equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "one round PR comment"
+equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "one final PR comment"
+round_body="$(cat "$pr_state/comments/round-1.md")"
+contains "$round_body" "# Devloop Review Round 1" "round PR comment"
+contains "$round_body" "Verdict: ACCEPT" "round PR comment"
+contains "$round_body" "## Acceptance matrix" "round PR comment"
+contains "$round_body" "| AC1 | PASS |" "round PR comment"
+contains "$round_body" "## Engineering quality matrix" "round PR comment"
+contains "$round_body" "| Security | N/A |" "round PR comment"
+contains "$round_body" "## Review flags" "round PR comment"
+contains "$round_body" "## Findings" "round PR comment"
+contains "$round_body" "## Missing tests" "round PR comment"
+contains "$round_body" "## Fix instructions" "round PR comment"
+contains "$round_body" "## Notes" "round PR comment"
+final_body="$(cat "$pr_state/comments/final-1.md")"
+contains "$final_body" "# Devloop Final Report" "final PR comment"
+contains "$final_body" "Final status" "final PR comment"
+contains "$final_body" "Pass count" "final PR comment"
+contains "$final_body" "Final verdict" "final PR comment"
+contains "$final_body" "Acceptance Matrix Summary" "final PR comment"
+contains "$final_body" "Engineering Quality Summary" "final PR comment"
+contains "$final_body" "Implementation Summary" "final PR comment"
+contains "$final_body" "Tests Run" "final PR comment"
+contains "$final_body" "Residual Risk" "final PR comment"
+contains "$final_body" "PR URL" "final PR comment"
+contains "$final_body" "Branch" "final PR comment"
+contains "$final_body" "Commit References" "final PR comment"
+contains "$final_body" ".codex/reports/e2e-pr-accept.html" "final PR comment"
+if printf '%s\n' "$final_body" | grep -Eq '<(html|script|style)'; then fail "final PR comment embedded standalone HTML"; fi
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+ok "PR-backed accept comments"
+
+pr_repo="$work/loop-pr-terminal"
+make_loop_repo "$pr_repo" "e2e-pr-terminal" "E2E PR Terminal"
+add_origin_remote "$pr_repo" "$work/loop-pr-terminal-remote.git"
+pr_state="$work/gh-pr-terminal"
+pr_log="$work/gh-pr-terminal.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+if pr_terminal_output="$(run_loop "$pr_repo" "e2e-pr-terminal" bad-ac 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_terminal_output" >&2
+  fail "PR terminal failure loop unexpectedly passed"
+fi
+contains "$pr_terminal_output" "unclear" "PR terminal failure"
+equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "terminal round PR comment"
+equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "terminal final PR comment"
+contains "$(cat "$pr_state/comments/final-1.md")" "| Final status | unclear |" "terminal final PR comment"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+ok "PR-backed terminal final comment"
+
+pr_repo="$work/loop-pr-existing"
+make_loop_repo "$pr_repo" "e2e-pr-existing" "E2E PR Existing"
+add_origin_remote "$pr_repo" "$work/loop-pr-existing-remote.git"
+pr_state="$work/gh-pr-existing"
+pr_log="$work/gh-pr-existing.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+printf '%s\n' "https://github.com/satyaborg/devloop/pull/456" > "$pr_state/pr_url"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+if ! pr_existing_output="$(run_loop "$pr_repo" "e2e-pr-existing" accept 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_existing_output" >&2
+  fail "existing PR loop failed"
+fi
+contains "$pr_existing_output" "https://github.com/satyaborg/devloop/pull/456" "existing PR loop"
+if grep -q 'gh pr create' "$pr_log"; then fail "existing PR loop created a duplicate PR"; fi
+contains "$(cat "$pr_log")" "gh pr list" "existing PR lookup"
+equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "existing PR round comment"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+ok "PR-backed existing PR reuse"
+
+pr_repo="$work/loop-pr-retry"
+make_loop_repo "$pr_repo" "e2e-pr-retry" "E2E PR Retry"
+add_origin_remote "$pr_repo" "$work/loop-pr-retry-remote.git"
+pr_state="$work/gh-pr-retry"
+pr_log="$work/gh-pr-retry.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+if ! pr_retry_output="$(run_loop "$pr_repo" "e2e-pr-retry" reject-then-accept 2 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_retry_output" >&2
+  fail "PR retry loop failed"
+fi
+contains "$pr_retry_output" "accepted" "PR retry loop"
+contains "$(cat "$pr_log")" "coder-pr-prior:yes" "PR retry prior review"
+equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "2" "two round PR comments"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
+ok "PR-backed retry uses durable PR review"
+
+pr_repo="$work/loop-pr-comment-fail"
+make_loop_repo "$pr_repo" "e2e-pr-comment-fail" "E2E PR Comment Fail"
+add_origin_remote "$pr_repo" "$work/loop-pr-comment-fail-remote.git"
+pr_state="$work/gh-pr-comment-fail"
+pr_log="$work/gh-pr-comment-fail.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+DEVLOOP_GH_COMMENT_FAIL=1
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_COMMENT_FAIL
+if pr_comment_fail_output="$(run_loop "$pr_repo" "e2e-pr-comment-fail" accept 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_comment_fail_output" >&2
+  fail "PR comment failure loop unexpectedly passed"
+fi
+contains "$pr_comment_fail_output" "pr-error" "PR comment failure"
+contains "$pr_comment_fail_output" "PR comment failed: gh comment exploded" "PR comment failure"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_COMMENT_FAIL
+ok "PR comment failure handling"
+
+pr_repo="$work/loop-pr-create-fail"
+make_loop_repo "$pr_repo" "e2e-pr-create-fail" "E2E PR Create Fail"
+add_origin_remote "$pr_repo" "$work/loop-pr-create-fail-remote.git"
+pr_state="$work/gh-pr-create-fail"
+pr_log="$work/gh-pr-create-fail.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+DEVLOOP_GH_CREATE_FAIL=1
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_CREATE_FAIL
+if pr_create_fail_output="$(run_loop "$pr_repo" "e2e-pr-create-fail" accept 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_create_fail_output" >&2
+  fail "PR creation failure loop unexpectedly passed"
+fi
+contains "$pr_create_fail_output" "pr-error" "PR creation failure"
+contains "$pr_create_fail_output" "PR creation failed: gh pr create exploded" "PR creation failure"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_CREATE_FAIL
+ok "PR creation failure handling"
+
+pr_repo="$work/loop-pr-lookup-fail"
+make_loop_repo "$pr_repo" "e2e-pr-lookup-fail" "E2E PR Lookup Fail"
+add_origin_remote "$pr_repo" "$work/loop-pr-lookup-fail-remote.git"
+pr_state="$work/gh-pr-lookup-fail"
+pr_log="$work/gh-pr-lookup-fail.log"
+rm -rf "$pr_state"
+mkdir -p "$pr_state"
+DEVLOOP_GH_STATE="$pr_state"
+DEVLOOP_GH_LOG="$pr_log"
+DEVLOOP_AGENT_LOG="$pr_log"
+DEVLOOP_GH_LOOKUP_FAIL=1
+export DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_LOOKUP_FAIL
+if pr_lookup_fail_output="$(run_loop "$pr_repo" "e2e-pr-lookup-fail" accept 1 "--create-pr" 2>&1)"; then
+  printf '%s\n' "$pr_lookup_fail_output" >&2
+  fail "PR lookup failure loop unexpectedly passed"
+fi
+contains "$pr_lookup_fail_output" "pr-error" "PR lookup failure"
+contains "$pr_lookup_fail_output" "PR lookup failed: gh pr lookup exploded" "PR lookup failure"
+unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_LOOKUP_FAIL
+ok "PR lookup failure handling"
 
 loop_repo="$work/loop-bad-ac"
 make_loop_repo "$loop_repo" "e2e-bad-ac" "E2E Bad AC"
