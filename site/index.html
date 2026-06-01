@@ -3,178 +3,122 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>devloop -- spec-driven code and review loop</title>
+    <title>devloop &middot; spec-driven code and review loop</title>
     <meta
       name="description"
       content="devloop is a single Bash CLI that runs a local implement-and-review loop for agent-written code. Codex codes, Claude reviews, retry until accepted."
     />
     <meta name="color-scheme" content="dark" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23070708'/%3E%3Ccircle cx='50' cy='50' r='28' fill='none' stroke='%23af87ff' stroke-width='6' stroke-dasharray='6 8'/%3E%3C/svg%3E" />
-    <meta property="og:title" content="devloop -- spec-driven code and review loop" />
+    <meta property="og:title" content="devloop · spec-driven code and review loop" />
     <meta property="og:description" content="A single Bash CLI that loops agents: Codex codes, Claude reviews, retry until accepted." />
     <meta property="og:type" content="website" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body class="bg-bg text-ink antialiased">
-    <div class="mx-auto w-full max-w-[720px] px-5 sm:px-8">
-      <!-- header -->
-      <header class="flex items-center justify-between gap-6 py-6">
-        <div class="text-ink">devloop<span class="cursor"></span></div>
-        <nav class="flex flex-wrap justify-end gap-x-5 gap-y-1">
-          <a class="brk" href="#install">INSTALL</a>
-          <a class="brk" href="#how">HOW IT WORKS</a>
-          <a class="brk" href="https://github.com/satyaborg/devloop">GITHUB</a>
-        </nav>
-      </header>
-
-      <!-- hero / single centered column -->
-      <main class="py-10">
+    <div class="mx-auto w-full max-w-[780px] px-5 sm:px-8">
+      <div class="max-w-[480px]">
+      <!-- main: single narrow column, video sits right after install -->
+      <main class="flex flex-col gap-6 pb-2 pt-12 sm:pt-16">
         <section class="min-w-0">
-          <pre class="mb-6 select-none text-violet leading-[1.15] text-[13px] sm:text-[15px]" aria-label="devloop">░█▀▄░█▀▀░█░█░█░░░█▀█░█▀█░█▀█
+          <pre class="mb-4 select-none text-violet leading-[1.15] text-[13px] sm:text-[15px]" aria-label="devloop">░█▀▄░█▀▀░█░█░█░░░█▀█░█▀█░█▀█
 ░█░█░█▀▀░▀▄▀░█░░░█░█░█░█░█▀▀
 ░▀▀░░▀▀▀░░▀░░▀▀▀░▀▀▀░▀▀▀░▀░░</pre>
 
           <p class="text-dim">a single bash executable for the agentic dev loop</p>
 
-          <div id="install" class="code-copy mt-6 scroll-mt-6" role="button" tabindex="0" aria-label="Copy install command" data-copy="curl -fsSL https://devloop.sh/install | bash">
-            <pre class="border border-line bg-panel/60 p-4 pr-12 text-[12px] leading-6 overflow-x-auto whitespace-pre"><span class="tok-prompt">$</span> curl <span class="tok-num">-fsSL</span> https://devloop.sh/install | bash</pre>
+          <div id="install" class="code-copy mt-4" role="button" tabindex="0" aria-label="Copy install command" data-copy="curl -fsSL https://devloop.sh/install | bash">
+            <pre class="border border-line bg-panel/60 p-3 pr-12 text-[12px] leading-6 overflow-x-auto whitespace-pre"><span class="tok-prompt">$</span> curl <span class="tok-num">-fsSL</span> https://devloop.sh/install | bash</pre>
             <span class="copy-btn" aria-hidden="true"><svg class="ic-copy" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="8" y="8" width="13" height="13" /><polyline points="5 16 3 16 3 3 16 3 16 5" /></svg><svg class="ic-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg></span>
           </div>
-          <p class="mt-3 text-dim">
+          <p class="mt-2 text-dim">
             macOS. Requires the <span class="text-ink">codex</span> and
             <span class="text-ink">claude</span> CLIs.
           </p>
+        </section>
 
-          <!-- video placeholder: swap this figure for the embed later -->
-          <figure class="group relative mt-8 aspect-video w-full overflow-hidden border border-line bg-panel">
-            <div class="absolute inset-0 flex items-center justify-center">
-              <span class="flex h-16 w-16 items-center justify-center rounded-full border border-violet/40 bg-bg/60 text-violet-bright transition-colors group-hover:border-violet">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-              </span>
-            </div>
-            <figcaption class="absolute bottom-3 left-3 text-[10px] tracking-widest text-faint">DEMO &middot; COMING SOON</figcaption>
-          </figure>
-
-          <!-- why -->
-          <h2 id="why" class="mt-12 scroll-mt-6 text-ink">
-            <span class="text-faint">## </span><span class="font-bold tracking-wide">WHY</span>
-          </h2>
-          <div class="mt-4 space-y-4 text-ink/90">
-            <p>
-              Intent is clearest when you spec the work and judged best when you review the
-              result. The messy middle is where agents drift, so devloop makes it a
-              spec-driven, verifiable loop instead of an open-ended chat.
-            </p>
-            <p>
-              The coder and reviewer are different model families: LLM judges favor their own
-              output, a blind spot humans don't share
-              (<a class="text-violet underline decoration-faint underline-offset-2 hover:text-violet-bright" href="https://arxiv.org/abs/2404.13076">Panickssery et al., 2024</a>).
-              So humans stay in the loop only where judgment pays off, at the spec and the
-              final sign-off, while automated cross-family review handles the rest.
-            </p>
+        <!-- demo video placeholder: swap this figure for the embed later -->
+        <figure class="group relative aspect-video w-full overflow-hidden border border-line bg-panel">
+          <div class="absolute inset-0 flex items-center justify-center">
+            <span class="flex h-14 w-14 items-center justify-center rounded-full border border-violet/40 bg-bg/60 text-violet-bright transition-colors group-hover:border-violet">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </span>
           </div>
+          <figcaption class="absolute bottom-3 left-3 text-[10px] tracking-widest text-faint">DEMO &middot; COMING SOON</figcaption>
+        </figure>
 
-          <h1 class="mt-12 text-ink">
-            <span class="text-faint"># </span><span class="font-bold tracking-wide">SPEC-DRIVEN CODE AND REVIEW LOOP</span>
-          </h1>
-
-          <div class="mt-4 space-y-4 text-ink/90">
-            <p>
-              <span class="text-violet-bright">devloop</span> runs a local implement-and-review
-              loop for agent-written code. You write a short, verifiable spec. By default
-              <span class="text-ink">Codex</span> makes the change,
-              <span class="text-ink">Claude Code</span> reviews it, and Codex retries until the
-              work is accepted, stalled, unclear, or out of passes.
-            </p>
-            <p>
-              No orchestration service, no dashboard, no telemetry. Just one auditable Bash script
-              that drives the agent CLIs you already have, in isolated git worktrees, and writes
-              every track, review, and report to disk.
-            </p>
-            <p class="text-dim">
-              Built for developers who want a tight, auditable loop around the coding agents
-              they already run, without giving up control of their checkout.
-            </p>
-          </div>
-
-          <!-- how it works -->
-          <h2 id="how" class="mt-10 scroll-mt-6 text-ink">
-            <span class="text-faint">## </span><span class="font-bold tracking-wide">HOW IT WORKS</span>
-          </h2>
-          <p class="mt-3 text-ink/90">Every run is the same loop, repeated until a verdict settles it:</p>
-          <ul class="mt-4 space-y-2 text-ink/90">
-            <li><span class="text-violet">*</span> <span class="text-ink">spec</span> -- you write a short markdown spec with acceptance criteria.</li>
-            <li><span class="text-violet">*</span> <span class="text-ink">code</span> -- Codex implements the change in an isolated worktree.</li>
-            <li><span class="text-violet">*</span> <span class="text-ink">review</span> -- Claude Code reviews against the spec and quality gates.</li>
-            <li><span class="text-violet">*</span> <span class="text-ink">loop</span> -- retry on REJECT, stop on ACCEPT, stall, or max passes.</li>
-          </ul>
-          <p class="mt-4 text-dim">
-            Up to 5 passes by default (clamped 1-10), a 30-minute timeout, and a
-            <code>.devloop/verify</code> hook that blocks acceptance when it fails.
+        <!-- why -->
+        <section>
+          <h2 class="text-ink"><span class="text-faint">## </span><span class="font-bold tracking-wide">WHY</span></h2>
+          <p class="mt-2 text-ink/90">
+            Agents drift in the messy middle. devloop pins intent with a spec and verifies the
+            result with cross-family review, so a human stays in the loop only where judgment
+            pays off, at the spec and the final sign-off.
           </p>
+        </section>
 
-          <!-- quick start -->
-          <h2 class="mt-10 text-ink">
-            <span class="text-faint">## </span><span class="font-bold tracking-wide">QUICK START</span>
-          </h2>
-          <div class="code-copy mt-4" role="button" tabindex="0" aria-label="Copy quick start commands" data-copy="devloop spec &quot;add retry behavior to the chat sender&quot;&#10;devloop .specs/change.md&#10;devloop --create-pr .specs/change.md">
-            <pre class="border border-line bg-panel/60 p-4 pr-12 text-[12px] leading-6 overflow-x-auto whitespace-pre"><span class="tok-com"># generate a spec from a one-liner</span>
-<span class="tok-prompt">$</span> devloop spec <span class="tok-str">"add retry behavior to the chat sender"</span>
-
-<span class="tok-com"># run the loop from the repo you want changed</span>
-<span class="tok-prompt">$</span> devloop .specs/change.md
-
-<span class="tok-com"># open a PR after an accepted run</span>
-<span class="tok-prompt">$</span> devloop <span class="tok-num">--create-pr</span> .specs/change.md</pre>
-            <span class="copy-btn" aria-hidden="true"><svg class="ic-copy" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="8" y="8" width="13" height="13" /><polyline points="5 16 3 16 3 3 16 3 16 5" /></svg><svg class="ic-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg></span>
-          </div>
-
-          <!-- what it does -->
-          <h2 class="mt-10 text-ink">
-            <span class="text-faint">## </span><span class="font-bold tracking-wide">WHAT DEVLOOP DOES</span>
-          </h2>
-          <ul class="mt-4 space-y-2 text-ink/90">
-            <li><span class="text-violet">*</span> Runs in isolated sibling git worktrees by default.</li>
-            <li><span class="text-violet">*</span> Runs a preflight: git identity, agent CLIs, installed skills, and <code>gh</code> for PRs.</li>
-            <li><span class="text-violet">*</span> Lints specs for a title, valid frontmatter, and strict acceptance criteria.</li>
-            <li><span class="text-violet">*</span> Commits eligible changes after each coder pass.</li>
-            <li><span class="text-violet">*</span> Writes tracks, reviews, reports, logs, and spec snapshots under <code>.codex/</code>.</li>
-            <li><span class="text-violet">*</span> Never pushes or opens a PR unless you pass <code>--create-pr</code>.</li>
+        <!-- how it works -->
+        <section>
+          <h2 class="text-ink"><span class="text-faint">## </span><span class="font-bold tracking-wide">HOW IT WORKS</span></h2>
+          <ul class="mt-2 space-y-1 text-ink/90">
+            <li><span class="text-faint">[</span><span class="text-violet">*</span><span class="text-faint">]</span> <span class="text-ink">spec</span>: a short markdown spec with acceptance criteria.</li>
+            <li><span class="text-faint">[</span><span class="text-violet">*</span><span class="text-faint">]</span> <span class="text-ink">code</span>: Codex implements in an isolated worktree.</li>
+            <li><span class="text-faint">[</span><span class="text-violet">*</span><span class="text-faint">]</span> <span class="text-ink">review</span>: Claude Code reviews against the spec.</li>
+            <li><span class="text-faint">[</span><span class="text-violet">*</span><span class="text-faint">]</span> <span class="text-ink">loop</span>: retry on reject, stop on accept or max passes.</li>
           </ul>
+        </section>
 
-          <!-- swappable agents -->
-          <h2 class="mt-10 text-ink">
-            <span class="text-faint">## </span><span class="font-bold tracking-wide">SWAPPABLE AGENTS</span>
-          </h2>
-          <p class="mt-3 text-ink/90">Codex and Claude Code are interchangeable on either side of the loop:</p>
-          <div class="mt-4 overflow-x-auto border border-line">
-            <table class="w-full border-collapse text-[12px]">
-              <thead class="text-dim">
-                <tr class="border-b border-line">
-                  <th class="px-3 py-2 text-left font-normal">flag</th>
-                  <th class="px-3 py-2 text-left font-normal">meaning</th>
-                </tr>
-              </thead>
-              <tbody class="text-ink/90">
-                <tr class="border-b border-line/60"><td class="px-3 py-2 text-violet">--coder</td><td class="px-3 py-2">codex | claude -- who implements</td></tr>
-                <tr class="border-b border-line/60"><td class="px-3 py-2 text-violet">--reviewer</td><td class="px-3 py-2">codex | claude -- who reviews</td></tr>
-                <tr class="border-b border-line/60"><td class="px-3 py-2 text-violet">--in-place</td><td class="px-3 py-2">run in the current worktree</td></tr>
-                <tr><td class="px-3 py-2 text-violet">--no-strict</td><td class="px-3 py-2">weaken strict review gates</td></tr>
-              </tbody>
-            </table>
+        <!-- faq -->
+        <section>
+          <h2 class="text-ink"><span class="text-faint">## </span><span class="font-bold tracking-wide">FAQ</span></h2>
+          <div class="mt-2 border-t border-line/70">
+            <details class="faq border-b border-line/70">
+              <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
+                <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
+                <span>Does it touch my checkout?</span>
+              </summary>
+              <p class="pb-3 pl-6 text-dim">No. Isolated sibling worktrees; never pushes or opens a PR unless you pass <code>--create-pr</code>.</p>
+            </details>
+            <details class="faq border-b border-line/70">
+              <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
+                <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
+                <span>Which agents?</span>
+              </summary>
+              <p class="pb-3 pl-6 text-dim">Codex codes, Claude reviews by default. Both swap via <code>--coder</code> / <code>--reviewer</code>.</p>
+            </details>
+            <details class="faq border-b border-line/70">
+              <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
+                <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
+                <span>Can I run it on my current branch?</span>
+              </summary>
+              <p class="pb-3 pl-6 text-dim">By default it runs in an isolated sibling worktree. Pass <code>--in-place</code> to work in your current checkout instead.</p>
+            </details>
+            <details class="faq border-b border-line/70">
+              <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
+                <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
+                <span>When does the loop stop?</span>
+              </summary>
+              <p class="pb-3 pl-6 text-dim">On ACCEPT, on a stall, or out of passes: up to 5 by default (clamped 1-10), a 30-minute timeout, and a <code>.devloop/verify</code> hook that blocks acceptance when it fails.</p>
+            </details>
+            <details class="faq border-b border-line/70">
+              <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
+                <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
+                <span>Any telemetry?</span>
+              </summary>
+              <p class="pb-3 pl-6 text-dim">None. One auditable Bash script; tracks and reports land under <code>.codex/</code>.</p>
+            </details>
           </div>
         </section>
       </main>
 
       <!-- footer -->
-      <footer class="flex flex-col gap-3 py-7 text-dim sm:flex-row sm:items-center sm:justify-between">
-        <div>&copy; 2026 devloop -- MIT licensed</div>
+      <footer class="flex flex-col gap-3 py-3 text-dim sm:flex-row sm:items-center sm:justify-between">
+        <div>MIT</div>
         <nav class="flex flex-wrap gap-x-5 gap-y-1">
           <a class="brk" href="https://github.com/satyaborg/devloop">GITHUB</a>
-          <a class="brk" href="https://github.com/satyaborg/devloop#readme">DOCS</a>
-          <a class="brk" href="https://github.com/satyaborg/devloop/blob/main/CHANGELOG.md">CHANGELOG</a>
         </nav>
       </footer>
+      </div>
     </div>
 
     <script>

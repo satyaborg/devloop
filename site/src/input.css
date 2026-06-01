@@ -117,6 +117,16 @@
   .code-copy.copied .copy-btn { color: var(--color-violet-bright); }
   .code-copy.copied .ic-copy { display: none; }
   .code-copy.copied .ic-check { display: block; }
+
+  /* collapsible FAQ rows: [+] closed, [-] open */
+  .faq summary { list-style: none; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary:focus-visible {
+    outline: 1px solid var(--color-violet);
+    outline-offset: 2px;
+  }
+  .faq .faq-sign::before { content: "+"; }
+  .faq[open] .faq-sign::before { content: "\2212"; }
 }
 
 /* lightweight syntax tokens for hand-marked code blocks */
