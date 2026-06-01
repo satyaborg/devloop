@@ -10,6 +10,7 @@ By default, Codex makes the change, Claude Code reviews it, and Codex retries un
 
 Required dependencies: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`.
 `install.sh` installs missing `gum` and `fzf` with Homebrew. Install the Codex and Claude Code CLIs before running a loop, then verify everything with `devloop doctor`.
+The GitHub CLI is optional. Install `gh` and run `gh auth login` only when you want PR-backed loops.
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
@@ -59,11 +60,13 @@ devloop .specs/change.md
 
 In an interactive terminal, `devloop` opens a shell in the generated worktree after the run finishes. Exiting that shell returns `devloop`'s final accepted/stalled/failure status. Use `--no-shell` when you want the command to return immediately instead.
 
-Open a PR after an accepted run:
+Open and maintain a draft PR during the loop:
 
 ```sh
 devloop --create-pr .specs/change.md
 ```
+
+A plain non-interactive `devloop <spec>` remains local-only. With `--create-pr`, `devloop` opens and maintains a draft PR during the loop, and the PR is canonical for review history; local `.codex/reviews/*.md` files are execution cache.
 
 See tracked runs and cleanup candidates:
 
@@ -124,7 +127,7 @@ devloop [options] <spec.md> [max=5]
 | `--report-format <format>` | Choose `html` or `markdown` |
 | `--timeout-minutes <n>` | Cap one run, default `30` |
 | `--in-place` | Run in the current worktree |
-| `--create-pr`, `--pr` | Push the accepted branch and open a GitHub PR |
+| `--create-pr`, `--pr` | Opens and maintains a draft PR during the loop |
 | `--no-strict` | Weaken strict review gates |
 | `--no-shell`, `--stay` | Do not open a shell in the generated worktree after completion |
 | `--shell`, `--enter-worktree` | Open a shell in the generated worktree after completion |
@@ -150,7 +153,7 @@ Nested menu screens keep `Back` as the final option, and Esc/cancel also returns
 - Runs up to 5 passes by default, clamped between 1 and 10.
 - Stops a run after the configured timeout, default 30 minutes.
 - Uses isolated sibling git worktrees by default.
-- Runs a small preflight before agents start: git identity, agent CLIs, installed skills, and `gh` when PR creation is enabled.
+- Runs a small preflight before agents start: git identity, agent CLIs, installed skills, and GitHub PR readiness when PR creation is enabled.
 - Lints specs for a title, valid frontmatter type when frontmatter exists, and strict acceptance criteria.
 - Commits eligible changes after each coder pass.
 - Runs `.devloop/verify` after each coder pass when it exists and is executable. In strict mode, a failing hook blocks acceptance.
@@ -158,6 +161,7 @@ Nested menu screens keep `Back` as the final option, and Esc/cancel also returns
 - Leaves generated worktrees and branches in place for inspection.
 - Drops you into the generated worktree shell after interactive runs, unless `--no-shell` is set.
 - Never pushes or opens a PR unless you pass `--create-pr`.
+- Treats the PR as the durable review trail when `--create-pr` is active. Local `.codex/` artifacts remain disposable cache.
 
 ## Security
 
