@@ -578,6 +578,48 @@ contains "$remote_dry_output" "Devloop does not install codex or claude automati
 [[ ! -e "$remote_custom_bin" ]] || fail "remote dry run created bin dir"
 ok "remote installer dry run"
 
+latest_api_file="$work/latest-release.json"
+latest_tool_path="$work/latest-tool-path"
+test_bash="$(command -v bash)"
+mkdir -p "$latest_tool_path"
+for tool in grep sed head; do
+  ln -s "$(command -v "$tool")" "$latest_tool_path/$tool"
+done
+printf '{"tag_name":"v%s"}\n' "$remote_version" > "$latest_api_file"
+if ! remote_latest_output="$(
+  HOME="$work/remote-latest-home" PATH="$latest_tool_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" "$test_bash" "$REMOTE_INSTALLER" \
+    --dry-run \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"; then
+  printf '%s\n' "$remote_latest_output" >&2
+  fail "remote latest version dry run failed"
+fi
+contains "$remote_latest_output" "version: $remote_version" "remote latest version"
+contains "$remote_latest_output" "download: $remote_release_base/v$remote_version/devloop-$remote_version.tar.gz" "remote latest version"
+ok "remote installer latest version resolution"
+
+tampered_version="9.8.8"
+tampered_releases="$work/tampered-releases"
+make_remote_release "$tampered_version" "$tampered_releases"
+tampered_archive="$tampered_releases/v$tampered_version/devloop-$tampered_version.tar.gz"
+printf '%064d  %s\n' 0 "devloop-$tampered_version.tar.gz" > "$tampered_archive.sha256"
+tampered_home="$work/tampered-home"
+if tampered_output="$(
+  HOME="$tampered_home" PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$tampered_version" \
+    --release-base-url "file://$tampered_releases" \
+    2>&1
+)"; then
+  printf '%s\n' "$tampered_output" >&2
+  fail "remote installer accepted checksum mismatch"
+fi
+contains "$tampered_output" "checksum mismatch" "remote checksum mismatch"
+[[ ! -e "$tampered_home/.local/share/devloop/$tampered_version" ]] || fail "checksum mismatch created install dir"
+[[ ! -e "$tampered_home/.local/bin/devloop" ]] || fail "checksum mismatch created devloop symlink"
+ok "remote installer rejects checksum mismatch"
+
 remote_tool_bin="$work/remote-tool-bin"
 mkdir -p "$remote_tool_bin"
 for tool in gum fzf codex claude; do

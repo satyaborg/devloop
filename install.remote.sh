@@ -89,11 +89,20 @@ checksum_file() {
 }
 
 resolve_latest_version() {
-  local response version
-  if ! command -v curl >/dev/null 2>&1; then
-    fail "missing curl; pass --version <version> or install curl"
-  fi
-  response="$(curl -fsSL "$GITHUB_API_URL")" || fail "failed to resolve latest Devloop release"
+  local response version source_path
+  case "$GITHUB_API_URL" in
+    file://*)
+      source_path="${GITHUB_API_URL#file://}"
+      [ -f "$source_path" ] || fail "missing latest release fixture: $source_path"
+      response="$(<"$source_path")"
+      ;;
+    *)
+      if ! command -v curl >/dev/null 2>&1; then
+        fail "missing curl; pass --version <version> or install curl"
+      fi
+      response="$(curl -fsSL "$GITHUB_API_URL")" || fail "failed to resolve latest Devloop release"
+      ;;
+  esac
   version="$(printf '%s\n' "$response" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/p' | head -n 1)"
   if [ -z "$version" ]; then
     fail "latest release response did not include tag_name"
