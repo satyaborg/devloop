@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REMOTE_INSTALLER="$REPO_ROOT/install.remote.sh"
 
 fail() {
   echo "not ok - $*" >&2
@@ -33,7 +35,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$REPO_ROOT/install.sh" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh"
+bash -n "$REPO_ROOT/devloop" "$REPO_ROOT/install.sh" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh" "$REMOTE_INSTALLER"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -60,6 +62,28 @@ contains "$help" "--version" "help"
 contains "$help" "--timeout-minutes" "help"
 ok "help output"
 
+remote_help="$("$REMOTE_INSTALLER" --help)"
+contains "$remote_help" "curl -fsSL https://devloop.sh/install | bash" "remote installer help"
+contains "$remote_help" "--yes" "remote installer help"
+contains "$remote_help" "--version <version>" "remote installer help"
+contains "$remote_help" "--no-skills" "remote installer help"
+contains "$remote_help" "--dry-run" "remote installer help"
+contains "$remote_help" "--install-dir <dir>" "remote installer help"
+contains "$remote_help" "--bin-dir <dir>" "remote installer help"
+ok "remote installer help output"
+
+readme_text="$(cat "$REPO_ROOT/README.md")"
+tilde_marker="~"
+contains "$readme_text" "curl -fsSL https://devloop.sh/install | bash" "README remote install"
+contains "$readme_text" "git clone https://github.com/satyaborg/devloop.git" "README source install"
+contains "$readme_text" "cd devloop" "README source install"
+contains "$readme_text" "./install.sh" "README source install"
+contains "$readme_text" "rm -f ~/.local/bin/devloop" "README uninstall"
+contains "$readme_text" "rm -rf ~/.local/share/devloop" "README uninstall"
+contains "$readme_text" "$tilde_marker/.agents/skills/devloop-spec" "README uninstall"
+contains "$readme_text" "$tilde_marker/.claude/skills/devloop-review" "README uninstall"
+ok "README install and uninstall docs"
+
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
 [[ "$skill_path" == "$REPO_ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
 contains "$("$REPO_ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
@@ -83,6 +107,21 @@ ok "skill metadata"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+make_remote_release() {
+  local version="$1"
+  local releases="$2"
+  local fixture="$work/remote-release-src-$version"
+  local release_dir="$releases/v$version"
+  local archive="$release_dir/devloop-$version.tar.gz"
+  mkdir -p "$fixture/devloop-$version" "$release_dir"
+  cp "$REPO_ROOT/devloop" "$fixture/devloop-$version/devloop"
+  cp "$REPO_ROOT/skill_helpers.sh" "$fixture/devloop-$version/skill_helpers.sh"
+  cp -R "$REPO_ROOT/skills" "$fixture/devloop-$version/skills"
+  printf '%s\n' "$version" > "$fixture/devloop-$version/VERSION"
+  tar -C "$fixture" -czf "$archive" "devloop-$version"
+  printf '%s  %s\n' "$(devloop_checksum_file "$archive")" "devloop-$version.tar.gz" > "$archive.sha256"
+}
 
 coverage_functions="$work/project-functions.txt"
 coverage_hits="$work/project-function-hits.txt"
@@ -466,6 +505,13 @@ ok "pure helpers"
   if release_version_valid "1.2"; then fail "release version accepted missing patch"; fi
   if release_version_valid "1.2.3-alpha.01"; then fail "release version accepted leading zero prerelease"; fi
   equals "$(release_tag_for_version "1.2.3")" "v1.2.3" "release tag"
+  release_artifact_dir="$work/release-artifacts"
+  release_create_artifacts "$version" "$release_artifact_dir"
+  [[ -f "$RELEASE_ARCHIVE" ]] || fail "release archive was not created"
+  [[ -f "$RELEASE_CHECKSUM" ]] || fail "release checksum was not created"
+  contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/devloop" "release archive"
+  contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/install.remote.sh" "release archive"
+  equals "$(awk '{print $1; exit}' "$RELEASE_CHECKSUM")" "$(release_checksum_file "$RELEASE_ARCHIVE")" "release checksum"
   equals "$(release_next_version patch "0.1.0")" "0.1.1" "patch bump"
   equals "$(release_next_version minor "0.1.0")" "0.2.0" "minor bump"
   equals "$(release_next_version major "0.1.0")" "1.0.0" "major bump"
@@ -483,6 +529,7 @@ ok "pure helpers"
   contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
   publish_dry_run_output="$(release_main "patch" --publish --dry-run)" || fail "release publish dry-run required git-cliff"
   contains "$publish_dry_run_output" "would push branch and tag" "release publish dry-run"
+  contains "$publish_dry_run_output" "would build release assets: devloop-9.9.10.tar.gz and devloop-9.9.10.tar.gz.sha256" "release publish dry-run"
   contains "$publish_dry_run_output" "would create GitHub release: gh release create v9.9.10 --verify-tag --generate-notes" "release publish dry-run"
   git -C "$ROOT" config user.email devloop-test@example.com
   git -C "$ROOT" config user.name "devloop test"
@@ -496,6 +543,99 @@ ok "pure helpers"
   DEVLOOP_RELEASE_ALLOW_BRANCH=1 release_assert_push_branch || fail "release push branch rejected"
 )
 ok "release helpers"
+
+remote_version="9.8.7"
+remote_releases="$work/remote-releases"
+make_remote_release "$remote_version" "$remote_releases"
+remote_release_base="file://$remote_releases"
+remote_no_tools="$work/remote-no-tools"
+mkdir -p "$remote_no_tools"
+remote_no_tools_path="$remote_no_tools:/usr/bin:/bin:/usr/sbin:/sbin"
+
+remote_custom_root="$work/remote-custom-root"
+remote_custom_bin="$work/remote-custom-bin"
+remote_dry_output="$(
+  HOME="$work/remote-dry-home" PATH="$remote_no_tools_path" bash "$REMOTE_INSTALLER" \
+    --dry-run \
+    --version "$remote_version" \
+    --install-dir "$remote_custom_root" \
+    --bin-dir "$remote_custom_bin" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"
+contains "$remote_dry_output" "dry run: no files will be changed" "remote dry run"
+contains "$remote_dry_output" "version: $remote_version" "remote dry run version"
+contains "$remote_dry_output" "download: $remote_release_base/v$remote_version/devloop-$remote_version.tar.gz" "remote dry run download"
+contains "$remote_dry_output" "verify: $remote_release_base/v$remote_version/devloop-$remote_version.tar.gz.sha256" "remote dry run checksum"
+contains "$remote_dry_output" "install: $remote_custom_root/$remote_version" "remote dry run install dir"
+contains "$remote_dry_output" "link: $remote_custom_bin/devloop -> $remote_custom_root/$remote_version/devloop" "remote dry run bin dir"
+contains "$remote_dry_output" "skills: $work/remote-dry-home/.agents/skills, $work/remote-dry-home/.claude/skills" "remote dry run skills"
+contains "$remote_dry_output" "missing UI tools: gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "install with: brew install gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "missing agent CLIs: codex claude" "remote missing agent guidance"
+contains "$remote_dry_output" "Devloop does not install codex or claude automatically." "remote missing agent guidance"
+[[ ! -e "$remote_custom_root" ]] || fail "remote dry run created install root"
+[[ ! -e "$remote_custom_bin" ]] || fail "remote dry run created bin dir"
+ok "remote installer dry run"
+
+remote_tool_bin="$work/remote-tool-bin"
+mkdir -p "$remote_tool_bin"
+for tool in gum fzf codex claude; do
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_tool_bin/$tool"
+  chmod +x "$remote_tool_bin/$tool"
+done
+remote_path="$remote_tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_home="$work/remote-home"
+remote_install_output="$(
+  HOME="$remote_home" PATH="$remote_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"
+remote_default_root="$remote_home/.local/share/devloop"
+remote_default_bin="$remote_home/.local/bin"
+[[ -d "$remote_default_root/$remote_version" ]] || fail "remote installer did not create versioned install dir"
+[[ -L "$remote_default_bin/devloop" ]] || fail "remote installer did not create devloop symlink"
+equals "$(readlink "$remote_default_bin/devloop")" "$remote_default_root/$remote_version/devloop" "remote installer symlink target"
+equals "$("$remote_default_bin/devloop" --version)" "devloop $remote_version" "remote installed version"
+contains "$remote_install_output" "verified checksum" "remote install checksum"
+contains "$remote_install_output" "$remote_default_bin is not on PATH" "remote install PATH guidance"
+contains "$remote_install_output" "export PATH=\"$remote_default_bin:\$PATH\"" "remote install PATH guidance"
+contains "$remote_install_output" "[ok] gum:" "remote install UI check"
+contains "$remote_install_output" "[ok] codex:" "remote install agent check"
+[[ -f "$remote_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "remote installer did not install Codex spec skill"
+[[ -f "$remote_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "remote installer did not write Codex skill checksum"
+[[ -f "$remote_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "remote installer did not install Claude spec skill"
+[[ -f "$remote_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "remote installer did not write Claude skill checksum"
+ok "remote installer successful install"
+
+printf '%s\n' "user edit" >> "$remote_home/.agents/skills/devloop-review/SKILL.md"
+remote_preserve_output="$(
+  HOME="$remote_home" PATH="$remote_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"
+contains "$remote_preserve_output" "skipping modified skill" "remote installer modified skill guard"
+contains "$(cat "$remote_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "remote installer modified skill preserved"
+ok "remote installer skill preservation"
+
+remote_no_skills_home="$work/remote-no-skills-home"
+remote_no_skills_output="$(
+  HOME="$remote_no_skills_home" PATH="$remote_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --no-skills \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"
+contains "$remote_no_skills_output" "skipping skill installation" "remote no-skills"
+contains "$remote_no_skills_output" "devloop doctor will require skill installation before agent loops are ready." "remote no-skills"
+[[ ! -e "$remote_no_skills_home/.agents/skills/devloop-spec" ]] || fail "remote no-skills installed Codex skill"
+[[ ! -e "$remote_no_skills_home/.claude/skills/devloop-review" ]] || fail "remote no-skills installed Claude skill"
+ok "remote installer no-skills"
 
 bin_dir="$work/bin"
 install_home="$work/install-home"

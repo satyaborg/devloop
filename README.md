@@ -8,14 +8,43 @@ By default, Codex makes the change, Claude Code reviews it, and Codex retries un
 
 ## Install
 
-Required dependencies: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`.
-`install.sh` installs missing `gum` and `fzf` with Homebrew. Install the Codex and Claude Code CLIs before running a loop, then verify everything with `devloop doctor`.
+Install Devloop with the remote installer:
+
+```sh
+curl -fsSL https://devloop.sh/install | bash
+```
+
+The installer downloads a tagged GitHub release asset, verifies its `.sha256` checksum, installs it under `~/.local/share/devloop/<version>/`, links `~/.local/bin/devloop`, and installs the bundled Agent Skills for Codex under `~/.agents/skills` and Claude Code under `~/.claude/skills`.
+
+Install a specific version or preview the install:
+
+```sh
+curl -fsSL https://devloop.sh/install | bash -s -- --version 0.2.0
+curl -fsSL https://devloop.sh/install | bash -s -- --dry-run
+curl -fsSL https://devloop.sh/install | bash -s -- --no-skills
+```
+
+Inspect before running:
+
+```sh
+curl -fsSL https://devloop.sh/install -o install.sh
+less install.sh
+bash install.sh
+```
+
+The remote installer checks for `gum`, `fzf`, `codex`, and `claude`. It does not install Codex or Claude Code. If `gum` or `fzf` is missing, it only installs them with Homebrew after explicit confirmation; otherwise it prints the `brew install gum fzf` command to run yourself.
+
+If `~/.local/bin` is not on `PATH`, the installer prints the shell profile line to add. It does not edit shell profile files.
+
+For source checkout development, use the local installer:
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
 cd devloop
 ./install.sh
 ```
+
+`./install.sh` symlinks the checkout executable, installs missing `gum` and `fzf` with Homebrew when available, installs bundled skills, and finishes with `try: devloop doctor`.
 
 Check the installed version:
 
@@ -29,12 +58,19 @@ Run without installing:
 ./devloop --help
 ```
 
-`install.sh` also installs the bundled Agent Skills globally for Codex under `~/.agents/skills`
-and Claude Code under `~/.claude/skills`.
 After install or update, verify the local setup:
 
 ```sh
 devloop doctor
+```
+
+Uninstall a remote install:
+
+```sh
+rm -f ~/.local/bin/devloop
+rm -rf ~/.local/share/devloop
+rm -rf ~/.agents/skills/devloop-spec ~/.agents/skills/devloop-review
+rm -rf ~/.claude/skills/devloop-spec ~/.claude/skills/devloop-review
 ```
 
 ## Quick Start
@@ -174,8 +210,8 @@ If present, `.devloop/verify` is executed from the run worktree with the pass nu
 ## Development
 
 ```sh
-bash -n devloop install.sh release.sh skill_helpers.sh
-shellcheck devloop install.sh skill_helpers.sh release.sh tests/devloop_test.sh
+bash -n devloop install.sh release.sh skill_helpers.sh install.remote.sh
+shellcheck devloop install.sh skill_helpers.sh release.sh install.remote.sh tests/devloop_test.sh
 bash tests/devloop_test.sh
 ./devloop --help
 ./devloop --version

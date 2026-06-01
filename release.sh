@@ -12,6 +12,8 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 
 ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+RELEASE_ARCHIVE=""
+RELEASE_CHECKSUM=""
 
 release_usage() {
   cat <<'EOF'
@@ -107,6 +109,43 @@ release_current_branch() {
   git -C "$ROOT" branch --show-current
 }
 
+release_checksum_file() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    printf '%s\n' "missing shasum or sha256sum" >&2
+    return 1
+  fi
+}
+
+release_create_artifacts() {
+  local version="$1"
+  local out_dir="$2"
+  local name="devloop-$version"
+  local staging="$out_dir/$name"
+
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  cp "$ROOT/devloop" "$staging/devloop"
+  cp "$ROOT/install.sh" "$staging/install.sh"
+  cp "$ROOT/install.remote.sh" "$staging/install.remote.sh"
+  cp "$ROOT/skill_helpers.sh" "$staging/skill_helpers.sh"
+  cp "$ROOT/README.md" "$staging/README.md"
+  cp "$ROOT/LICENSE" "$staging/LICENSE"
+  cp "$ROOT/CHANGELOG.md" "$staging/CHANGELOG.md"
+  cp "$ROOT/VERSION" "$staging/VERSION"
+  cp -R "$ROOT/skills" "$staging/skills"
+
+  RELEASE_ARCHIVE="$out_dir/$name.tar.gz"
+  RELEASE_CHECKSUM="$RELEASE_ARCHIVE.sha256"
+  tar -C "$out_dir" -czf "$RELEASE_ARCHIVE" "$name"
+  printf '%s  %s\n' "$(release_checksum_file "$RELEASE_ARCHIVE")" "$name.tar.gz" > "$RELEASE_CHECKSUM"
+  rm -rf "$staging"
+}
+
 release_assert_push_branch() {
   local branch
   branch="$(release_current_branch)"
@@ -127,6 +166,7 @@ release_main() {
   local publish=false
   local push=false
   local tag branch
+  local artifact_dir
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -188,7 +228,10 @@ release_main() {
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
     if [ "$publish" = true ] || [ "$push" = true ]; then printf '%s\n' "would push branch and tag"; fi
-    if [ "$publish" = true ]; then printf 'would create GitHub release: gh release create %s --verify-tag --generate-notes\n' "$tag"; fi
+    if [ "$publish" = true ]; then
+      printf 'would build release assets: devloop-%s.tar.gz and devloop-%s.tar.gz.sha256\n' "$version" "$version"
+      printf 'would create GitHub release: gh release create %s --verify-tag --generate-notes devloop-%s.tar.gz devloop-%s.tar.gz.sha256\n' "$tag" "$version" "$version"
+    fi
     return 0
   fi
 
@@ -212,7 +255,10 @@ release_main() {
   fi
 
   if [ "$publish" = true ]; then
-    gh release create "$tag" --verify-tag --generate-notes
+    artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/devloop-release.XXXXXX")"
+    release_create_artifacts "$version" "$artifact_dir"
+    gh release create "$tag" --verify-tag --generate-notes "$RELEASE_ARCHIVE" "$RELEASE_CHECKSUM"
+    rm -rf "$artifact_dir"
   fi
 
   printf 'released %s\n' "$tag"
