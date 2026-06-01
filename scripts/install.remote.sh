@@ -258,7 +258,7 @@ find_extracted_root() {
   found="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   [ -n "$found" ] || fail "release archive did not contain an install directory"
   [ -f "$found/devloop" ] || fail "release archive missing devloop executable"
-  [ -f "$found/skill_helpers.sh" ] || fail "release archive missing skill_helpers.sh"
+  [ -f "$found/scripts/skill_helpers.sh" ] || fail "release archive missing scripts/skill_helpers.sh"
   [ -d "$found/skills" ] || fail "release archive missing bundled skills"
   printf '%s\n' "$found"
 }
@@ -299,7 +299,7 @@ install_skills() {
   DEVLOOP_SKILL_INSTALL=copy
   export DEVLOOP_SKILL_INSTALL
   # shellcheck source=/dev/null
-  source "$root/skill_helpers.sh"
+  source "$root/scripts/skill_helpers.sh"
   devloop_install_skills "$root"
 }
 

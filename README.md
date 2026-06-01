@@ -41,10 +41,10 @@ For source checkout development, use the local installer:
 ```sh
 git clone https://github.com/satyaborg/devloop.git
 cd devloop
-./install.sh
+./scripts/install.sh
 ```
 
-`./install.sh` symlinks the checkout executable, installs missing `gum` and `fzf` with Homebrew when available, installs bundled skills, and finishes with `try: devloop doctor`.
+`./scripts/install.sh` symlinks the checkout executable, installs missing `gum` and `fzf` with Homebrew when available, installs bundled skills, and finishes with `try: devloop doctor`.
 
 Check the installed version:
 
@@ -179,7 +179,7 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 
 Nested menu screens keep `Back` as the final option, and Esc/cancel also returns to the previous menu without exiting Devloop. Interactive screens redraw in place instead of appending a fresh UI after each selection.
 
-`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. Both are required and installed by `install.sh` when missing.
+`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. Both are required and installed by `scripts/install.sh` when missing.
 
 ## What Devloop Does
 
@@ -210,18 +210,18 @@ If present, `.devloop/verify` is executed from the run worktree with the pass nu
 ## Development
 
 ```sh
-bash -n devloop install.sh release.sh skill_helpers.sh install.remote.sh
-shellcheck devloop install.sh skill_helpers.sh release.sh install.remote.sh tests/devloop_test.sh
-bash tests/devloop_test.sh
+bash -n devloop scripts/install.sh scripts/release.sh scripts/skill_helpers.sh scripts/install.remote.sh scripts/devloop_test.sh
+shellcheck devloop scripts/install.sh scripts/skill_helpers.sh scripts/release.sh scripts/install.remote.sh scripts/devloop_test.sh
+bash scripts/devloop_test.sh
 ./devloop --help
 ./devloop --version
 tmp="$(mktemp -d)"
-DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./install.sh
+DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./scripts/install.sh
 PATH="$tmp/bin:$PATH" HOME="$tmp/home" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
-The shell suite enforces 100% project function coverage for `devloop`, `skill_helpers.sh`, and `release.sh`.
+The shell suite enforces 100% project function coverage for `devloop`, `scripts/skill_helpers.sh`, and `scripts/release.sh`.
 
 ## Versioning and Release
 
@@ -237,11 +237,11 @@ brew install gh
 Cut a release from a clean tree by choosing the bump:
 
 ```sh
-./release.sh patch --dry-run
-./release.sh patch --publish
+./scripts/release.sh patch --dry-run
+./scripts/release.sh patch --publish
 ```
 
-Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--publish` to push the release branch and tag, then create the GitHub Release. Use `--push` only when you want to publish the git refs without creating a GitHub Release. By default, published releases must run from `main`.
+Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash scripts/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--publish` to push the release branch and tag, then create the GitHub Release. Use `--push` only when you want to publish the git refs without creating a GitHub Release. By default, published releases must run from `main`.
 
 ## License
 

@@ -18,7 +18,7 @@ while [ -L "$SCRIPT_PATH" ]; do
   esac
 done
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
-source "$ROOT_DIR/skill_helpers.sh"
+source "$ROOT_DIR/scripts/skill_helpers.sh"
 DEVLOOP_VERSION="$(sed -n '1p' "$ROOT_DIR/VERSION" 2>/dev/null || true)"
 if [ -z "$DEVLOOP_VERSION" ]; then DEVLOOP_VERSION="0.0.0-dev"; fi
 

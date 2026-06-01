@@ -3,7 +3,8 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-REMOTE_INSTALLER="$REPO_ROOT/install.remote.sh"
+SCRIPTS_DIR="$REPO_ROOT/scripts"
+REMOTE_INSTALLER="$SCRIPTS_DIR/install.remote.sh"
 
 fail() {
   echo "not ok - $*" >&2
@@ -35,7 +36,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$REPO_ROOT/install.sh" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh" "$REMOTE_INSTALLER"
+bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -77,7 +78,7 @@ tilde_marker="~"
 contains "$readme_text" "curl -fsSL https://devloop.sh/install | bash" "README remote install"
 contains "$readme_text" "git clone https://github.com/satyaborg/devloop.git" "README source install"
 contains "$readme_text" "cd devloop" "README source install"
-contains "$readme_text" "./install.sh" "README source install"
+contains "$readme_text" "./scripts/install.sh" "README source install"
 contains "$readme_text" "rm -f ~/.local/bin/devloop" "README uninstall"
 contains "$readme_text" "rm -rf ~/.local/share/devloop" "README uninstall"
 contains "$readme_text" "$tilde_marker/.agents/skills/devloop-spec" "README uninstall"
@@ -114,9 +115,9 @@ make_remote_release() {
   local fixture="$work/remote-release-src-$version"
   local release_dir="$releases/v$version"
   local archive="$release_dir/devloop-$version.tar.gz"
-  mkdir -p "$fixture/devloop-$version" "$release_dir"
+  mkdir -p "$fixture/devloop-$version/scripts" "$release_dir"
   cp "$REPO_ROOT/devloop" "$fixture/devloop-$version/devloop"
-  cp "$REPO_ROOT/skill_helpers.sh" "$fixture/devloop-$version/skill_helpers.sh"
+  cp "$SCRIPTS_DIR/skill_helpers.sh" "$fixture/devloop-$version/scripts/skill_helpers.sh"
   cp -R "$REPO_ROOT/skills" "$fixture/devloop-$version/skills"
   printf '%s\n' "$version" > "$fixture/devloop-$version/VERSION"
   tar -C "$fixture" -czf "$archive" "devloop-$version"
@@ -127,7 +128,7 @@ coverage_functions="$work/project-functions.txt"
 coverage_hits="$work/project-function-hits.txt"
 coverage_set=""
 sed -nE 's/^([[:alpha:]_][[:alnum:]_]*)\(\)[[:space:]]*\{/\1/p' \
-  "$REPO_ROOT/devloop" "$REPO_ROOT/skill_helpers.sh" "$REPO_ROOT/release.sh" |
+  "$REPO_ROOT/devloop" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" |
   LC_ALL=C sort -u > "$coverage_functions"
 while IFS= read -r fn; do
   coverage_set="${coverage_set}|${fn}|"
@@ -497,8 +498,10 @@ ok "pure helpers"
 
 (
   DEVLOOP_RELEASE_LIB=1
-  source "$REPO_ROOT/release.sh"
-  contains "$(release_usage)" "usage: ./release.sh" "release usage"
+  export DEVLOOP_RELEASE_LIB
+  # shellcheck disable=SC1091
+  source "$SCRIPTS_DIR/release.sh"
+  contains "$(release_usage)" "usage: ./scripts/release.sh" "release usage"
   release_version_valid "0.1.0" || fail "release version rejected valid patch"
   release_version_valid "1.2.3-alpha.1+build.7" || fail "release version rejected valid prerelease"
   if release_version_valid "01.2.3"; then fail "release version accepted leading zero"; fi
@@ -510,12 +513,14 @@ ok "pure helpers"
   [[ -f "$RELEASE_ARCHIVE" ]] || fail "release archive was not created"
   [[ -f "$RELEASE_CHECKSUM" ]] || fail "release checksum was not created"
   contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/devloop" "release archive"
-  contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/install.remote.sh" "release archive"
+  contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/scripts/devloop_test.sh" "release archive"
+  contains "$(tar -tzf "$RELEASE_ARCHIVE")" "devloop-$version/scripts/install.remote.sh" "release archive"
   equals "$(awk '{print $1; exit}' "$RELEASE_CHECKSUM")" "$(release_checksum_file "$RELEASE_ARCHIVE")" "release checksum"
   equals "$(release_next_version patch "0.1.0")" "0.1.1" "patch bump"
   equals "$(release_next_version minor "0.1.0")" "0.2.0" "minor bump"
   equals "$(release_next_version major "0.1.0")" "1.0.0" "major bump"
   if release_next_version patch "0.1.0-alpha.1" >/dev/null 2>&1; then fail "release bump accepted prerelease"; fi
+  # shellcheck disable=SC2329
   release_require_command() {
     if [ "$1" = "git-cliff" ]; then return 1; fi
     return 0
@@ -701,7 +706,7 @@ done
 BREW
 chmod +x "$tool_bin/brew"
 install_path="$tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-test.out
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-test.out
 [[ -x "$REPO_ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
 PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
@@ -718,11 +723,11 @@ contains "$(cat /tmp/devloop-help-test.out)" "Spec-driven code and review loop."
 ok "installer"
 
 printf '%s\n' "user edit" >> "$install_home/.agents/skills/devloop-review/SKILL.md"
-DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-skip.out 2>&1
+DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-skip.out 2>&1
 contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
 contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
 contains "$(cat "$install_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
-DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$REPO_ROOT/install.sh" >/tmp/devloop-install-force.out
+DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-force.out
 if grep -q "user edit" "$install_home/.agents/skills/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi
 ok "installer skill updates"
 

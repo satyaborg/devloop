@@ -11,21 +11,22 @@ while [ -L "$SCRIPT_PATH" ]; do
   esac
 done
 
-ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+ROOT="$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
 RELEASE_ARCHIVE=""
 RELEASE_CHECKSUM=""
 
 release_usage() {
   cat <<'EOF'
-usage: ./release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
+usage: ./scripts/release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
 
 Bumps VERSION, creates a release commit, and creates an annotated tag.
 Use --publish to push the commit and tag, then create a GitHub Release.
 
 Examples:
-  ./release.sh patch --dry-run
-  ./release.sh minor --publish
-  ./release.sh major --push
+  ./scripts/release.sh patch --dry-run
+  ./scripts/release.sh minor --publish
+  ./scripts/release.sh major --push
 EOF
 }
 
@@ -128,11 +129,13 @@ release_create_artifacts() {
   local staging="$out_dir/$name"
 
   rm -rf "$staging"
-  mkdir -p "$staging"
+  mkdir -p "$staging/scripts"
   cp "$ROOT/devloop" "$staging/devloop"
-  cp "$ROOT/install.sh" "$staging/install.sh"
-  cp "$ROOT/install.remote.sh" "$staging/install.remote.sh"
-  cp "$ROOT/skill_helpers.sh" "$staging/skill_helpers.sh"
+  cp "$ROOT/scripts/install.sh" "$staging/scripts/install.sh"
+  cp "$ROOT/scripts/install.remote.sh" "$staging/scripts/install.remote.sh"
+  cp "$ROOT/scripts/devloop_test.sh" "$staging/scripts/devloop_test.sh"
+  cp "$ROOT/scripts/release.sh" "$staging/scripts/release.sh"
+  cp "$ROOT/scripts/skill_helpers.sh" "$staging/scripts/skill_helpers.sh"
   cp "$ROOT/README.md" "$staging/README.md"
   cp "$ROOT/LICENSE" "$staging/LICENSE"
   cp "$ROOT/CHANGELOG.md" "$staging/CHANGELOG.md"
@@ -223,7 +226,7 @@ release_main() {
     if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
       printf '%s\n' "note: actual release requires a clean working tree"
     fi
-    printf '%s\n' "would run bash tests/devloop_test.sh"
+    printf '%s\n' "would run bash scripts/devloop_test.sh"
     printf '%s\n' "would update VERSION and CHANGELOG.md"
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
@@ -241,7 +244,7 @@ release_main() {
   release_assert_clean_tree
   if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_push_branch; fi
 
-  bash "$ROOT/tests/devloop_test.sh"
+  bash "$ROOT/scripts/devloop_test.sh"
   printf '%s\n' "$version" > "$ROOT/VERSION"
   git-cliff --config "$ROOT/cliff.toml" --workdir "$ROOT" --tag "$tag" --output "$ROOT/CHANGELOG.md"
   git -C "$ROOT" add VERSION CHANGELOG.md

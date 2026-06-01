@@ -11,8 +11,9 @@ while [ -L "$SCRIPT_PATH" ]; do
   esac
 done
 
-ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
-source "$ROOT/skill_helpers.sh"
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+ROOT="$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+source "$ROOT/scripts/skill_helpers.sh"
 
 BIN_DIR="${DEVLOOP_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/devloop"
@@ -37,7 +38,7 @@ install_required_ui_tools() {
 
   if ! command -v brew >/dev/null 2>&1; then
     echo "missing required UI tools: ${missing[*]}" >&2
-    echo "install Homebrew, then rerun ./install.sh" >&2
+    echo "install Homebrew, then rerun ./scripts/install.sh" >&2
     return 1
   fi
 
