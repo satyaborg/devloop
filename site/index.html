@@ -41,10 +41,8 @@
             <span class="copy-btn" aria-hidden="true"><svg class="ic-copy" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="8" y="8" width="13" height="13" /><polyline points="5 16 3 16 3 3 16 3 16 5" /></svg><svg class="ic-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg></span>
           </div>
           <p class="mt-3 text-dim">
-            Requires Bash, git, Homebrew, <span class="text-ink">codex</span>,
-            <span class="text-ink">claude</span>, <span class="text-ink">gum</span>, and
-            <span class="text-ink">fzf</span>. The installer adds missing <code>gum</code> and
-            <code>fzf</code> via Homebrew.
+            macOS. Requires the <span class="text-ink">codex</span> and
+            <span class="text-ink">claude</span> CLIs.
           </p>
 
           <!-- video placeholder: swap this figure for the embed later -->
@@ -56,6 +54,25 @@
             </div>
             <figcaption class="absolute bottom-3 left-3 text-[10px] tracking-widest text-faint">DEMO &middot; COMING SOON</figcaption>
           </figure>
+
+          <!-- why -->
+          <h2 id="why" class="mt-12 scroll-mt-6 text-ink">
+            <span class="text-faint">## </span><span class="font-bold tracking-wide">WHY</span>
+          </h2>
+          <div class="mt-4 space-y-4 text-ink/90">
+            <p>
+              Intent is clearest when you spec the work and judged best when you review the
+              result. The messy middle is where agents drift, so devloop makes it a
+              spec-driven, verifiable loop instead of an open-ended chat.
+            </p>
+            <p>
+              The coder and reviewer are different model families: LLM judges favor their own
+              output, a blind spot humans don't share
+              (<a class="text-violet underline decoration-faint underline-offset-2 hover:text-violet-bright" href="https://arxiv.org/abs/2404.13076">Panickssery et al., 2024</a>).
+              So humans stay in the loop only where judgment pays off, at the spec and the
+              final sign-off, while automated cross-family review handles the rest.
+            </p>
+          </div>
 
           <h1 class="mt-12 text-ink">
             <span class="text-faint"># </span><span class="font-bold tracking-wide">SPEC-DRIVEN CODE AND REVIEW LOOP</span>
