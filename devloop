@@ -44,6 +44,8 @@ RUN_CODE=0
 RUN_STDOUT=""
 RUN_STDERR=""
 RUN_OUTPUT=""
+RUN_WAIT_STYLE="timed"
+RUN_WAIT_LABEL="working"
 RUN_TIMEOUT_MINUTES="$DEFAULT_TIMEOUT_MINUTES"
 RUN_TIMEOUT_SECONDS=$((DEFAULT_TIMEOUT_MINUTES * 60))
 RUN_DEADLINE=0
@@ -959,6 +961,42 @@ ui_spinner_wait() {
     seconds=$((elapsed % 60))
     printf '\r\033[K%s %s %02d:%02d' "$(ui_color rec "$frame")" "$title" "$minutes" "$seconds" >&2
     sleep 0.2
+    index=$((index + 1))
+  done
+  printf '\r\033[K' >&2
+}
+
+ui_compact_spinner_wait() {
+  local pid="$1"
+  local done_file="$2"
+  local stderr_file="${3:-}"
+  local label="${4:-working}"
+  local index=0 frame
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  if [ "$USE_TUI" != true ] || [ ! -t 2 ]; then
+    while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+      if run_deadline_reached; then
+        RUN_TIMED_OUT=true
+        if [ -n "$stderr_file" ]; then timeout_message >> "$stderr_file"; fi
+        printf '%s\n' "124" > "$done_file"
+        terminate_pid_tree "$pid"
+        return
+      fi
+      sleep 0.12
+    done
+    return
+  fi
+  while [ ! -s "$done_file" ] && kill -0 "$pid" 2>/dev/null; do
+    if run_deadline_reached; then
+      RUN_TIMED_OUT=true
+      if [ -n "$stderr_file" ]; then timeout_message >> "$stderr_file"; fi
+      printf '%s\n' "124" > "$done_file"
+      terminate_pid_tree "$pid"
+      return
+    fi
+    frame="${frames[$((index % ${#frames[@]}))]}"
+    printf '\r\033[K%s %s' "$(ui_color rec "$frame")" "$label" >&2
+    sleep 0.12
     index=$((index + 1))
   done
   printf '\r\033[K' >&2
@@ -1954,12 +1992,11 @@ run_devloop() {
     return 2
   fi
 
-  event_step "naming" "derive branch name with $(agent_label "$coder")"
   local naming_error
   naming_error=""
   if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text"; then
     naming_error="$WORK_ITEM_ERROR"
-    event_done "naming" false "$naming_error"
+    event_gate "naming" 0 "$naming_error"
     if [ -n "${WORK_ITEM_LOG:-}" ]; then
       printf 'naming failed: %s\nnaming log: %s\n' "$naming_error" "$WORK_ITEM_LOG" >&2
     else
@@ -1969,7 +2006,7 @@ run_devloop() {
     return 2
   fi
   local slug="$WORK_SLUG"
-  event_done "naming" true "$(branch_base "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")"
+  event_gate "naming" 1 "$(branch_base "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")"
 
   local repo="$SOURCE_REPO"
   if [ "$use_worktree" = true ]; then
@@ -2131,12 +2168,11 @@ run_devloop() {
   if [ "$PASSES" -gt "$max" ]; then PASSES="$max"; fi
 
   if [ "$create_pr" = true ] && [ "$STATUS" = "accepted" ]; then
-    event_step "pull-request" "push branch and create PR"
     if create_pull_request "$repo" "$FINAL_BRANCH" "$base"; then
-      event_done "pull-request" true "${PULL_REQUEST:-origin/$FINAL_BRANCH}"
+      event_gate "pull request" 1 "${PULL_REQUEST:-origin/$FINAL_BRANCH}"
     else
       STATUS="pr-error"
-      event_done "pull-request" false "$PULL_REQUEST_ERROR"
+      event_gate "pull request" 0 "$PULL_REQUEST_ERROR"
     fi
   fi
 
@@ -2584,7 +2620,7 @@ resolve_work_item() {
   log="$tmpdir/naming.log"
   WORK_ITEM_LOG="$log"
   prompt="$(naming_prompt "$spec" "$spec_text")"
-  if ! run_agent_once "$agent" "$repo" "$log" "$prompt" "naming"; then
+  if ! with_compact_wait "name work" run_agent_once "$agent" "$repo" "$log" "$prompt" ""; then
     WORK_ITEM_ERROR="${RUN_OUTPUT:-$(agent_label "$agent") failed}"
     return 1
   fi
@@ -2915,7 +2951,10 @@ run_with_prompt() {
     printf '%s\n' "$?" > "$code_file"
   ) &
   pid=$!
-  ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}" "$stderr_file"
+  case "$RUN_WAIT_STYLE" in
+    compact) ui_compact_spinner_wait "$pid" "$code_file" "$stderr_file" "$RUN_WAIT_LABEL" ;;
+    *) ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}" "$stderr_file" ;;
+  esac
   wait "$pid" >/dev/null 2>&1 || true
   if [ -f "$code_file" ]; then
     RUN_CODE="$(cat "$code_file")"
@@ -2939,6 +2978,51 @@ run_with_prompt() {
     done < "$output_file"
   fi
   rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file" "$code_file"
+}
+
+with_compact_wait() {
+  local label="$1"
+  shift
+  local old_style="$RUN_WAIT_STYLE"
+  local old_label="$RUN_WAIT_LABEL"
+  local code
+  RUN_WAIT_STYLE="compact"
+  RUN_WAIT_LABEL="$label"
+  "$@"
+  code=$?
+  RUN_WAIT_STYLE="$old_style"
+  RUN_WAIT_LABEL="$old_label"
+  return "$code"
+}
+
+run_compact_command() {
+  local cwd="$1"
+  local label="$2"
+  shift 2
+  local output_file code_file pid
+  output_file="$(mktemp "${TMPDIR:-/tmp}/devloop-command-output.XXXXXX")"
+  code_file="$(mktemp "${TMPDIR:-/tmp}/devloop-command-code.XXXXXX")"
+  rm -f "$code_file"
+  (
+    cd "$cwd" >/dev/null 2>&1 && "$@" > "$output_file" 2>&1
+    printf '%s\n' "$?" > "$code_file"
+  ) &
+  pid=$!
+  ui_compact_spinner_wait "$pid" "$code_file" "$output_file" "$label"
+  wait "$pid" >/dev/null 2>&1 || true
+  if [ -f "$code_file" ]; then
+    RUN_CODE="$(cat "$code_file")"
+  else
+    RUN_CODE=1
+  fi
+  case "$RUN_CODE" in
+    ''|*[!0-9]*) RUN_CODE=1 ;;
+  esac
+  RUN_OUTPUT="$(cat "$output_file")"
+  RUN_STDOUT="$RUN_OUTPUT"
+  RUN_STDERR=""
+  rm -f "$output_file" "$code_file"
+  [ "$RUN_CODE" -eq 0 ]
 }
 
 terminate_pid_tree() {
@@ -3323,14 +3407,17 @@ create_pull_request() {
   local base="$3"
   local remote="origin"
   local out
-  if ! out="$(git -C "$repo" push -u "$remote" "$branch" 2>&1)"; then
+  if ! run_compact_command "$repo" "push branch" git push -u "$remote" "$branch"; then
+    out="$RUN_OUTPUT"
     PULL_REQUEST_ERROR="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
     return 1
   fi
-  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr create --fill --base "$base" --head "$branch" 2>&1)"; then
+  if ! run_compact_command "$repo" "open pull request" gh pr create --fill --base "$base" --head "$branch"; then
+    out="$RUN_OUTPUT"
     PULL_REQUEST_ERROR="pushed $remote/$branch, but PR creation failed: $(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n 1)"
     return 1
   fi
+  out="$RUN_OUTPUT"
   PULL_REQUEST="$(printf '%s\n' "$out" | awk '/^https?:\/\// { print; exit }')"
   if [ -z "$PULL_REQUEST" ]; then PULL_REQUEST="$(printf '%s\n' "$out" | tail -n 1)"; fi
 }
@@ -3404,7 +3491,7 @@ Style:
 - No emoji.
 EOF
 )"
-  run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.codex/logs/$slug-report.log" "$prompt" "report" >/dev/null 2>&1 || true
+  with_compact_wait "write report" run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.codex/logs/$slug-report.log" "$prompt" "" || true
 }
 
 report_metadata() {
@@ -3607,35 +3694,30 @@ spec_command() {
   today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
   prompt="$(spec_prompt "$context" "$output" "$skill" "$today" "$spec_dir")"
-  if [ "$USE_TUI" = true ]; then event_step "spec" "generate spec with $(agent_label "$agent")"; fi
   if [ "$agent" = "codex" ]; then
-    run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
+    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
   elif [ "$agent" = "claude" ]; then
-    run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
+    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
   else
-    run_with_prompt "$PWD" "" "" "$prompt" "$agent"
+    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" "$agent"
   fi
   if [ "$RUN_CODE" -ne 0 ]; then
-    if [ "$USE_TUI" = true ]; then event_done "spec" false "failed"; fi
     if [ -n "$RUN_STDERR" ]; then printf '%s\n' "$RUN_STDERR" >&2; else printf '%s\n' "${RUN_STDOUT:-spec agent failed}" >&2; fi
     return 2
   fi
 
   local markdown file
   if ! markdown="$(extract_generated_spec "$RUN_STDOUT$RUN_STDERR")"; then
-    if [ "$USE_TUI" = true ]; then event_done "spec" false "invalid output"; fi
     printf '%s\n' "agent output must include spec frontmatter" >&2
     return 2
   fi
   file="$(generated_spec_path "$markdown" "$output" "$today" "$force")"
   if [ -f "$file" ] && [ "$force" = false ]; then
-    if [ "$USE_TUI" = true ]; then event_done "spec" false "already exists"; fi
     printf 'spec already exists: %s\n' "$file" >&2
     return 2
   fi
   mkdir -p "$(dirname "$file")"
   printf '%s\n' "$markdown" > "$file"
-  if [ "$USE_TUI" = true ]; then event_done "spec" true "$file"; fi
   printf 'spec:  %s\n' "$file"
   printf 'agent: %s\n' "$(agent_label "$agent")"
 }
