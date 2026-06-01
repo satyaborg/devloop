@@ -66,7 +66,7 @@ Open and maintain a draft PR during the loop:
 devloop --create-pr .specs/change.md
 ```
 
-A plain non-interactive `devloop <spec>` remains local-only. This mode opens and maintains a draft PR during the loop. With `--create-pr`, the PR is canonical for review history; local `.codex/reviews/*.md` files are execution cache.
+A plain non-interactive `devloop <spec>` remains local-only. With `--create-pr`, `devloop` opens and maintains a draft PR during the loop, and the PR is canonical for review history; local `.codex/reviews/*.md` files are execution cache.
 
 See tracked runs and cleanup candidates:
 
