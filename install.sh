@@ -64,6 +64,7 @@ ln -sfn "$SOURCE" "$TARGET"
 echo "installed devloop -> $SOURCE"
 install_required_ui_tools || TOOL_STATUS=$?
 devloop_install_skills "$ROOT" || SKILL_STATUS=$?
+echo "optional for PR-backed loops: install GitHub CLI and run gh auth login"
 
 case ":${PATH:-}:" in
   *":$BIN_DIR:"*) ;;
