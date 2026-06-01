@@ -603,11 +603,16 @@ case "${1:-}" in
           exit 1
         fi
         head=""
+        body_file=""
         while [ "$#" -gt 0 ]; do
           case "$1" in
             --head)
               shift
               head="${1:-}"
+              ;;
+            --body-file)
+              shift
+              body_file="${1:-}"
               ;;
           esac
           shift || true
@@ -615,6 +620,9 @@ case "${1:-}" in
         if [ -n "$head" ] && ! git ls-remote --heads origin "$head" | grep -q .; then
           printf 'head branch was not pushed before PR creation: %s\n' "$head" >&2
           exit 1
+        fi
+        if [ -n "$body_file" ]; then
+          cp "$body_file" "$state/pr-body.md"
         fi
         url="${DEVLOOP_GH_PR_URL:-https://github.com/satyaborg/devloop/pull/123}"
         printf '%s\n' "$url" > "$state/pr_url"
@@ -1114,6 +1122,17 @@ contains "$pr_accept_output" "pr:" "PR accept loop"
 create_line="$(grep -n 'gh pr create' "$pr_log" | cut -d: -f1 | head -n 1)"
 review_line="$(grep -n 'agent reviewer 1' "$pr_log" | cut -d: -f1 | head -n 1)"
 [[ -n "$create_line" && -n "$review_line" && "$create_line" -lt "$review_line" ]] || fail "PR was not created before reviewer pass 1"
+contains "$(cat "$pr_log")" "--body-file" "PR create body flag"
+[[ -s "$pr_state/pr-body.md" ]] || fail "created PR body missing"
+pr_body="$(cat "$pr_state/pr-body.md")"
+contains "$pr_body" "E2E PR Accept" "created PR body"
+contains "$pr_body" "Base branch" "created PR body"
+contains "$pr_body" "$(base_branch "$pr_repo")" "created PR body"
+contains "$pr_body" "Head branch" "created PR body"
+contains "$pr_body" "feat/e2e-pr-accept" "created PR body"
+contains "$pr_body" "Latest commit" "created PR body"
+if ! printf '%s\n' "$pr_body" | grep -Eq 'Latest commit[[:space:]\|`]*[0-9a-f]{7,}'; then fail "created PR body missing commit hash"; fi
+contains "$pr_body" "Write the result file." "created PR body"
 equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "one round PR comment"
 equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "one final PR comment"
 round_body="$(cat "$pr_state/comments/round-1.md")"

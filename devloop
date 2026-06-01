@@ -2160,7 +2160,7 @@ run_devloop() {
     if [ "$create_pr" = true ] && [ -n "$PASS_COMMIT" ]; then
       local pr_id="pull-request-$pass"
       event_step "$pr_id" "push branch and ensure draft PR"
-      if create_pull_request "$repo" "$FINAL_BRANCH" "$base"; then
+      if create_pull_request "$repo" "$FINAL_BRANCH" "$base" "$spec" "$criteria_file" "$FINAL_COMMIT"; then
         event_done "$pr_id" true "$PULL_REQUEST"
       else
         STATUS="pr-error"
@@ -3535,7 +3535,10 @@ create_pull_request() {
   local repo="$1"
   local branch="$2"
   local base="$3"
-  ensure_pull_request "$repo" "$branch" "$base"
+  local spec="${4:-}"
+  local criteria_file="${5:-}"
+  local commit="${6:-}"
+  ensure_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit"
 }
 
 push_pull_request_branch() {
@@ -3561,16 +3564,76 @@ lookup_pull_request() {
   PULL_REQUEST="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
 }
 
+spec_title() {
+  local spec="$1"
+  [ -f "$spec" ] || return 1
+  awk '
+    /^#[[:space:]]+/ {
+      sub(/^#[[:space:]]+/, "")
+      print
+      exit
+    }
+  ' "$spec"
+}
+
+draft_pull_request_body() {
+  local spec="$1"
+  local criteria_file="$2"
+  local base="$3"
+  local branch="$4"
+  local commit="$5"
+  local title
+  title="$(spec_title "$spec" 2>/dev/null || true)"
+  if [ -z "$spec" ]; then spec="none"; fi
+  if [ -z "$title" ]; then title="none"; fi
+  if [ -z "$commit" ]; then commit="none"; fi
+  cat <<EOF
+# Devloop Draft PR
+
+This draft PR was created by \`devloop --create-pr\`.
+
+| Field | Value |
+| --- | --- |
+| Source spec | \`$spec\` |
+| Spec title | $title |
+| Base branch | \`$base\` |
+| Head branch | \`$branch\` |
+| Latest commit | \`$commit\` |
+
+## Acceptance Criteria
+
+$(if [ -n "$criteria_file" ] && [ -f "$criteria_file" ]; then criteria_block "$criteria_file"; else printf '%s\n' "No parsed acceptance criteria."; fi)
+
+## Review Trail
+
+Review rounds and final report will be posted as PR comments.
+EOF
+}
+
 create_draft_pull_request() {
   local repo="$1"
   local branch="$2"
   local base="$3"
-  local out
-  if ! run_compact_command "$repo" "open draft pull request" gh pr create --draft --fill --base "$base" --head "$branch"; then
-    out="$RUN_OUTPUT"
-    PULL_REQUEST_ERROR="PR creation failed: $(gh_error_detail "$out")"
+  local spec="${4:-}"
+  local criteria_file="${5:-}"
+  local commit="${6:-}"
+  local body_file out
+  if ! body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-create.XXXXXX")"; then
+    PULL_REQUEST_ERROR="PR body file failed: mktemp failed"
     return 1
   fi
+  if ! draft_pull_request_body "$spec" "$criteria_file" "$base" "$branch" "$commit" > "$body_file"; then
+    PULL_REQUEST_ERROR="PR body file failed"
+    rm -f "$body_file"
+    return 1
+  fi
+  if ! run_compact_command "$repo" "open draft pull request" gh pr create --draft --fill --base "$base" --head "$branch" --body-file "$body_file"; then
+    out="$RUN_OUTPUT"
+    PULL_REQUEST_ERROR="PR creation failed: $(gh_error_detail "$out")"
+    rm -f "$body_file"
+    return 1
+  fi
+  rm -f "$body_file"
   out="$RUN_OUTPUT"
   PULL_REQUEST="$(printf '%s\n' "$out" | awk '/^https?:\/\// { print; exit }')"
   if [ -z "$PULL_REQUEST" ]; then PULL_REQUEST="$(printf '%s\n' "$out" | tail -n 1)"; fi
@@ -3580,11 +3643,14 @@ ensure_pull_request() {
   local repo="$1"
   local branch="$2"
   local base="$3"
+  local spec="${4:-}"
+  local criteria_file="${5:-}"
+  local commit="${6:-}"
   PULL_REQUEST_ERROR=""
   if ! push_pull_request_branch "$repo" "$branch"; then return 1; fi
   if ! lookup_pull_request "$repo" "$branch"; then return 1; fi
   if [ -n "$PULL_REQUEST" ]; then return 0; fi
-  create_draft_pull_request "$repo" "$branch" "$base"
+  create_draft_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit"
 }
 
 round_review_comment_body() {
