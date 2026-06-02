@@ -71,36 +71,36 @@
         <!-- faq -->
         <section>
           <h2 class="text-ink"><span class="text-faint">## </span><span class="font-bold tracking-wide">FAQ</span></h2>
-          <div class="mt-2 border-t border-line/70">
-            <details class="faq border-b border-line/70">
+          <div class="mt-2">
+            <details class="faq">
               <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
                 <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
                 <span>Does it touch my checkout?</span>
               </summary>
               <p class="pb-3 pl-6 text-dim">No. Isolated sibling worktrees; never pushes or opens a PR unless you pass <code>--create-pr</code>.</p>
             </details>
-            <details class="faq border-b border-line/70">
+            <details class="faq">
               <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
                 <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
                 <span>Which agents?</span>
               </summary>
               <p class="pb-3 pl-6 text-dim">Codex codes, Claude reviews by default. Both swap via <code>--coder</code> / <code>--reviewer</code>.</p>
             </details>
-            <details class="faq border-b border-line/70">
+            <details class="faq">
               <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
                 <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
                 <span>Can I run it on my current branch?</span>
               </summary>
               <p class="pb-3 pl-6 text-dim">By default it runs in an isolated sibling worktree. Pass <code>--in-place</code> to work in your current checkout instead.</p>
             </details>
-            <details class="faq border-b border-line/70">
+            <details class="faq">
               <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
                 <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
                 <span>When does the loop stop?</span>
               </summary>
               <p class="pb-3 pl-6 text-dim">On ACCEPT, on a stall, or out of passes: up to 5 by default (clamped 1-10), a 30-minute timeout, and a <code>.devloop/verify</code> hook that blocks acceptance when it fails.</p>
             </details>
-            <details class="faq border-b border-line/70">
+            <details class="faq">
               <summary class="flex cursor-pointer items-baseline gap-2 py-2 text-ink">
                 <span aria-hidden="true"><span class="text-faint">[</span><span class="faq-sign text-violet"></span><span class="text-faint">]</span></span>
                 <span>Any telemetry?</span>
@@ -115,6 +115,7 @@
       <footer class="flex flex-col gap-3 py-3 text-dim sm:flex-row sm:items-center sm:justify-between">
         <div>MIT</div>
         <nav class="flex flex-wrap gap-x-5 gap-y-1">
+          <a class="brk" href="https://satyaborg.com/blog/devloop">BLOG</a>
           <a class="brk" href="https://github.com/satyaborg/devloop">GITHUB</a>
         </nav>
       </footer>

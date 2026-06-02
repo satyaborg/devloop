@@ -57,6 +57,9 @@
     background: var(--color-violet);
     color: #070708;
   }
+  a {
+    cursor: pointer;
+  }
 }
 
 @layer components {
