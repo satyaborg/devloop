@@ -291,12 +291,14 @@
                                         ></span
                                         ><span class="text-faint">]</span></span
                                     >
-                                    <span>Does it touch my checkout?</span>
+                                    <span>Will it touch my working tree?</span>
                                 </summary>
                                 <p class="pb-3 pl-6 text-dim">
-                                    No. Isolated sibling worktrees; never pushes
-                                    or opens a PR unless you pass
-                                    <code>--create-pr</code>.
+                                    No. It runs in isolated sibling worktrees and
+                                    never pushes or opens a PR unless you pass
+                                    <code>--create-pr</code>. Pass
+                                    <code>--in-place</code> to work in your
+                                    current checkout instead.
                                 </p>
                             </details>
                             <details class="faq">
@@ -310,11 +312,11 @@
                                         ></span
                                         ><span class="text-faint">]</span></span
                                     >
-                                    <span>Which agents?</span>
+                                    <span>Which agent codes, which reviews?</span>
                                 </summary>
                                 <p class="pb-3 pl-6 text-dim">
-                                    Codex codes, Claude reviews by default. Both
-                                    swap via <code>--coder</code> /
+                                    Codex codes and Claude reviews by default.
+                                    Swap either with <code>--coder</code> /
                                     <code>--reviewer</code>.
                                 </p>
                             </details>
@@ -329,15 +331,13 @@
                                         ></span
                                         ><span class="text-faint">]</span></span
                                     >
-                                    <span
-                                        >Can I run it on my current
-                                        branch?</span
-                                    >
+                                    <span>Can it run my tests?</span>
                                 </summary>
                                 <p class="pb-3 pl-6 text-dim">
-                                    By default it runs in an isolated sibling
-                                    worktree. Pass <code>--in-place</code> to
-                                    work in your current checkout instead.
+                                    Yes. Add a <code>.devloop/verify</code> hook
+                                    with your build, lint, or test command. It
+                                    gates acceptance and blocks the loop when it
+                                    fails.
                                 </p>
                             </details>
                             <details class="faq">
@@ -356,9 +356,7 @@
                                 <p class="pb-3 pl-6 text-dim">
                                     On ACCEPT, on a stall, or when it runs out
                                     of passes (up to 5 by default, clamped
-                                    1-10). A 30-minute timeout and a
-                                    <code>.devloop/verify</code> hook that
-                                    blocks acceptance on failure also stop it.
+                                    1-10). A 30-minute timeout caps each run.
                                 </p>
                             </details>
                             <details class="faq">
