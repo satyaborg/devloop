@@ -41,7 +41,7 @@
 
                         <p class="text-dim">
                             Spec-driven code/review loop that runs until all
-                            acceptance criteria are met.
+                            acceptance criteria are met and bugs fixed.
                         </p>
 
                         <div
@@ -127,14 +127,12 @@
                         <p class="mt-2 text-ink/90">
                             Developers now spend most of their time in code
                             review, assisted by coding agents. But the same
-                            model family
-                            can't both code and review. It favors its own
-                            outputs too much. Devloop closes the loop by letting
-                            Codex implement and Claude Code review
-                            adversarially (or vice versa), until all criteria
-                            are met and reviews addressed, so humans only come
-                            in where judgment pays off: the spec and PR
-                            sign-off.
+                            model family can't both code and review. It favors
+                            its own outputs. Devloop makes Codex implement and
+                            Claude Code review adversarially (or vice versa),
+                            until all criteria are met and reviews addressed, so
+                            humans only come in where judgment pays off: the
+                            spec and PR sign-off.
                         </p>
                     </section>
 
@@ -146,13 +144,14 @@
                                 >HOW IT WORKS</span
                             >
                         </h2>
-                        <ul class="mt-2 space-y-1 text-ink/90">
+                        <ul class="mt-2 space-y-4 text-ink/90">
                             <li>
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">Spec</span>:
-                                `/devloop-spec` skill generates a short markdown
+                                <span class="font-bold text-ink">Spec</span>:
+                                <code>/devloop-spec</code> skill generates a
+                                short markdown
                                 spec with a clear problem, outcome, acceptance
                                 criteria, and what's in scope as much as what's
                                 out.
@@ -161,15 +160,16 @@
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">Code</span>: Codex
+                                <span class="font-bold text-ink">Code</span>: Codex
                                 implements the spec in isolated git worktrees.
                             </li>
                             <li>
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">Review</span>: Claude
-                                Code runs `/devloop-review` against the spec to
+                                <span class="font-bold text-ink">Review</span>: Claude
+                                Code runs <code>/devloop-review</code> against
+                                the spec to
                                 ensure all acceptance gates along with
                                 engineering gates (security, maintainability,
                                 correctness, simplicity, etc.) are met.
@@ -178,7 +178,7 @@
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">Loop</span>: Iterates on
+                                <span class="font-bold text-ink">Loop</span>: Iterates on
                                 reject, stops on accept or max passes, and
                                 generates a PR ready for human review.
                             </li>
@@ -195,22 +195,18 @@
                         </h2>
                         <div class="mt-2 grid gap-6 sm:grid-cols-2">
                             <div>
-                                <p class="text-ink">
-                                    <span class="text-faint"># </span
-                                    >when to use
-                                </p>
-                                <ul class="mt-1 space-y-1 text-ink/90">
+                                <ul class="space-y-4 text-ink/90">
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-violet">+</span
+                                        ><span class="text-violet">✓</span
                                         ><span class="text-faint">]</span>
                                         The work can be pinned down in a clear
-                                        spec through an interview with the coding
-                                        agent.
+                                        spec through an interview with the
+                                        coding agent.
                                     </li>
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-violet">+</span
+                                        ><span class="text-violet">✓</span
                                         ><span class="text-faint">]</span>
                                         The change is large or multi-step enough
                                         that adversarial review actually catches
@@ -218,7 +214,7 @@
                                     </li>
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-violet">+</span
+                                        ><span class="text-violet">✓</span
                                         ><span class="text-faint">]</span>
                                         You want the agents to iterate
                                         unattended and only pull you in for the
@@ -227,21 +223,17 @@
                                 </ul>
                             </div>
                             <div>
-                                <p class="text-ink">
-                                    <span class="text-faint"># </span
-                                    >when not to use
-                                </p>
-                                <ul class="mt-1 space-y-1 text-ink/90">
+                                <ul class="space-y-4 text-ink/90">
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-dim">-</span
+                                        ><span class="text-dim">✗</span
                                         ><span class="text-faint">]</span>
-                                        The task is one-shotable and the scope is
-                                        tiny: just ask the agent directly.
+                                        The task is one-shotable and the scope
+                                        is tiny: just ask the agent directly.
                                     </li>
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-dim">-</span
+                                        ><span class="text-dim">✗</span
                                         ><span class="text-faint">]</span>
                                         The work is exploratory or open-ended,
                                         where acceptance criteria can't be
@@ -249,7 +241,7 @@
                                     </li>
                                     <li>
                                         <span class="text-faint">[</span
-                                        ><span class="text-dim">-</span
+                                        ><span class="text-dim">✗</span
                                         ><span class="text-faint">]</span>
                                         You want hands-on control of every edit
                                         rather than a loop running on its own.
@@ -375,7 +367,9 @@
                 >
                     <div>
                         Built by
-                        <a class="brk" href="https://github.com/satyaborg"
+                        <a
+                            class="text-ink transition-colors hover:text-violet-bright"
+                            href="https://github.com/satyaborg"
                             >@satyaborg</a
                         >
                     </div>
