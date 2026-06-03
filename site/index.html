@@ -146,9 +146,11 @@
                         </h2>
                         <ul class="mt-2 space-y-4 text-ink/90">
                             <li>
-                                <span class="text-faint">[</span
-                                ><span class="text-violet">*</span
-                                ><span class="text-faint">]</span>
+                                <span aria-hidden="true"
+                                    ><span class="text-faint">[</span
+                                    ><span class="text-violet">*</span
+                                    ><span class="text-faint">]</span></span
+                                >
                                 <span class="font-bold text-ink">Spec</span>:
                                 <code>/devloop-spec</code> skill generates a
                                 short markdown
@@ -157,16 +159,20 @@
                                 out.
                             </li>
                             <li>
-                                <span class="text-faint">[</span
-                                ><span class="text-violet">*</span
-                                ><span class="text-faint">]</span>
+                                <span aria-hidden="true"
+                                    ><span class="text-faint">[</span
+                                    ><span class="text-violet">*</span
+                                    ><span class="text-faint">]</span></span
+                                >
                                 <span class="font-bold text-ink">Code</span>: Codex
                                 implements the spec in isolated git worktrees.
                             </li>
                             <li>
-                                <span class="text-faint">[</span
-                                ><span class="text-violet">*</span
-                                ><span class="text-faint">]</span>
+                                <span aria-hidden="true"
+                                    ><span class="text-faint">[</span
+                                    ><span class="text-violet">*</span
+                                    ><span class="text-faint">]</span></span
+                                >
                                 <span class="font-bold text-ink">Review</span>: Claude
                                 Code runs <code>/devloop-review</code> against
                                 the spec to
@@ -175,9 +181,11 @@
                                 correctness, simplicity, etc.) are met.
                             </li>
                             <li>
-                                <span class="text-faint">[</span
-                                ><span class="text-violet">*</span
-                                ><span class="text-faint">]</span>
+                                <span aria-hidden="true"
+                                    ><span class="text-faint">[</span
+                                    ><span class="text-violet">*</span
+                                    ><span class="text-faint">]</span></span
+                                >
                                 <span class="font-bold text-ink">Loop</span>: Iterates on
                                 reject, stops on accept or max passes, and
                                 generates a PR ready for human review.
@@ -195,27 +203,34 @@
                         </h2>
                         <div class="mt-2 grid gap-6 sm:grid-cols-2">
                             <div>
+                                <h3 class="sr-only">When to use</h3>
                                 <ul class="space-y-4 text-ink/90">
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-violet">✓</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         The work can be pinned down in a clear
                                         spec through an interview with the
                                         coding agent.
                                     </li>
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-violet">✓</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         The change is large or multi-step enough
                                         that adversarial review actually catches
                                         something.
                                     </li>
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-violet">✓</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="20 6 9 17 4 12" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         You want the agents to iterate
                                         unattended and only pull you in for the
                                         spec and PR sign-off.
@@ -223,26 +238,33 @@
                                 </ul>
                             </div>
                             <div>
+                                <h3 class="sr-only">When not to use</h3>
                                 <ul class="space-y-4 text-ink/90">
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-dim">✗</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         The task is one-shotable and the scope
                                         is tiny: just ask the agent directly.
                                     </li>
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-dim">✗</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         The work is exploratory or open-ended,
                                         where acceptance criteria can't be
                                         written up front.
                                     </li>
                                     <li>
-                                        <span class="text-faint">[</span
-                                        ><span class="text-dim">✗</span
-                                        ><span class="text-faint">]</span>
+                                        <span aria-hidden="true"
+                                            ><span class="text-faint">[</span
+                                            ><svg class="inline-block h-3 w-3 align-[-0.1em] text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg
+                                            ><span class="text-faint">]</span></span
+                                        >
                                         You want hands-on control of every edit
                                         rather than a loop running on its own.
                                     </li>
