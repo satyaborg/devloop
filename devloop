@@ -215,7 +215,7 @@ welcome_tui() {
   printf '  %-42s %s\n' "devloop clean" "show safe cleanup candidates"
   printf '  %-42s %s\n' "devloop continue" "resume a tracked run"
   printf '  %-42s %s\n' "devloop menu" "open the guided UI"
-  printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "generate a spec"
+  printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "launch a spec agent"
   printf '  %-42s %s\n' "devloop .specs/change.md" "run a spec"
   printf '  %-42s %s\n' "devloop --create-pr .specs/change.md" "open and maintain a draft PR during the loop"
   printf '\n'
@@ -246,9 +246,10 @@ usage: devloop spec [--agent codex|claude|<cmd>] [--output spec.md] [--force] [c
        devloop spec --print-skill
        devloop spec --skill-path
 
-Agents: Codex or Claude Code. Custom commands are also supported.
+Agents: Codex or Claude Code. Custom launch commands receive the prompt as their first argument.
 
-Without context, the bundled skill uses its interview path before writing a spec.
+Launches the selected agent with the devloop-spec skill prompt. Without context,
+the agent uses the skill's interview path before writing a spec.
 EOF
 }
 
@@ -2567,6 +2568,12 @@ absolute_path() {
   (cd "$dir" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "$base")
 }
 
+absolute_dir_path() {
+  local dir="$1"
+  mkdir -p "$dir"
+  (cd "$dir" >/dev/null 2>&1 && pwd -P)
+}
+
 line_count() {
   local file="$1"
   awk 'END{print NR + 0}' "$file"
@@ -4004,37 +4011,23 @@ spec_command() {
     skill-path) printf '%s\n' "$skill"; return ;;
   esac
 
-  local context today prompt spec_dir
+  local context today prompt spec_dir target_path target_dir
   context="$(resolve_spec_context "${context_items[@]}")"
   today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
-  prompt="$(spec_prompt "$context" "$output" "$skill" "$today" "$spec_dir")"
-  if [ "$agent" = "codex" ]; then
-    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -s read-only -C "$PWD" -
-  elif [ "$agent" = "claude" ]; then
-    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD"
+  if [ -n "$output" ]; then
+    target_path="$(absolute_path "$output")" || return 1
+    target_dir="$(dirname "$target_path")"
   else
-    with_compact_wait "generate spec" run_with_prompt "$PWD" "" "" "$prompt" "$agent"
-  fi
-  if [ "$RUN_CODE" -ne 0 ]; then
-    if [ -n "$RUN_STDERR" ]; then printf '%s\n' "$RUN_STDERR" >&2; else printf '%s\n' "${RUN_STDOUT:-spec agent failed}" >&2; fi
-    return 2
+    target_path=""
+    target_dir="$(absolute_dir_path "$spec_dir")" || return 1
   fi
 
-  local markdown file
-  if ! markdown="$(extract_generated_spec "$RUN_STDOUT$RUN_STDERR")"; then
-    printf '%s\n' "agent output must include spec frontmatter" >&2
-    return 2
-  fi
-  file="$(generated_spec_path "$markdown" "$output" "$today" "$force")"
-  if [ -f "$file" ] && [ "$force" = false ]; then
-    printf 'spec already exists: %s\n' "$file" >&2
-    return 2
-  fi
-  mkdir -p "$(dirname "$file")"
-  printf '%s\n' "$markdown" > "$file"
-  printf 'spec:  %s\n' "$file"
+  prompt="$(spec_prompt "$context" "$target_path" "$force" "$skill" "$today" "$target_dir")"
   printf 'agent: %s\n' "$(agent_label "$agent")"
+  printf 'mode:  interactive spec session\n'
+  printf 'write: %s\n' "$target_dir"
+  launch_spec_agent "$agent" "$prompt" "$target_dir"
 }
 
 resolve_spec_context() {
@@ -4060,28 +4053,67 @@ resolve_spec_context() {
 spec_prompt() {
   local context="$1"
   local output="$2"
-  local skill="$3"
-  local today="$4"
-  local spec_dir="$5"
-  local output_line
+  local force="$3"
+  local skill="$4"
+  local today="$5"
+  local target_dir="$6"
+  local target_line overwrite_line
   if [ -n "$output" ]; then
-    output_line="Output path: $output"
+    target_line="Requested spec path: $output"
   else
-    output_line="Output path: choose a $spec_dir/YYYY-MM-DD-<slug>.md path if you write a file; otherwise return markdown on stdout."
+    target_line="Requested spec path: choose $target_dir/$today-<slug>.md"
+  fi
+  if [ "$force" = true ]; then
+    overwrite_line="Overwrite policy: overwriting the requested path is allowed."
+  else
+    overwrite_line="Overwrite policy: do not overwrite an existing spec; choose a non-conflicting path instead."
   fi
   cat <<EOF
-Use the installed devloop-spec skill to produce one implementation spec.
+Skill: use the installed devloop-spec skill.
+
+You are running inside an interactive agent session launched by devloop.
+You own the interview and the spec text. Devloop owns the implementation,
+review, PR, and report loop after the spec file exists.
 
 Current date: $today
-$output_line
+Spec directory: $target_dir
+$target_line
+$overwrite_line
 
-If the source context is missing or too thin, follow the skill's interview path before drafting. Return only the final markdown spec. Do not wrap it in a code fence.
+If the source context is missing or too thin, follow the skill's cold-start
+interview path before drafting. Ask one question at a time until the spec can be
+written without invented requirements.
+
+When ready, write exactly one devloop-ready markdown spec to the requested path.
+After writing the spec, tell the user the path and offer to continue with:
+
+devloop --create-pr <spec path>
+
+Do not implement the change directly in this session unless the user explicitly
+asks you to leave the devloop flow.
 
 Bundled skill path, for fallback only: $skill
 
 Context:
 $context
 EOF
+}
+
+launch_spec_agent() {
+  local agent="$1"
+  local prompt="$2"
+  local target_dir="$3"
+  case "$agent" in
+    codex)
+      codex "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" -C "$PWD" --add-dir "$target_dir" -- "$prompt"
+      ;;
+    claude)
+      claude "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --add-dir "$PWD" --add-dir "$target_dir" -- "$prompt"
+      ;;
+    *)
+      "$agent" "$prompt"
+      ;;
+  esac
 }
 
 extract_generated_spec() {

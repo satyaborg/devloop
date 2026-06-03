@@ -701,8 +701,8 @@ agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'
 #!/usr/bin/env bash
 set -euo pipefail
-cat >/tmp/devloop-spec-agent-prompt.txt
-printf '%s\n' '---' 'status: draft' 'type: feat' 'created: 2026-05-29' 'pr: null' '---' '' '# Shell migration spec'
+printf '%s\n' "$1" >/tmp/devloop-spec-agent-prompt.txt
+printf '%s\n' "launched spec agent"
 AGENT
 chmod +x "$agent"
 
@@ -718,12 +718,17 @@ USE_TUI=false
   HOME="$spec_home" main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 USE_TUI="$old_use_tui"
-contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
-[[ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec under absolute configured dir"
+repo_specs_real="$(cd "$repo_specs" && pwd -P)"
+contains "$(cat /tmp/devloop-spec-test.out)" "interactive spec session" "spec command"
+contains "$(cat /tmp/devloop-spec-test.out)" "write: $repo_specs_real" "spec command target"
+if [ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]; then fail "spec command wrote the spec instead of launching the agent"; fi
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Skill: use the installed devloop-spec skill." "spec prompt skill"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Output path: choose a $repo_specs/" "spec prompt configured output"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Requested spec path: choose $repo_specs_real/$(date +%F)-<slug>.md" "spec prompt configured output"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Devloop owns the implementation" "spec prompt ownership"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "devloop --create-pr <spec path>" "spec prompt handoff"
 contains "$(absolute_path "$work/absolute-path/nested.md")" "/absolute-path/nested.md" "absolute path"
-ok "spec generation"
+ok "spec launch"
 
 cat > "$fake_bin/codex" <<'AGENT'
 #!/usr/bin/env bash
