@@ -86,9 +86,7 @@
                             ></span>
                         </div>
                         <p class="mt-2 text-dim">
-                            Runs on macOS. Requires
-                            <span class="text-ink">Codex</span> and
-                            <span class="text-ink">Claude Code</span>.
+                            Requires Codex and Claude Code. Runs on macOS.
                         </p>
                     </section>
 
@@ -127,13 +125,15 @@
                             ><span class="font-bold tracking-wide">WHY</span>
                         </h2>
                         <p class="mt-2 text-ink/90">
-                            Developers spend 95% of time in code review, thanks
-                            to coding agents. But using the same model family to
-                            review code doesn't work. They favor their own
-                            outputs and cannot critically assess. Devloop closes
-                            the loop by cycling between Codex and Claude Code,
-                            so humans stay in the loop only where judgment pays
-                            off: at the spec and PR sign-off stages.
+                            Developers now spend most time in code review,
+                            assisted by coding agents. But the same model family
+                            can't both code and review. It favors its own
+                            outputs too much. Devloop closes the loop by letting
+                            Codex implement, and Claude Code review
+                            adversarially (or vice versa), until all criteria
+                            are met and reviews addressed, so humans only come
+                            in where judgment pays off: the spec and PR
+                            sign-off.
                         </p>
                     </section>
 
@@ -150,33 +150,111 @@
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">Generate a spec</span>: a
-                                short markdown spec with clear outcome,
-                                acceptance criteria, what's in scope as much as
-                                out of it.
+                                <span class="text-ink">Spec</span>:
+                                `/devloop-spec` skill generates a short markdown
+                                with clear problem, outcome, acceptance
+                                criteria, what's in scope as much as out of it.
                             </li>
                             <li>
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">code</span>: Codex
-                                implements in an isolated worktree.
+                                <span class="text-ink">Code</span>: Codex
+                                implements the spec in isolated git worktrees.
                             </li>
                             <li>
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">review</span>: Claude
-                                Code reviews against the spec.
+                                <span class="text-ink">Review</span>: Claude
+                                Code runs `/devloop-review` against the spec to
+                                ensure all acceptance gates along with
+                                engineering gates (security, maintainability,
+                                correctness, simplicity etc.) are met.
                             </li>
                             <li>
                                 <span class="text-faint">[</span
                                 ><span class="text-violet">*</span
                                 ><span class="text-faint">]</span>
-                                <span class="text-ink">loop</span>: retry on
-                                reject, stop on accept or max passes.
+                                <span class="text-ink">Loop</span>: Iterates on
+                                reject, stop on accept or max passes and
+                                generates PR ready for human review.
                             </li>
                         </ul>
+                    </section>
+
+                    <!-- when (not) to use -->
+                    <section>
+                        <h2 class="text-ink">
+                            <span class="text-faint">## </span
+                            ><span class="font-bold tracking-wide"
+                                >WHEN (NOT) TO USE</span
+                            >
+                        </h2>
+                        <div class="mt-2 grid gap-6 sm:grid-cols-2">
+                            <div>
+                                <p class="text-ink">
+                                    <span class="text-faint"># </span
+                                    >when to use
+                                </p>
+                                <ul class="mt-1 space-y-1 text-ink/90">
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-violet">+</span
+                                        ><span class="text-faint">]</span>
+                                        The work can be pinned down in a clear
+                                        spec through an interview with the coding
+                                        agent.
+                                    </li>
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-violet">+</span
+                                        ><span class="text-faint">]</span>
+                                        The change is large or multi-step enough
+                                        that adversarial review actually catches
+                                        something.
+                                    </li>
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-violet">+</span
+                                        ><span class="text-faint">]</span>
+                                        You want the agents to iterate
+                                        unattended and only pull you in for the
+                                        spec and PR sign-off.
+                                    </li>
+                                </ul>
+                            </div>
+                            <div>
+                                <p class="text-ink">
+                                    <span class="text-faint"># </span
+                                    >when not to use
+                                </p>
+                                <ul class="mt-1 space-y-1 text-ink/90">
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-dim">-</span
+                                        ><span class="text-faint">]</span>
+                                        The task is one-shotable and the scope is
+                                        tiny: just ask the agent directly.
+                                    </li>
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-dim">-</span
+                                        ><span class="text-faint">]</span>
+                                        The work is exploratory or open-ended,
+                                        where acceptance criteria can't be
+                                        written up front.
+                                    </li>
+                                    <li>
+                                        <span class="text-faint">[</span
+                                        ><span class="text-dim">-</span
+                                        ><span class="text-faint">]</span>
+                                        You want hands-on control of every edit
+                                        rather than a loop running on its own.
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
                     </section>
 
                     <!-- faq -->
@@ -293,7 +371,12 @@
                 <footer
                     class="flex flex-col gap-3 py-3 text-dim sm:flex-row sm:items-center sm:justify-between"
                 >
-                    <div>MIT</div>
+                    <div>
+                        Built by
+                        <a class="brk" href="https://github.com/satyaborg"
+                            >@satyaborg</a
+                        >
+                    </div>
                     <nav class="flex flex-wrap gap-x-5 gap-y-1">
                         <a class="brk" href="https://satyaborg.com/blog/devloop"
                             >BLOG</a
