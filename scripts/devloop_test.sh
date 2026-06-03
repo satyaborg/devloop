@@ -324,9 +324,6 @@ printf '%s\n' "# Track" > "$clean_status_track"
 if has_user_dirty_paths "$clean_status_repo"; then fail "clean worktree reported dirty"; fi
 equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$work/source-repo")" "ready" "clean candidate ready"
 
-spec_output=$'preface\n---\nstatus: draft\n---\n\n# Generated'
-equals "$(extract_generated_spec "$spec_output")" $'---\nstatus: draft\n---\n\n# Generated' "extract_generated_spec"
-
 config_repo="$work/config-repo"
 config_home="$work/config-home"
 config_default_specs="$config_home/Projects/specs"
@@ -353,7 +350,6 @@ equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir_scope)" "
 configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 contains "$configured_specs" ".specs/default.md" "configured spec search includes default dir"
 if printf '%s\n' "$configured_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "configured spec search included .devloop/specs"; fi
-equals "$(cd "$config_repo" && HOME="$config_home" generated_spec_path "$spec_output" "" "2026-05-29" false)" "$config_repo_real/custom-specs/2026-05-29-generated.md" "configured generated spec path"
 if (cd "$config_repo" && HOME="$config_home" write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
 
 absolute_specs="$work/shared-specs"
@@ -365,7 +361,6 @@ printf '%s\n' "# Shared" > "$absolute_specs/shared.md"
 absolute_configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 contains "$absolute_configured_specs" "$absolute_specs/shared.md" "configured spec search includes absolute dir"
 contains "$absolute_configured_specs" ".specs/default.md" "absolute spec search includes default dir"
-equals "$(cd "$config_repo" && HOME="$config_home" generated_spec_path "$spec_output" "" "2026-05-29" false)" "$absolute_specs/2026-05-29-generated.md" "absolute generated spec path"
 equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
 equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
 (cd "$config_repo" && HOME="$config_home" remove_config_spec_dir local)
@@ -896,8 +891,8 @@ agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'
 #!/usr/bin/env bash
 set -euo pipefail
-cat >/tmp/devloop-spec-agent-prompt.txt
-printf '%s\n' '---' 'status: draft' 'type: feat' 'created: 2026-05-29' 'pr: null' '---' '' '# Shell migration spec'
+printf '%s\n' "$1" >/tmp/devloop-spec-agent-prompt.txt
+printf '%s\n' "launched spec agent"
 AGENT
 chmod +x "$agent"
 
@@ -913,12 +908,24 @@ USE_TUI=false
   HOME="$spec_home" main spec --agent "$agent" "Keep devloop as Bash." >/tmp/devloop-spec-test.out
 )
 USE_TUI="$old_use_tui"
-contains "$(cat /tmp/devloop-spec-test.out)" "spec:" "spec command"
-[[ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]] || fail "spec command did not write dated spec under absolute configured dir"
+repo_specs_real="$(cd "$repo_specs" && pwd -P)"
+contains "$(cat /tmp/devloop-spec-test.out)" "interactive spec session" "spec command"
+contains "$(cat /tmp/devloop-spec-test.out)" "write: $repo_specs_real" "spec command target"
+if [ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]; then fail "spec command wrote the spec instead of launching the agent"; fi
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Skill: use the installed devloop-spec skill." "spec prompt skill"
 contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Output path: choose a $repo_specs/" "spec prompt configured output"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Requested spec path: choose $repo_specs_real/$(date +%F)-<slug>.md" "spec prompt configured output"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Devloop owns the implementation" "spec prompt ownership"
+contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "devloop --create-pr <spec path>" "spec prompt handoff"
 contains "$(absolute_path "$work/absolute-path/nested.md")" "/absolute-path/nested.md" "absolute path"
-ok "spec generation"
+existing_spec="$repo/existing.md"
+existing_spec_real="$(cd "$repo" && pwd -P)/existing.md"
+printf '%s\n' "# Existing" > "$existing_spec"
+rm -f /tmp/devloop-spec-agent-prompt.txt
+if (cd "$repo" && HOME="$spec_home" main spec --agent "$agent" --output "$existing_spec" "Replace me") >/tmp/devloop-spec-existing.out 2>/tmp/devloop-spec-existing.err; then fail "spec command allowed existing output without force"; fi
+contains "$(cat /tmp/devloop-spec-existing.err)" "spec already exists: $existing_spec_real" "spec existing output"
+if [ -f /tmp/devloop-spec-agent-prompt.txt ]; then fail "spec command launched agent for existing output"; fi
+ok "spec launch"
 
 cat > "$fake_bin/codex" <<'AGENT'
 #!/usr/bin/env bash

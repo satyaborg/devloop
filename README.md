@@ -79,7 +79,7 @@ rm -rf ~/.claude/skills/devloop-spec ~/.claude/skills/devloop-review
 
 ## Quick Start
 
-Create a spec:
+Launch a spec interview:
 
 ```sh
 devloop spec "add retry behavior to the chat sender"
@@ -116,14 +116,20 @@ devloop clean
 
 ## Specs
 
-A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md), or generate one:
+A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md), or launch a spec agent:
 
 ```sh
 devloop spec
 devloop spec --agent claude notes.md
 ```
 
-Devloop maintains a global config at `~/.devloop/config`. By default, generated specs are written under `~/Projects/specs/`, and the interactive spec picker searches that directory plus the current repo's `.specs/` fallback.
+`devloop spec` opens Codex by default, or Claude Code with `--agent claude`, with a prompt that invokes the installed `devloop-spec` skill. The agent interviews when context is thin, writes the spec, then hands back to the PR-backed loop:
+
+```sh
+devloop --create-pr <spec path>
+```
+
+Devloop maintains a global config at `~/.devloop/config`. By default, spec agents are prompted to write specs under `~/Projects/specs/`, and the interactive spec picker searches that directory plus the current repo's `.specs/` fallback.
 
 Change the shared spec directory from `devloop` > `Settings`, or edit `~/.devloop/config`:
 
@@ -177,7 +183,7 @@ devloop [options] <spec.md> [max=5]
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
 - `Run a spec`: pick a spec from the shared spec directory or `.specs/`.
-- `Create a spec`: choose the spec agent and provide source context.
+- `Create a spec`: choose the spec agent and provide source context; Devloop opens that agent with the `devloop-spec` prompt.
 - `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
 - `Settings`: view or change the shared spec path and set the run timeout.
