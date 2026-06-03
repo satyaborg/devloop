@@ -8,15 +8,47 @@ By default, Codex makes the change, Claude Code reviews it, and Codex retries un
 
 ## Install
 
+Install Devloop with the remote installer:
+
+```sh
+curl -fsSL https://devloop.sh/install | bash
+```
+
+The installer downloads a tagged GitHub release asset, verifies its `.sha256` checksum, installs it under `~/.local/share/devloop/<version>/`, links `~/.local/bin/devloop`, and installs the bundled Agent Skills for Codex under `~/.agents/skills` and Claude Code under `~/.claude/skills`.
+
+Install a specific version or preview the install:
+
+```sh
+curl -fsSL https://devloop.sh/install | bash -s -- --version 0.2.0
+curl -fsSL https://devloop.sh/install | bash -s -- --dry-run
+curl -fsSL https://devloop.sh/install | bash -s -- --no-skills
+```
+
+Inspect before running:
+
+```sh
+curl -fsSL https://devloop.sh/install -o install.sh
+less install.sh
+bash install.sh
+```
+
+The remote installer checks for `gum`, `fzf`, `codex`, and `claude`. It does not install Codex or Claude Code. If `gum` or `fzf` is missing, it only installs them with Homebrew after explicit confirmation; otherwise it prints the `brew install gum fzf` command to run yourself.
+
+If `~/.local/bin` is not on `PATH`, the installer prints the shell profile line to add. It does not edit shell profile files.
+
 Required dependencies: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`.
-`install.sh` installs missing `gum` and `fzf` with Homebrew. Install the Codex and Claude Code CLIs before running a loop, then verify everything with `devloop doctor`.
+`scripts/install.sh` installs missing `gum` and `fzf` with Homebrew. Install the Codex and Claude Code CLIs before running a loop, then verify everything with `devloop doctor`.
 The GitHub CLI is optional. Install `gh` and run `gh auth login` only when you want PR-backed loops.
+
+For source checkout development, use the local installer:
 
 ```sh
 git clone https://github.com/satyaborg/devloop.git
 cd devloop
-./install.sh
+./scripts/install.sh
 ```
+
+`./scripts/install.sh` symlinks the checkout executable, installs missing `gum` and `fzf` with Homebrew when available, installs bundled skills, and finishes with `try: devloop doctor`.
 
 Check the installed version:
 
@@ -30,12 +62,19 @@ Run without installing:
 ./devloop --help
 ```
 
-`install.sh` also installs the bundled Agent Skills globally for Codex under `~/.agents/skills`
-and Claude Code under `~/.claude/skills`.
 After install or update, verify the local setup:
 
 ```sh
 devloop doctor
+```
+
+Uninstall a remote install:
+
+```sh
+rm -f ~/.local/bin/devloop
+rm -rf ~/.local/share/devloop
+rm -rf ~/.agents/skills/devloop-spec ~/.agents/skills/devloop-review
+rm -rf ~/.claude/skills/devloop-spec ~/.claude/skills/devloop-review
 ```
 
 ## Quick Start
@@ -146,7 +185,7 @@ When stdout is a terminal, running `devloop` without arguments opens a menu:
 
 Nested menu screens keep `Back` as the final option, and Esc/cancel also returns to the previous menu without exiting Devloop. Interactive screens redraw in place instead of appending a fresh UI after each selection.
 
-`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. Both are required and installed by `install.sh` when missing.
+`gum` powers the branded help screen, prompts, confirmations, status output, paging, and setup screens. `fzf` powers searchable pickers for specs, tracks, and reports. Both are required and installed by `scripts/install.sh` when missing.
 
 ## What Devloop Does
 
@@ -178,18 +217,18 @@ If present, `.devloop/verify` is executed from the run worktree with the pass nu
 ## Development
 
 ```sh
-bash -n devloop install.sh release.sh skill_helpers.sh
-shellcheck devloop install.sh skill_helpers.sh release.sh tests/devloop_test.sh
-bash tests/devloop_test.sh
+bash -n devloop scripts/install.sh scripts/release.sh scripts/skill_helpers.sh scripts/install.remote.sh scripts/devloop_test.sh
+shellcheck devloop scripts/install.sh scripts/skill_helpers.sh scripts/release.sh scripts/install.remote.sh scripts/devloop_test.sh
+bash scripts/devloop_test.sh
 ./devloop --help
 ./devloop --version
 tmp="$(mktemp -d)"
-DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./install.sh
+DEVLOOP_BIN_DIR="$tmp/bin" HOME="$tmp/home" ./scripts/install.sh
 PATH="$tmp/bin:$PATH" HOME="$tmp/home" devloop doctor
 ```
 
 The supported runtime is the root [`devloop`](devloop) Bash script.
-The shell suite enforces 100% project function coverage for `devloop`, `skill_helpers.sh`, and `release.sh`.
+The shell suite enforces 100% project function coverage for `devloop`, `scripts/skill_helpers.sh`, and `scripts/release.sh`.
 
 ## Versioning and Release
 
@@ -205,11 +244,11 @@ brew install gh
 Cut a release from a clean tree by choosing the bump:
 
 ```sh
-./release.sh patch --dry-run
-./release.sh patch --publish
+./scripts/release.sh patch --dry-run
+./scripts/release.sh patch --publish
 ```
 
-Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash tests/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--publish` to push the release branch and tag, then create the GitHub Release. Use `--push` only when you want to publish the git refs without creating a GitHub Release. By default, published releases must run from `main`.
+Use `patch`, `minor`, or `major`. The script reads the current [`VERSION`](VERSION), computes the next SemVer version, updates `VERSION` and [`CHANGELOG.md`](CHANGELOG.md), runs `bash scripts/devloop_test.sh`, commits `chore: release <version>`, and creates an annotated `v<version>` tag. Add `--publish` to push the release branch and tag, then create the GitHub Release. Use `--push` only when you want to publish the git refs without creating a GitHub Release. By default, published releases must run from `main`.
 
 ## License
 
