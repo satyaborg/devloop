@@ -213,7 +213,7 @@ devloop_doctor_skills_in_dir() {
     }
 
     if [ "$bundled" != "$installed" ]; then
-      printf '[fail] stale skill: %s (run ./install.sh)\n' "$dest" >&2
+      printf '[fail] stale skill: %s (run ./scripts/install.sh)\n' "$dest" >&2
       status=1
       continue
     fi

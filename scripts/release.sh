@@ -11,19 +11,22 @@ while [ -L "$SCRIPT_PATH" ]; do
   esac
 done
 
-ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
+ROOT="$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+RELEASE_ARCHIVE=""
+RELEASE_CHECKSUM=""
 
 release_usage() {
   cat <<'EOF'
-usage: ./release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
+usage: ./scripts/release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
 
 Bumps VERSION, creates a release commit, and creates an annotated tag.
 Use --publish to push the commit and tag, then create a GitHub Release.
 
 Examples:
-  ./release.sh patch --dry-run
-  ./release.sh minor --publish
-  ./release.sh major --push
+  ./scripts/release.sh patch --dry-run
+  ./scripts/release.sh minor --publish
+  ./scripts/release.sh major --push
 EOF
 }
 
@@ -107,6 +110,45 @@ release_current_branch() {
   git -C "$ROOT" branch --show-current
 }
 
+release_checksum_file() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    printf '%s\n' "missing shasum or sha256sum" >&2
+    return 1
+  fi
+}
+
+release_create_artifacts() {
+  local version="$1"
+  local out_dir="$2"
+  local name="devloop-$version"
+  local staging="$out_dir/$name"
+
+  rm -rf "$staging"
+  mkdir -p "$staging/scripts"
+  cp "$ROOT/devloop" "$staging/devloop"
+  cp "$ROOT/scripts/install.sh" "$staging/scripts/install.sh"
+  cp "$ROOT/scripts/install.remote.sh" "$staging/scripts/install.remote.sh"
+  cp "$ROOT/scripts/devloop_test.sh" "$staging/scripts/devloop_test.sh"
+  cp "$ROOT/scripts/release.sh" "$staging/scripts/release.sh"
+  cp "$ROOT/scripts/skill_helpers.sh" "$staging/scripts/skill_helpers.sh"
+  cp "$ROOT/README.md" "$staging/README.md"
+  cp "$ROOT/LICENSE" "$staging/LICENSE"
+  cp "$ROOT/CHANGELOG.md" "$staging/CHANGELOG.md"
+  cp "$ROOT/VERSION" "$staging/VERSION"
+  cp -R "$ROOT/skills" "$staging/skills"
+
+  RELEASE_ARCHIVE="$out_dir/$name.tar.gz"
+  RELEASE_CHECKSUM="$RELEASE_ARCHIVE.sha256"
+  tar -C "$out_dir" -czf "$RELEASE_ARCHIVE" "$name"
+  printf '%s  %s\n' "$(release_checksum_file "$RELEASE_ARCHIVE")" "$name.tar.gz" > "$RELEASE_CHECKSUM"
+  rm -rf "$staging"
+}
+
 release_assert_push_branch() {
   local branch
   branch="$(release_current_branch)"
@@ -127,6 +169,7 @@ release_main() {
   local publish=false
   local push=false
   local tag branch
+  local artifact_dir
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -183,12 +226,15 @@ release_main() {
     if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
       printf '%s\n' "note: actual release requires a clean working tree"
     fi
-    printf '%s\n' "would run bash tests/devloop_test.sh"
+    printf '%s\n' "would run bash scripts/devloop_test.sh"
     printf '%s\n' "would update VERSION and CHANGELOG.md"
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
     if [ "$publish" = true ] || [ "$push" = true ]; then printf '%s\n' "would push branch and tag"; fi
-    if [ "$publish" = true ]; then printf 'would create GitHub release: gh release create %s --verify-tag --generate-notes\n' "$tag"; fi
+    if [ "$publish" = true ]; then
+      printf 'would build release assets: devloop-%s.tar.gz and devloop-%s.tar.gz.sha256\n' "$version" "$version"
+      printf 'would create GitHub release: gh release create %s --verify-tag --generate-notes devloop-%s.tar.gz devloop-%s.tar.gz.sha256\n' "$tag" "$version" "$version"
+    fi
     return 0
   fi
 
@@ -198,7 +244,7 @@ release_main() {
   release_assert_clean_tree
   if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_push_branch; fi
 
-  bash "$ROOT/tests/devloop_test.sh"
+  bash "$ROOT/scripts/devloop_test.sh"
   printf '%s\n' "$version" > "$ROOT/VERSION"
   git-cliff --config "$ROOT/cliff.toml" --workdir "$ROOT" --tag "$tag" --output "$ROOT/CHANGELOG.md"
   git -C "$ROOT" add VERSION CHANGELOG.md
@@ -212,7 +258,10 @@ release_main() {
   fi
 
   if [ "$publish" = true ]; then
-    gh release create "$tag" --verify-tag --generate-notes
+    artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/devloop-release.XXXXXX")"
+    release_create_artifacts "$version" "$artifact_dir"
+    gh release create "$tag" --verify-tag --generate-notes "$RELEASE_ARCHIVE" "$RELEASE_CHECKSUM"
+    rm -rf "$artifact_dir"
   fi
 
   printf 'released %s\n' "$tag"
