@@ -6,11 +6,12 @@
   "description": "Static marketing site for the devloop CLI.",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "tailwindcss -i ./src/input.css -o ./dist/styles.css --watch",
+    "dev": "node dev.mjs",
     "preview": "node build.mjs && serve dist -l 4178"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.0",
+    "browser-sync": "^3.0.4",
     "serve": "^14.2.3"
   }
 }
