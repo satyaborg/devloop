@@ -230,7 +230,7 @@ if has_passing_matrix "$work/review-fail.md" 2; then fail "has_passing_matrix ac
 sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > "$work/review-quality-fail.md"
 if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
 
-review_prompt_text="$(review_prompt codex "$criteria_file" ".codex/tracks/test.md" main 1 ".codex/reviews/test-r1.md" test 5 "$criteria_file" true)"
+review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$criteria_file" true)"
 contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
 contains "$review_prompt_text" "Bundled skill path, for fallback only: $REPO_ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
@@ -295,34 +295,36 @@ PULL_REQUEST_ERROR=""
 if create_pull_request "$branch_repo" "feat/chat-retry" "main" >/dev/null 2>&1; then fail "pull request creation unexpectedly passed without remote"; fi
 contains "$PULL_REQUEST_ERROR" "branch push failed" "pull request push failure"
 contains "$PULL_REQUEST_ERROR" "repository exists" "pull request push failure"
-mkdir -p "$branch_repo/.codex/reports" "$branch_repo/.codex/tracks" "$branch_repo/.codex/reviews"
-printf '%s\n' "# Report" > "$branch_repo/.codex/reports/chat-retry.md"
+mkdir -p "$branch_repo/.devloop/reports" "$branch_repo/.devloop/tracks" "$branch_repo/.devloop/reviews"
+printf '%s\n' "# Report" > "$branch_repo/.devloop/reports/chat-retry.md"
 branch_repo_real="$(cd "$branch_repo" && pwd -P)"
-cat > "$branch_repo/.codex/tracks/chat-retry.md" <<MARKDOWN
+cat > "$branch_repo/.devloop/tracks/chat-retry.md" <<MARKDOWN
 # Track
 
 - spec: $branch_repo_real/.specs/chat-retry.md
 - worktree: $branch_repo_real
 - max: 3
 MARKDOWN
-equals "$(cd "$branch_repo" && list_artifact_files ".codex/reports")" "$branch_repo_real/.codex/reports/chat-retry.md" "artifact listing"
-equals "$(track_value max "$branch_repo/.codex/tracks/chat-retry.md")" "3" "track value"
-touch "$branch_repo/.codex/reviews/chat-retry-r1.md" "$branch_repo/.codex/reviews/chat-retry-r3.md"
-equals "$(next_pass_from_track "$branch_repo/.codex/tracks/chat-retry.md")" "4" "track next pass"
+equals "$(cd "$branch_repo" && list_artifact_files ".devloop/reports")" "$branch_repo_real/.devloop/reports/chat-retry.md" "artifact listing"
+equals "$(track_value max "$branch_repo/.devloop/tracks/chat-retry.md")" "3" "track value"
+touch "$branch_repo/.devloop/reviews/chat-retry-r1.md" "$branch_repo/.devloop/reviews/chat-retry-r3.md"
+equals "$(next_pass_from_track "$branch_repo/.devloop/tracks/chat-retry.md")" "4" "track next pass"
 
 clean_status_repo="$work/clean-status-repo"
 git init -q "$clean_status_repo"
 git -C "$clean_status_repo" config user.email devloop-test@example.com
 git -C "$clean_status_repo" config user.name "devloop test"
-printf '%s\n' ".codex/" > "$clean_status_repo/.gitignore"
 printf '%s\n' "# Clean status" > "$clean_status_repo/README.md"
-git -C "$clean_status_repo" add .gitignore README.md
+git -C "$clean_status_repo" add README.md
 git -C "$clean_status_repo" commit -q -m init
-mkdir -p "$clean_status_repo/.codex/tracks"
-clean_status_track="$clean_status_repo/.codex/tracks/clean-status.md"
+mkdir -p "$clean_status_repo/.devloop/tracks"
+clean_status_track="$clean_status_repo/.devloop/tracks/clean-status.md"
 printf '%s\n' "# Track" > "$clean_status_track"
 if has_user_dirty_paths "$clean_status_repo"; then fail "clean worktree reported dirty"; fi
 equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$work/source-repo")" "ready" "clean candidate ready"
+printf '%s\n' "spec_dir=.specs" > "$clean_status_repo/.devloop/config"
+if ! has_user_dirty_paths "$clean_status_repo"; then fail "devloop config was not treated as user dirt"; fi
+equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$work/source-repo")" "dirty" "clean candidate sees config dirt"
 
 config_repo="$work/config-repo"
 config_home="$work/config-home"
@@ -457,6 +459,23 @@ equals "$(ui_input "Prompt" "fallback")" "fallback" "ui input fallback"
 if ui_confirm "Confirm?"; then fail "ui_confirm accepted non-tui input"; fi
 USE_TUI="$old_use_tui"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec back navigation"; fi
+if ! menu_default_output="$(
+  ui_header() { :; }
+  ui_choose() { shift; printf '%s\n' "$1"; }
+  interactive_create_spec() { printf '%s\n' "create"; }
+  interactive_run_spec() { printf '%s\n' "run"; }
+  UI_BACK=false
+  interactive_menu
+)"; then fail "menu default choice failed"; fi
+equals "$menu_default_output" "create" "menu starts with create spec"
+if ! create_spec_output="$(
+  ui_choose() { printf '%s\n' "Codex"; }
+  ui_input() { printf '%s\n' "unexpected input"; return 1; }
+  spec_command() { printf '%s\n' "$*"; }
+  UI_BACK=false
+  interactive_create_spec
+)"; then fail "create spec launch failed"; fi
+equals "$create_spec_output" "--agent codex" "create spec launches immediately"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup back navigation"; fi
 if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec escape navigation"; fi
@@ -967,7 +986,7 @@ set -euo pipefail
 prompt="$(cat)"
 if printf '%s\n' "$prompt" | grep -q "learning-oriented post-mortem"; then
   report="$(printf '%s\n' "$prompt" | sed -nE 's/.*Write the report to ([^ ]+) .*/\1/p' | head -n 1)"
-  if [ -z "$report" ]; then report=".codex/reports/fake.md"; fi
+  if [ -z "$report" ]; then report=".devloop/reports/fake.md"; fi
   mkdir -p "$(dirname "$report")"
   printf '%s\n' "# Fake report" "Result: ${DEVLOOP_FAKE_MODE:-accept}" > "$report"
   exit 0
@@ -1280,16 +1299,16 @@ fi
 contains "$accept_output" "accepted" "accept loop"
 accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^worktree:[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
-contains "$(cat "$accept_worktree/.codex/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
+contains "$(cat "$accept_worktree/.devloop/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
 contains "$(run_repo_main "$loop_repo" status)" "e2e-accept" "status command"
 contains "$(run_repo_main "$loop_repo" clean --dry-run)" "skip:" "clean skips accepted"
-if ! continue_output="$(continue_track_with_fake_agents "$accept_worktree/.codex/tracks/e2e-accept.md")" ; then
+if ! continue_output="$(continue_track_with_fake_agents "$accept_worktree/.devloop/tracks/e2e-accept.md")" ; then
   printf '%s\n' "$continue_output" >&2
   fail "continue run failed"
 fi
 contains "$continue_output" "accepted" "continue run"
-contains "$(run_repo_main "$loop_repo" reports)" ".codex/reports/e2e-accept" "reports command"
-contains "$(run_repo_main "$loop_repo" continue)" ".codex/tracks/e2e-accept.md" "continue command lists tracks"
+contains "$(run_repo_main "$loop_repo" reports)" ".devloop/reports/e2e-accept" "reports command"
+contains "$(run_repo_main "$loop_repo" continue)" ".devloop/tracks/e2e-accept.md" "continue command lists tracks"
 if grep -Eq '^gh pr (create|comment|list|view)' "$no_pr_gh_log" 2>/dev/null; then fail "local-only loop touched PR commands"; fi
 unset DEVLOOP_GH_LOG
 ok "e2e accept and verify"

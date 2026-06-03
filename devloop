@@ -1109,22 +1109,22 @@ interactive_menu() {
     UI_BACK=false
     ui_header "devloop" "Spec-driven code and review loop."
     choice="$(ui_choose "What do you want to do?" \
-      "Run a spec" \
       "Create a spec" \
+      "Run a spec" \
       "Continue a run" \
       "Open reports" \
       "Settings" \
       "Doctor" \
       "Quit")" || return 130
     case "$choice" in
-      "Run a spec")
-        interactive_run_spec
+      "Create a spec")
+        interactive_create_spec
         code=$?
         if [ "$UI_BACK" = true ]; then continue; fi
         return "$code"
         ;;
-      "Create a spec")
-        interactive_create_spec
+      "Run a spec")
+        interactive_run_spec
         code=$?
         if [ "$UI_BACK" = true ]; then continue; fi
         return "$code"
@@ -1180,7 +1180,7 @@ interactive_run_spec() {
 }
 
 interactive_create_spec() {
-  local agent context code
+  local agent code
   agent="$(ui_choose "Spec agent" "Codex" "Claude Code" "Back")"
   code=$?
   if [ "$code" -ne 0 ] || [ "$agent" = "Back" ]; then
@@ -1188,17 +1188,7 @@ interactive_create_spec() {
     return 0
   fi
   agent="$(agent_choice_value "$agent")"
-  context="$(ui_input "Describe the change, or leave blank for interview mode" "")"
-  code=$?
-  if [ "$code" -ne 0 ]; then
-    ui_go_back
-    return 0
-  fi
-  if [ -n "$context" ]; then
-    spec_command --agent "$agent" "$context"
-  else
-    spec_command --agent "$agent"
-  fi
+  spec_command --agent "$agent"
 }
 
 interactive_settings() {
@@ -1400,7 +1390,7 @@ select_spec_file() {
 interactive_open_report() {
   local list selected code
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-reports.XXXXXX")"
-  list_artifact_files ".codex/reports" > "$list"
+  list_artifact_files ".devloop/reports" > "$list"
   if [ ! -s "$list" ]; then
     rm -f "$list"
     UI_NOTICE="no reports found"
@@ -1420,7 +1410,7 @@ interactive_open_report() {
 interactive_continue_run() {
   local list selected code
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
-  list_artifact_files ".codex/tracks" > "$list"
+  list_artifact_files ".devloop/tracks" > "$list"
   if [ ! -s "$list" ]; then
     rm -f "$list"
     UI_NOTICE="no devloop tracks found"
@@ -1444,7 +1434,7 @@ reports_command() {
   fi
   local list selected
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-reports.XXXXXX")"
-  list_artifact_files ".codex/reports" > "$list"
+  list_artifact_files ".devloop/reports" > "$list"
   if [ ! -s "$list" ]; then
     rm -f "$list"
     printf '%s\n' "no reports found" >&2
@@ -1469,7 +1459,7 @@ status_command() {
   fi
   local list track count
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-status.XXXXXX")"
-  list_artifact_files ".codex/tracks" > "$list"
+  list_artifact_files ".devloop/tracks" > "$list"
   if [ ! -s "$list" ]; then
     rm -f "$list"
     printf '%s\n' "no devloop tracks found" >&2
@@ -1515,7 +1505,7 @@ clean_command() {
 
   local list track seen worktree slug source_repo status removed
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-clean.XXXXXX")"
-  list_artifact_files ".codex/tracks" > "$list"
+  list_artifact_files ".devloop/tracks" > "$list"
   if [ ! -s "$list" ]; then
     rm -f "$list"
     printf '%s\n' "no devloop tracks found" >&2
@@ -1566,7 +1556,7 @@ continue_command() {
     track="$1"
   else
     list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
-    list_artifact_files ".codex/tracks" > "$list"
+    list_artifact_files ".devloop/tracks" > "$list"
     if [ ! -s "$list" ]; then
       rm -f "$list"
       printf '%s\n' "no devloop tracks found" >&2
@@ -1752,13 +1742,18 @@ has_user_dirty_paths() {
   local file
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    case "$file" in
-      .codex/*) continue ;;
-    esac
+    if is_devloop_runtime_artifact_path "$file"; then continue; fi
     return 0
   done <<EOF
 $(status_paths "$repo")
 EOF
+  return 1
+}
+
+is_devloop_runtime_artifact_path() {
+  case "$1" in
+    .devloop/specs/*|.devloop/tracks/*|.devloop/reviews/*|.devloop/reports/*|.devloop/logs/*|.devloop/sessions/*) return 0 ;;
+  esac
   return 1
 }
 
@@ -2059,15 +2054,15 @@ run_devloop() {
   fi
   WORKTREE_REPO="$repo"
 
-  mkdir -p "$repo/.codex/specs" "$repo/.codex/tracks" "$repo/.codex/reviews" "$repo/.codex/reports" "$repo/.codex/logs" "$repo/.codex/sessions"
+  mkdir -p "$repo/.devloop/specs" "$repo/.devloop/tracks" "$repo/.devloop/reviews" "$repo/.devloop/reports" "$repo/.devloop/logs" "$repo/.devloop/sessions"
   if [ -n "${WORK_ITEM_LOG:-}" ] && [ -f "$WORK_ITEM_LOG" ]; then
-    cp "$WORK_ITEM_LOG" "$repo/.codex/logs/$slug-naming.log"
+    cp "$WORK_ITEM_LOG" "$repo/.devloop/logs/$slug-naming.log"
     rm -rf "$(dirname "$WORK_ITEM_LOG")"
   fi
 
   local run_spec="$spec"
   if [ "$use_worktree" = true ]; then
-    run_spec="$repo/.codex/specs/$slug.md"
+    run_spec="$repo/.devloop/specs/$slug.md"
     printf '%s' "$spec_text" > "$run_spec"
   fi
 
@@ -2078,14 +2073,14 @@ run_devloop() {
   local run_branch
   run_branch="$(git -C "$repo" branch --show-current)"
   FINAL_BRANCH="$run_branch"
-  TRACK=".codex/tracks/$slug.md"
+  TRACK=".devloop/tracks/$slug.md"
   if [ "$report_format" = "html" ]; then
-    REPORT=".codex/reports/$slug.html"
+    REPORT=".devloop/reports/$slug.html"
   else
-    REPORT=".codex/reports/$slug.md"
+    REPORT=".devloop/reports/$slug.md"
   fi
-  local coder_session=".codex/sessions/$slug-coder-$coder.id"
-  local reviewer_session=".codex/sessions/$slug-reviewer-$reviewer.id"
+  local coder_session=".devloop/sessions/$slug-coder-$coder.id"
+  local reviewer_session=".devloop/sessions/$slug-reviewer-$reviewer.id"
 
   init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
@@ -2101,8 +2096,8 @@ run_devloop() {
 
   local pass prior_hash
   prior_hash=""
-  if [ "$start_pass" -gt 1 ] && [ -f "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md" ]; then
-    prior_hash="$(findings_hash "$repo/.codex/reviews/$slug-r$((start_pass - 1)).md")"
+  if [ "$start_pass" -gt 1 ] && [ -f "$repo/.devloop/reviews/$slug-r$((start_pass - 1)).md" ]; then
+    prior_hash="$(findings_hash "$repo/.devloop/reviews/$slug-r$((start_pass - 1)).md")"
   fi
   if [ "$STATUS" != "pr-error" ]; then
   for pass in $(seq "$start_pass" "$max"); do
@@ -2124,10 +2119,10 @@ run_devloop() {
         break
       fi
     fi
-    local coder_log=".codex/logs/$slug-r$pass-coder.log"
+    local coder_log=".devloop/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
     event_step "$coder_id" "pass $pass/$max $(agent_label "$coder") implementation"
-    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".codex/reviews/$slug-r$((pass - 1)).md" "$criteria_file" "$pr_review_context")" "$coder_id"; then
+    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".devloop/reviews/$slug-r$((pass - 1)).md" "$criteria_file" "$pr_review_context")" "$coder_id"; then
       event_done "$coder_id" true "completed"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="coder-error"; fi
@@ -2193,8 +2188,8 @@ run_devloop() {
       break
     fi
 
-    local review=".codex/reviews/$slug-r$pass.md"
-    local reviewer_log=".codex/logs/$slug-r$pass-reviewer.log"
+    local review=".devloop/reviews/$slug-r$pass.md"
+    local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
     event_step "$reviewer_id" "pass $pass/$max $(agent_label "$reviewer") review"
     if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$criteria_file" "$strict")" "$reviewer_id"; then
@@ -2508,7 +2503,7 @@ run_verify_hook() {
   local pass="$4"
   local hook
   hook="$(verify_hook_path "$repo" "$source_repo")"
-  VERIFY_LOG=".codex/logs/$slug-r$pass-verify.log"
+  VERIFY_LOG=".devloop/logs/$slug-r$pass-verify.log"
   VERIFY_DETAIL="skipped"
   [ -n "$hook" ] || return 0
   run_with_prompt "$repo" "$repo/$VERIFY_LOG" "verify-$pass" "" "$hook" "$pass" "$slug"
@@ -3357,7 +3352,7 @@ list_reviews() {
   if [ "$limit" -gt "$max" ]; then limit="$max"; fi
   i=1
   while [ "$i" -le "$limit" ]; do
-    printf -- '- .codex/reviews/%s-r%s.md\n' "$slug" "$i"
+    printf -- '- .devloop/reviews/%s-r%s.md\n' "$slug" "$i"
     i=$((i + 1))
   done
 }
@@ -3427,9 +3422,7 @@ committable_paths() {
   status_paths "$repo" |
     while IFS= read -r file; do
       if grep -Fxq -- "$file" "$initial_dirty"; then continue; fi
-      case "$file" in
-        .codex/*) continue ;;
-      esac
+      if is_devloop_runtime_artifact_path "$file"; then continue; fi
       printf '%s\n' "$file"
     done |
     LC_ALL=C sort
@@ -3748,7 +3741,7 @@ final_pr_report_body() {
   local max="$5"
   local pr="$6"
   local branch="$7"
-  local latest_review="$repo/.codex/reviews/$slug-r$pass.md"
+  local latest_review="$repo/.devloop/reviews/$slug-r$pass.md"
   local final_verdict acceptance engineering risk
   final_verdict=""
   if [ -f "$latest_review" ]; then final_verdict="$(parse_verdict "$latest_review")"; fi
@@ -3889,7 +3882,7 @@ Style:
 - No emoji.
 EOF
 )"
-  with_compact_wait "write report" run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.codex/logs/$slug-report.log" "$prompt" "" || true
+  with_compact_wait "write report" run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.devloop/logs/$slug-report.log" "$prompt" "" || true
 }
 
 report_metadata() {
