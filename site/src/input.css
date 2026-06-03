@@ -57,6 +57,13 @@
     background: var(--color-violet);
     color: #070708;
   }
+  code {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    padding: 0.1em 0.35em;
+    color: var(--color-violet-bright);
+    font-size: 0.9em;
+  }
   a {
     cursor: pointer;
   }
