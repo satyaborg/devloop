@@ -4017,6 +4017,10 @@ spec_command() {
   spec_dir="$(devloop_spec_dir)"
   if [ -n "$output" ]; then
     target_path="$(absolute_path "$output")" || return 1
+    if [ -f "$target_path" ] && [ "$force" = false ]; then
+      printf 'spec already exists: %s\n' "$target_path" >&2
+      return 2
+    fi
     target_dir="$(dirname "$target_path")"
   else
     target_path=""
@@ -4114,63 +4118,6 @@ launch_spec_agent() {
       "$agent" "$prompt"
       ;;
   esac
-}
-
-extract_generated_spec() {
-  local output="$1"
-  local tmp stripped next
-  tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-spec.XXXXXX")"
-  stripped="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-stripped.XXXXXX")"
-  printf '%s\n' "$output" > "$tmp"
-  cp "$tmp" "$stripped"
-  if head -n 1 "$stripped" | grep -Eq '^[[:space:]]*```(markdown|md)?[[:space:]]*$'; then
-    next="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-next.XXXXXX")"
-    sed '1d' "$stripped" > "$next"
-    mv "$next" "$stripped"
-  fi
-  if tail -n 1 "$stripped" | grep -Eq '^[[:space:]]*```[[:space:]]*$'; then
-    next="$(mktemp "${TMPDIR:-/tmp}/devloop-spec-next.XXXXXX")"
-    sed '$d' "$stripped" > "$next"
-    mv "$next" "$stripped"
-  fi
-  if ! grep -q '^---[[:space:]]*$' "$stripped"; then
-    rm -f "$tmp" "$stripped"
-    return 1
-  fi
-  awk 'found || /^---[[:space:]]*$/ { found = 1; print }' "$stripped" | sed -E '${/^[[:space:]]*$/d;}'
-  rm -f "$tmp" "$stripped"
-}
-
-generated_spec_path() {
-  local markdown="$1"
-  local output="$2"
-  local today="$3"
-  local force="$4"
-  local title slug file base ext index spec_dir
-  if [ -n "$output" ]; then
-    absolute_path "$output"
-    return
-  fi
-  title="$(printf '%s\n' "$markdown" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | head -n 1)"
-  slug="$(slugify "${title:-spec}")"
-  if [ -z "$slug" ]; then slug="spec"; fi
-  spec_dir="$(devloop_spec_dir)"
-  case "$spec_dir" in
-    /*) file="$spec_dir/$today-$slug.md" ;;
-    *) file="$PWD/$spec_dir/$today-$slug.md" ;;
-  esac
-  if [ "$force" = true ]; then
-    printf '%s\n' "$file"
-    return
-  fi
-  base="${file%.md}"
-  ext=".md"
-  index=2
-  while [ -e "$file" ]; do
-    file="$base-$index$ext"
-    index=$((index + 1))
-  done
-  printf '%s\n' "$file"
 }
 
 if [ "${DEVLOOP_LIB:-}" != "1" ]; then
