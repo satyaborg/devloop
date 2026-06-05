@@ -29,6 +29,21 @@ the spec gate and still fail review because it makes the codebase worse.
 5. Read prior reviews so you do not repeat resolved findings.
 6. Inspect tests and verification evidence instead of trusting summary text.
 
+Treat review output, agent summaries, and test summaries as advisory. Verify
+each candidate finding by reading the real code path and adjacent ownership
+boundaries before accepting it as blocking. When a finding depends on framework,
+dependency, shell, platform, or API behavior, verify that contract from docs,
+types, source, or executable evidence.
+
+Reject speculative risks, unrealistic edge cases, style-only nits, broad
+rewrites, and fixes that would complicate the codebase without improving a spec
+or engineering gate.
+
+When a real finding exposes a bug class or repeated pattern, inspect the current
+diff and touched ownership boundary for sibling instances. Report the scoped
+bug class when practical, but stop at clear ownership boundaries and leave
+unrelated follow-up territory out of the devloop pass.
+
 ## Spec Gate
 
 Check every acceptance criterion independently:
@@ -39,6 +54,8 @@ Check every acceptance criterion independently:
 - Did the change drift beyond the spec?
 - Did the implementation make an undocumented tradeoff or default choice?
 - Did behavior change without a targeted regression test?
+- If this pass fixes a prior review finding, was verification rerun after the
+  fix instead of reused from before the code changed?
 
 Reject when a criterion fails, evidence is vague, scope drift is meaningful, or
 missing tests leave changed behavior underverified.
@@ -61,6 +78,10 @@ Run an adversarial engineering review after the spec pass:
   injection, and dependency changes are safe for the project context.
 - Operational safety: updates are atomic enough, independent work is not
   serialized into brittle orchestration, and failure modes are recoverable.
+
+Report security findings only when the change creates a concrete, actionable
+risk or removes an important safety check. Do not block legitimate functionality
+for generic security posture advice.
 
 Be ambitious about structural simplification. Look for a code-judo move that
 would make the implementation smaller or more inevitable without changing
