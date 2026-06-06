@@ -105,7 +105,7 @@ Open and maintain a draft PR during the loop:
 devloop --create-pr .specs/change.md
 ```
 
-A plain non-interactive `devloop <spec>` remains local-only. With `--create-pr`, `devloop` opens and maintains a draft PR during the loop, and the PR is canonical for review history; local `.codex/reviews/*.md` files are execution cache.
+A plain non-interactive `devloop <spec>` remains local-only. With `--create-pr`, `devloop` opens and maintains a draft PR during the loop, and the PR is canonical for review history; local `.devloop/reviews/*.md` files are execution cache.
 
 See tracked runs and cleanup candidates:
 
@@ -182,9 +182,9 @@ devloop [options] <spec.md> [max=5]
 
 When stdout is a terminal, running `devloop` without arguments opens a menu:
 
+- `Create a spec`: choose the spec agent; Devloop immediately opens that agent with the `devloop-spec` prompt.
 - `Run a spec`: pick a spec from the shared spec directory or `.specs/`.
-- `Create a spec`: choose the spec agent and provide source context; Devloop opens that agent with the `devloop-spec` prompt.
-- `Continue a run`: pick a prior `.codex/tracks/*.md` and continue in that worktree.
+- `Continue a run`: pick a prior `.devloop/tracks/*.md` and continue in that worktree.
 - `Open reports`: pick a prior report from any registered worktree.
 - `Settings`: view or change the shared spec path and set the run timeout.
 - `Doctor`: verify required dependencies and installed skills.
@@ -202,11 +202,11 @@ Nested menu screens keep `Back` as the final option, and Esc/cancel also returns
 - Lints specs for a title, valid frontmatter type when frontmatter exists, and strict acceptance criteria.
 - Commits eligible changes after each coder pass.
 - Runs `.devloop/verify` after each coder pass when it exists and is executable. In strict mode, a failing hook blocks acceptance.
-- Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.codex/`.
+- Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.devloop/`.
 - Leaves generated worktrees and branches in place for inspection.
 - Drops you into the generated worktree shell after interactive runs, unless `--no-shell` is set.
 - Never pushes or opens a PR unless you pass `--create-pr`.
-- Treats the PR as the durable review trail when `--create-pr` is active. Local `.codex/` artifacts remain disposable cache.
+- Treats the PR as the durable review trail when `--create-pr` is active. Generated `.devloop/` run artifacts remain disposable cache, while `.devloop/config` and `.devloop/verify` remain user-managed.
 
 ## Security
 
@@ -218,7 +218,7 @@ If present, `.devloop/verify` is executed from the run worktree with the pass nu
 
 `devloop status` summarizes tracked runs across registered git worktrees. It shows the slug, latest verdict-derived status, pass count, branch, worktree, report path, and a suggested next command.
 
-`devloop clean` defaults to a dry run. `devloop clean --force` removes eligible generated worktrees, but skips accepted runs and user-dirty worktrees unless forced. `.codex/` runtime artifacts do not count as user dirt.
+`devloop clean` defaults to a dry run. `devloop clean --force` removes eligible generated worktrees, but skips accepted runs and user-dirty worktrees unless forced. Generated `.devloop/` runtime artifacts do not count as user dirt.
 
 ## Development
 
