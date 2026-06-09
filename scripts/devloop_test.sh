@@ -670,6 +670,8 @@ contains "$remote_install_output" "$remote_default_bin is not on PATH" "remote i
 contains "$remote_install_output" "export PATH=\"$remote_default_bin:\$PATH\"" "remote install PATH guidance"
 contains "$remote_install_output" "[ok] gum:" "remote install UI check"
 contains "$remote_install_output" "[ok] codex:" "remote install agent check"
+contains "$remote_install_output" "devloop $remote_version installed" "remote install banner version"
+contains "$remote_install_output" "try: devloop" "remote install banner try line"
 [[ -f "$remote_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "remote installer did not install Codex spec skill"
 [[ -f "$remote_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "remote installer did not write Codex skill checksum"
 [[ -f "$remote_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "remote installer did not install Claude spec skill"
@@ -745,7 +747,7 @@ ok "installer"
 printf '%s\n' "user edit" >> "$install_home/.agents/skills/devloop-review/SKILL.md"
 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-skip.out 2>&1
 contains "$(cat /tmp/devloop-install-skip.out)" "skipping modified skill" "installer modified skill guard"
-contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop doctor" "installer guidance after skill skip"
+contains "$(cat /tmp/devloop-install-skip.out)" "try: devloop" "installer guidance after skill skip"
 contains "$(cat "$install_home/.agents/skills/devloop-review/SKILL.md")" "user edit" "installer modified skill preserved"
 DEVLOOP_FORCE=1 DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_DIR/install.sh" >/tmp/devloop-install-force.out
 if grep -q "user edit" "$install_home/.agents/skills/devloop-review/SKILL.md"; then fail "installer force did not restore skill"; fi

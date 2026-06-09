@@ -21,6 +21,31 @@ SOURCE="$ROOT/devloop"
 SKILL_STATUS=0
 TOOL_STATUS=0
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_ACCENT=$'\033[38;5;141m'
+  C_DIM=$'\033[38;5;244m'
+  C_BOLD=$'\033[1m'
+  C_RESET=$'\033[0m'
+else
+  C_ACCENT=""
+  C_DIM=""
+  C_BOLD=""
+  C_RESET=""
+fi
+
+print_banner() {
+  local version="$1"
+  printf '\n%s' "$C_ACCENT"
+  cat <<'EOF'
+░█▀▄░█▀▀░█░█░█░░░█▀█░█▀█░█▀█
+░█░█░█▀▀░▀▄▀░█░░░█░█░█░█░█▀▀
+░▀▀░░▀▀▀░░▀░░▀▀▀░▀▀▀░▀▀▀░▀░░
+EOF
+  printf '%s\n' "$C_RESET"
+  printf '  %sdevloop %s installed%s\n' "$C_DIM" "$version" "$C_RESET"
+  printf '  %stry:%s %s%sdevloop%s\n\n' "$C_DIM" "$C_RESET" "$C_BOLD" "$C_ACCENT" "$C_RESET"
+}
+
 install_required_ui_tools() {
   local missing=()
   local tool
@@ -76,8 +101,7 @@ case ":${PATH:-}:" in
     ;;
 esac
 
-echo
-echo "try: devloop doctor"
+print_banner "$(cat "$ROOT/VERSION" 2>/dev/null)"
 if [ "$TOOL_STATUS" -ne 0 ] || [ "$SKILL_STATUS" -ne 0 ]; then
   exit 1
 fi
