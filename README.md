@@ -23,6 +23,14 @@ cd devloop
 devloop doctor
 ```
 
+## Uninstall
+
+```sh
+./scripts/uninstall.sh
+```
+
+Removes the `~/.local/bin/devloop` symlink, the `~/.local/share/devloop` runtime, and the devloop-managed skills. Pass `--dry-run` to preview, or set `DEVLOOP_FORCE=1` to also remove hand-modified skills. Leaves the source checkout, `gum`, `fzf`, and `gh` untouched.
+
 ## Use
 
 ```sh
