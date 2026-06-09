@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2030,SC2031
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317,SC2329
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -900,7 +900,20 @@ mkdir -p "$no_gh_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
 chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude"
-doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:/usr/bin:/bin" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
+# Mirror the system bin dirs without gh so `command -v gh` fails regardless of
+# where gh is installed on the host (CI runners ship gh in /usr/bin).
+sys_clean="$work/sys-clean"
+mkdir -p "$sys_clean"
+for sys_dir in /usr/bin /bin; do
+  [ -d "$sys_dir" ] || continue
+  for sys_entry in "$sys_dir"/*; do
+    sys_name="$(basename "$sys_entry")"
+    [ "$sys_name" = "gh" ] && continue
+    [ -e "$sys_clean/$sys_name" ] && continue
+    ln -s "$sys_entry" "$sys_clean/$sys_name"
+  done
+done
+doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
 contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
 contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
 contains "$doctor_no_gh_output" "PR-backed loop readiness unavailable" "doctor no gh"
@@ -1072,7 +1085,7 @@ contains "$(HOME="$helper_home" devloop_skills_dirs)" "$helper_home/.agents/skil
 devloop_can_replace_skill "$helper_home/.agents/skills/devloop-spec" || fail "installed skill should be replaceable"
 devloop_valid_skill_name "devloop-spec" || fail "valid skill name rejected"
 equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md")" "devloop-spec" "skill name"
-helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$PATH" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
+helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$tool_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
 contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
 ok "direct skill helpers"
 
@@ -1237,7 +1250,7 @@ add_origin_remote "$preflight_pr_repo" "$work/preflight-pr-remote.git"
 old_home="$HOME"
 old_path="$PATH"
 HOME="$install_home"
-PATH="$no_gh_bin:$bin_dir:$tool_bin:/usr/bin:/bin"
+PATH="$no_gh_bin:$bin_dir:$tool_bin:$sys_clean"
 export HOME PATH
 if preflight_run "$preflight_pr_repo" codex claude true >/dev/null 2>&1; then fail "PR preflight accepted missing gh"; fi
 contains "$PREFLIGHT_ERROR" "missing command: gh" "PR preflight missing gh"
@@ -1272,7 +1285,7 @@ PATH="$fake_bin:$bin_dir:$tool_bin:$PATH"
 USE_TUI=false
 export HOME PATH
 equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "true" "interactive PR prompt defaults yes when ready"
-PATH="$no_gh_bin:$bin_dir:$tool_bin:/usr/bin:/bin"
+PATH="$no_gh_bin:$bin_dir:$tool_bin:$sys_clean"
 equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "false" "interactive PR prompt falls back local-only when unavailable"
 PATH="$old_path"
 HOME="$old_home"
