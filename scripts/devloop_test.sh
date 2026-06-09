@@ -1085,7 +1085,7 @@ contains "$(HOME="$helper_home" devloop_skills_dirs)" "$helper_home/.agents/skil
 devloop_can_replace_skill "$helper_home/.agents/skills/devloop-spec" || fail "installed skill should be replaceable"
 devloop_valid_skill_name "devloop-spec" || fail "valid skill name rejected"
 equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md")" "devloop-spec" "skill name"
-helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$PATH" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
+helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$tool_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
 contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
 ok "direct skill helpers"
 
