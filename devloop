@@ -4083,7 +4083,7 @@ spec_command() {
   esac
 
   local context today prompt spec_dir target_path target_dir
-  context="$(resolve_spec_context "${context_items[@]}")"
+  context="$(resolve_spec_context ${context_items[@]+"${context_items[@]}"})"
   today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
   if [ -n "$output" ]; then
