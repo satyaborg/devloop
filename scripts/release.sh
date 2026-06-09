@@ -227,9 +227,9 @@ release_main() {
       printf '%s\n' "note: actual release requires a clean working tree"
     fi
     printf '%s\n' "would run bash scripts/devloop_test.sh"
-    printf '%s\n' "would update VERSION and CHANGELOG.md"
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
+    printf '%s\n' "would regenerate CHANGELOG.md from tagged history, amend the release commit, and move the tag"
     if [ "$publish" = true ] || [ "$push" = true ]; then printf '%s\n' "would push branch and tag"; fi
     if [ "$publish" = true ]; then
       printf 'would build release assets: devloop-%s.tar.gz and devloop-%s.tar.gz.sha256\n' "$version" "$version"
@@ -246,10 +246,19 @@ release_main() {
 
   bash "$ROOT/scripts/devloop_test.sh"
   printf '%s\n' "$version" > "$ROOT/VERSION"
-  git-cliff --config "$ROOT/cliff.toml" --workdir "$ROOT" --tag "$tag" --output "$ROOT/CHANGELOG.md"
-  git -C "$ROOT" add VERSION CHANGELOG.md
+  git -C "$ROOT" add VERSION
   git -C "$ROOT" commit -m "chore: release $version"
   git -C "$ROOT" tag -a "$tag" -m "devloop $version"
+  # Regenerate the changelog after the tag exists and render from the tagged
+  # history. Two git-cliff (2.x) footguns to avoid: passing --workdir with an
+  # absolute path breaks its detection that HEAD is tagged and collapses the file
+  # to a single empty "Unreleased" header, and --tag for a version it treats as
+  # new truncates the same way. So run from $ROOT without --workdir or --tag,
+  # then fold the result into the release commit and move the tag onto it.
+  ( cd "$ROOT" && git-cliff --config "$ROOT/cliff.toml" --output "$ROOT/CHANGELOG.md" )
+  git -C "$ROOT" add CHANGELOG.md
+  git -C "$ROOT" commit --amend --no-edit
+  git -C "$ROOT" tag -f -a "$tag" -m "devloop $version"
 
   if [ "$publish" = true ] || [ "$push" = true ]; then
     branch="$(release_current_branch)"
