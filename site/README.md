@@ -1,6 +1,6 @@
 # devloop site
 
-Minimal static marketing site for the `devloop` CLI. Single page, monochrome
+Minimal static landing site for the `devloop` CLI. Single page, monochrome
 teletype aesthetic, violet accent matching the CLI brand. No runtime
 dependencies: Tailwind compiled to static CSS, JetBrains Mono self-hosted from
 `public/fonts/` (OFL, weights 400 + 700), used across the whole page. Built with

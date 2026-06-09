@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Static marketing site for the devloop CLI.",
+  "description": "Static landing site for the devloop CLI.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
