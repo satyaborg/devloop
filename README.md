@@ -30,9 +30,14 @@ devloop
 devloop spec "add retry behavior to the chat sender"
 devloop .specs/change.md
 devloop --create-pr .specs/change.md
+devloop continue
 devloop status
 devloop clean
 ```
+
+Start with a spec you already have, or from scratch. Pass a path to run an existing spec; run `devloop spec` with no context to let the agent interview you and write one. `devloop continue` resumes a tracked run where it left off.
+
+Each run writes an HTML report and the markdown spec and reviews under `.devloop/`, so the work is easy to read and review at a glance. HTML is the default; pass `--report-format markdown` for plain text.
 
 ## Specs
 
