@@ -2,27 +2,28 @@
 
 Minimal static marketing site for the `devloop` CLI. Single page, monochrome
 teletype aesthetic, violet accent matching the CLI brand. No runtime
-dependencies: Tailwind compiled to static CSS, IBM Plex Mono self-hosted from
-`fonts/` (OFL, weights 400 + 700), used across the whole page.
+dependencies: Tailwind compiled to static CSS, JetBrains Mono self-hosted from
+`public/fonts/` (OFL, weights 400 + 700), used across the whole page. Built with
+Vite, so dev is just two commands.
 
 ## Develop
 
 ```sh
 pnpm install
-pnpm dev        # tailwind watch -> dist/styles.css
-pnpm preview    # build + serve dist/ at http://localhost:4178
+pnpm dev        # vite dev server with HMR at http://localhost:5173
+pnpm preview    # serve the production build at http://localhost:4178
 ```
 
 ## Build
 
 ```sh
-pnpm build      # writes dist/index.html + dist/styles.css
+pnpm build      # vite build -> dist/
 ```
 
-`build.mjs` clears `dist/`, compiles `src/input.css` with the Tailwind CLI to
-`dist/styles.css`, then copies `index.html` and `fonts/` into `dist/`. The
-output is fully static (HTML, CSS, woff2) with no runtime dependency. Deploy the
-`dist/` directory to any static host.
+Vite compiles `src/input.css` (Tailwind v4 via `@tailwindcss/vite`), hashes the
+CSS, inlines the `<link>` into `index.html`, and copies `public/` (the fonts)
+into `dist/`. The output is fully static (HTML, CSS, woff2) with no runtime
+dependency. Deploy the `dist/` directory to any static host.
 
 ## Deploy to Cloudflare Pages
 
@@ -71,9 +72,9 @@ directory to `site/dist`.
 
 ```
 site/
-  index.html      source page
-  src/input.css   tailwind entry + theme tokens + @font-face
-  build.mjs       build script (tailwind compile + copy html/fonts)
-  fonts/          IBM Plex Mono woff2 (400, 700)
-  dist/           build output (gitignored)
+  index.html         source page (vite entry)
+  src/input.css      tailwind entry + theme tokens + @font-face
+  vite.config.js     vite + @tailwindcss/vite plugin
+  public/fonts/      JetBrains Mono woff2 (400, 700), served at /fonts/
+  dist/              build output (gitignored)
 ```
