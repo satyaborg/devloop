@@ -2656,7 +2656,7 @@ frontmatter_value() {
     }
   ' | awk '
     $0 == "" || $0 == "null" || $0 == "undefined" { next }
-    /^\<.*\>$/ { next }
+    /^<.*>$/ { next }
     /\|/ { next }
     { print }
   '
