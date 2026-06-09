@@ -3143,7 +3143,9 @@ run_compact_command() {
     ''|*[!0-9]*) RUN_CODE=1 ;;
   esac
   RUN_OUTPUT="$(cat "$output_file")"
+  # shellcheck disable=SC2034  # RUN_STDOUT/RUN_STDERR round out the RUN_* result interface
   RUN_STDOUT="$RUN_OUTPUT"
+  # shellcheck disable=SC2034
   RUN_STDERR=""
   rm -f "$output_file" "$code_file"
   [ "$RUN_CODE" -eq 0 ]
