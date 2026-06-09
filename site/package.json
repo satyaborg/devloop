@@ -5,13 +5,16 @@
   "type": "module",
   "description": "Static marketing site for the devloop CLI.",
   "scripts": {
-    "build": "node build.mjs",
-    "dev": "node dev.mjs",
-    "preview": "node build.mjs && serve dist -l 4178"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite build && vite preview --port 4178"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4.1.0",
-    "browser-sync": "^3.0.4",
-    "serve": "^14.2.3"
+    "@tailwindcss/vite": "^4.1.0",
+    "tailwindcss": "^4.1.0",
+    "vite": "^6.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }
