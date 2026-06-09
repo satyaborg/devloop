@@ -28,8 +28,8 @@ devloop doctor
 ```sh
 devloop
 devloop spec "add retry behavior to the chat sender"
-devloop .specs/change.md
-devloop --create-pr .specs/change.md
+devloop .devloop/specs/change.md
+devloop --create-pr .devloop/specs/change.md
 devloop continue
 devloop status
 devloop clean
@@ -50,7 +50,7 @@ devloop spec --agent claude notes.md
 
 Strict mode is on by default. Specs need `## Acceptance criteria`, and reviews must pass both the spec gate and engineering quality gate.
 
-Devloop stores shared settings in `~/.devloop/config`. The default spec directory is `~/Projects/specs/`; the picker also searches the current repo's `.specs/` directory.
+Devloop stores shared settings in `~/.devloop/config`. The default spec directory is the current repo's `.devloop/specs/`. Set a custom `spec_dir` (global or per-repo) to point elsewhere, for example `~/Projects/specs`; the picker searches both the custom directory and the repo's `.devloop/specs/`.
 
 ## PR mode
 

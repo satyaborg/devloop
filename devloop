@@ -6,7 +6,7 @@ CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
 CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort max)
 DEFAULT_TIMEOUT_MINUTES=30
-DEFAULT_SPEC_DIR_SUFFIX="Projects/specs"
+DEFAULT_SPEC_DIR=".devloop/specs"
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -178,12 +178,12 @@ Common commands:
   devloop continue
   devloop menu
   devloop spec "add retry behavior to the chat sender"
-  devloop .specs/change.md
-  devloop --tui .specs/change.md
-  devloop --plain .specs/change.md
-  devloop --report-format markdown .specs/change.md 3
-  devloop --coder claude --reviewer codex .specs/change.md
-  devloop --create-pr .specs/change.md
+  devloop .devloop/specs/change.md
+  devloop --tui .devloop/specs/change.md
+  devloop --plain .devloop/specs/change.md
+  devloop --report-format markdown .devloop/specs/change.md 3
+  devloop --coder claude --reviewer codex .devloop/specs/change.md
+  devloop --create-pr .devloop/specs/change.md
 
 Options:
   --tui                         force terminal UI output
@@ -216,8 +216,8 @@ welcome_tui() {
   printf '  %-42s %s\n' "devloop continue" "resume a tracked run"
   printf '  %-42s %s\n' "devloop menu" "open the guided UI"
   printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "launch a spec agent"
-  printf '  %-42s %s\n' "devloop .specs/change.md" "run a spec"
-  printf '  %-42s %s\n' "devloop --create-pr .specs/change.md" "open and maintain a draft PR during the loop"
+  printf '  %-42s %s\n' "devloop .devloop/specs/change.md" "run a spec"
+  printf '  %-42s %s\n' "devloop --create-pr .devloop/specs/change.md" "open and maintain a draft PR during the loop"
   printf '\n'
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Options"
   printf '  %-30s %s\n' "--tui" "force terminal UI output"
@@ -328,31 +328,21 @@ config_file_value() {
 }
 
 devloop_default_spec_dir() {
-  if [ -n "${HOME:-}" ]; then
-    printf '%s/%s\n' "${HOME%/}" "$DEFAULT_SPEC_DIR_SUFFIX"
+  local root
+  if root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s/%s\n' "${root%/}" "$DEFAULT_SPEC_DIR"
   else
-    printf '%s\n' ".specs"
+    printf '%s\n' "$DEFAULT_SPEC_DIR"
   fi
 }
 
 ensure_global_config() {
-  local file value spec_dir
+  local file value
   file="$(devloop_global_config_file 2>/dev/null)" || return 0
   mkdir -p "$(dirname "$file")" || return 1
   if [ ! -f "$file" ]; then
-    spec_dir="$(devloop_default_spec_dir)"
-    mkdir -p "$spec_dir" || return 1
-    {
-      printf 'spec_dir=%s\n' "$spec_dir"
-      printf 'timeout_minutes=%s\n' "$DEFAULT_TIMEOUT_MINUTES"
-    } > "$file"
+    printf 'timeout_minutes=%s\n' "$DEFAULT_TIMEOUT_MINUTES" > "$file"
     return 0
-  fi
-  value="$(config_file_value spec_dir "$file" || true)"
-  if [ -z "$value" ]; then
-    spec_dir="$(devloop_default_spec_dir)"
-    mkdir -p "$spec_dir" || return 1
-    printf 'spec_dir=%s\n' "$spec_dir" >> "$file"
   fi
   value="$(config_file_value timeout_minutes "$file" || true)"
   if [ -z "$value" ]; then
@@ -498,7 +488,7 @@ spec_search_dirs() {
   local configured dir seen
   configured="$(devloop_spec_dir)"
   seen=""
-  for dir in "$configured" ".specs"; do
+  for dir in "$configured" "$(devloop_default_spec_dir)"; do
     [ -n "$dir" ] || continue
     case "$seen" in
       *"|$dir|"*) continue ;;
@@ -1204,13 +1194,12 @@ interactive_settings() {
     if [ -n "$custom_spec_dir" ]; then
       ui_print_key_values \
         "configured" "$custom_spec_dir" \
-        "fallback" ".specs" \
+        "fallback" "$default_spec_dir" \
         "timeout" "$timeout_display"
       choices=("Remove spec path" "Set timeout" "Back")
     else
       ui_print_key_values \
         "default" "$default_spec_dir" \
-        "fallback" ".specs" \
         "timeout" "$timeout_display"
       choices=("Add spec path" "Set timeout" "Back")
     fi

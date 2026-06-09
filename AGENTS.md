@@ -8,7 +8,7 @@ This is a Bash CLI project. The active runtime is the root `devloop` executable.
 
 - `bash scripts/devloop_test.sh`: run the shell test suite.
 - `./scripts/install.sh`: link `devloop` into `~/.local/bin` or `DEVLOOP_BIN_DIR`.
-- `./devloop --plain .specs/change.md`: example local CLI invocation from a target git worktree.
+- `./devloop --plain .devloop/specs/change.md`: example local CLI invocation from a target git worktree.
 - `./scripts/release.sh patch --dry-run`: validate the release path without changing files.
 
 ## Coding Style & Naming Conventions

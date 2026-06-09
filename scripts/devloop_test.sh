@@ -323,30 +323,29 @@ equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$wo
 
 config_repo="$work/config-repo"
 config_home="$work/config-home"
-config_default_specs="$config_home/Projects/specs"
-mkdir -p "$config_repo/.specs" "$config_repo/.devloop/specs" "$config_home"
-config_repo_real="$(cd "$config_repo" && pwd)"
+git init -q "$config_repo"
+config_repo_real="$(cd "$config_repo" && pwd -P)"
+config_default_specs="$config_repo_real/.devloop/specs"
+mkdir -p "$config_repo/.devloop/specs" "$config_home"
 equals "$(HOME="$config_home" devloop_config_file)" "$config_home/.devloop/config" "default config file"
-printf '%s\n' "# Default" > "$config_repo/.specs/default.md"
 printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
 config_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 [[ -f "$config_home/.devloop/config" ]] || fail "global config was not created"
-contains "$(cat "$config_home/.devloop/config")" "spec_dir=$config_default_specs" "global config default spec dir"
+if grep -q "spec_dir=" "$config_home/.devloop/config"; then fail "global config seeded a default spec dir"; fi
 contains "$(cat "$config_home/.devloop/config")" "timeout_minutes=30" "global config default timeout"
-[[ -d "$config_default_specs" ]] || fail "global default spec dir was not created"
-contains "$config_specs" ".specs/default.md" "default spec search"
-if printf '%s\n' "$config_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "default spec search included .devloop/specs"; fi
-equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "default global spec dir"
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs, .specs" "spec search label"
-if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "default global spec dir reported as custom"; fi
+contains "$config_specs" "$config_default_specs/devloop.md" "default spec search uses repo .devloop/specs"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "default spec dir is repo .devloop/specs"
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs" "spec search label is single default dir"
+if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "default spec dir reported as custom"; fi
 equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir local "custom-specs")" "custom-specs" "write local config spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "custom-specs" "configured spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "custom-specs" "custom spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir_scope)" "local" "custom spec dir scope"
 [[ -d "$config_repo/custom-specs" ]] || fail "configured spec dir was not created"
+printf '%s\n' "# Custom" > "$config_repo/custom-specs/custom.md"
 configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
-contains "$configured_specs" ".specs/default.md" "configured spec search includes default dir"
-if printf '%s\n' "$configured_specs" | grep -Fq ".devloop/specs/devloop.md"; then fail "configured spec search included .devloop/specs"; fi
+contains "$configured_specs" "custom-specs/custom.md" "configured spec search includes custom dir"
+contains "$configured_specs" "$config_default_specs/devloop.md" "configured spec search still includes default"
 if (cd "$config_repo" && HOME="$config_home" write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
 
 absolute_specs="$work/shared-specs"
@@ -357,13 +356,13 @@ equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "$absol
 printf '%s\n' "# Shared" > "$absolute_specs/shared.md"
 absolute_configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 contains "$absolute_configured_specs" "$absolute_specs/shared.md" "configured spec search includes absolute dir"
-contains "$absolute_configured_specs" ".specs/default.md" "absolute spec search includes default dir"
+contains "$absolute_configured_specs" "$config_default_specs/devloop.md" "absolute spec search still includes default"
 equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
 equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
 (cd "$config_repo" && HOME="$config_home" remove_config_spec_dir local)
 if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "custom spec dir was not removed"; fi
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "removed custom spec dir falls back"
-equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs, .specs" "removed custom spec search label"
+equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs" "removed custom spec search label"
 
 global_repo="$work/global-repo"
 global_home="$work/global-home"
@@ -405,7 +404,7 @@ raw_tilde_repo="$work/raw-tilde-repo"
 raw_tilde_home="$work/raw-tilde-home"
 mkdir -p "$raw_tilde_repo/.devloop" "$raw_tilde_home"
 printf '%s\n' "spec_dir=~/raw-specs" > "$raw_tilde_repo/.devloop/config"
-equals "$(cd "$raw_tilde_repo" && HOME="$raw_tilde_home" devloop_spec_dir)" "$raw_tilde_home/Projects/specs" "raw tilde config falls back"
+equals "$(cd "$raw_tilde_repo" && HOME="$raw_tilde_home" devloop_spec_dir)" ".devloop/specs" "raw tilde config falls back to default"
 
 equals "$(normalize_timeout_minutes 1)" "1" "timeout lower bound"
 equals "$(normalize_timeout_minutes 30)" "30" "timeout normalize"
@@ -488,8 +487,8 @@ if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_open_report >/dev/nul
 USE_TUI="$old_use_tui"
 
 cancel_spec_repo="$work/cancel-spec-repo"
-mkdir -p "$cancel_spec_repo/.specs"
-printf '%s\n' "# Cancel" > "$cancel_spec_repo/.specs/cancel.md"
+mkdir -p "$cancel_spec_repo/.devloop/specs"
+printf '%s\n' "# Cancel" > "$cancel_spec_repo/.devloop/specs/cancel.md"
 if ! ( cd "$cancel_spec_repo" && ui_pick_from_file() { return 130; }; UI_BACK=false; interactive_run_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_run_spec escape navigation"; fi
 
 picker_file="$work/picker.txt"
