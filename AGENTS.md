@@ -2,12 +2,13 @@
 
 ## Project Structure & Module Organization
 
-This is a Bash CLI project. The active runtime is the root `devloop` executable. `VERSION` is the single version source, `scripts/release.sh` cuts local release commits and annotated tags, `scripts/install.sh` links the CLI into a local bin directory and installs bundled skills into `~/.agents/skills` and `~/.claude/skills`, `scripts/devloop_test.sh` covers the shell runtime, `skills/devloop-spec/SKILL.md` is the spec-generation skill, `skills/devloop-review/SKILL.md` is the review skill, and `skills/devloop-spec/references/spec-template.md` is the starter spec. Generated runtime output belongs under `.devloop/` in target repositories and should not be committed here.
+This is a Bash CLI project. The active runtime is the root `devloop` executable. `VERSION` is the single version source, `scripts/release.sh` cuts local release commits and annotated tags, `scripts/install.sh` links the CLI into a local bin directory and installs bundled skills into `~/.agents/skills` and `~/.claude/skills`, `scripts/uninstall.sh` reverses that install (symlink, staged runtime, devloop-managed skills), `scripts/devloop_test.sh` covers the shell runtime, `skills/devloop-spec/SKILL.md` is the spec-generation skill, `skills/devloop-review/SKILL.md` is the review skill, and `skills/devloop-spec/references/spec-template.md` is the starter spec. Generated runtime output belongs under `.devloop/` in target repositories and should not be committed here.
 
 ## Build, Test, and Development Commands
 
 - `bash scripts/devloop_test.sh`: run the shell test suite.
 - `./scripts/install.sh`: link `devloop` into `~/.local/bin` or `DEVLOOP_BIN_DIR`.
+- `./scripts/uninstall.sh --dry-run`: preview removal of the symlink, runtime, and skills.
 - `./devloop --plain .devloop/specs/change.md`: example local CLI invocation from a target git worktree.
 - `./scripts/release.sh patch --dry-run`: validate the release path without changing files.
 

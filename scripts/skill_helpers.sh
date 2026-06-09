@@ -144,6 +144,49 @@ devloop_install_skills_to_dir() {
   return "$status"
 }
 
+devloop_uninstall_skills() {
+  local root="$1"
+  local skills_dir status
+  status=0
+
+  while IFS= read -r skills_dir; do
+    if [ -z "$skills_dir" ]; then continue; fi
+    devloop_uninstall_skills_from_dir "$root" "$skills_dir" || status=1
+  done <<EOF
+$(devloop_skills_dirs)
+EOF
+
+  return "$status"
+}
+
+devloop_uninstall_skills_from_dir() {
+  local root="$1"
+  local skills_dir="$2"
+  local source name dest status
+  status=0
+
+  for source in "$root"/skills/*; do
+    if [ ! -d "$source" ]; then continue; fi
+    name="$(basename "$source")"
+    dest="$skills_dir/$name"
+
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then continue; fi
+
+    if [ -L "$dest" ] || devloop_can_replace_skill "$dest"; then
+      if ! rm -rf "$dest"; then
+        printf 'failed to remove skill: %s\n' "$dest" >&2
+        status=1
+        continue
+      fi
+      printf 'removed skill %s -> %s\n' "$name" "$dest"
+    else
+      printf 'skipping modified skill: %s (set DEVLOOP_FORCE=1 to remove)\n' "$dest" >&2
+    fi
+  done
+
+  return "$status"
+}
+
 devloop_doctor_command() {
   local command="$1"
   local resolved

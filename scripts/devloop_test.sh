@@ -36,7 +36,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER"
+bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -705,6 +705,47 @@ contains "$remote_no_skills_output" "devloop doctor will require skill installat
 [[ ! -e "$remote_no_skills_home/.claude/skills/devloop-review" ]] || fail "remote no-skills installed Claude skill"
 ok "remote installer no-skills"
 
+uninstall_home="$work/uninstall-home"
+HOME="$uninstall_home" PATH="$remote_path" bash "$REMOTE_INSTALLER" \
+  --yes \
+  --version "$remote_version" \
+  --release-base-url "$remote_release_base" \
+  >/dev/null 2>&1 || fail "uninstall fixture install failed"
+uninstall_root="$uninstall_home/.local/share/devloop"
+uninstall_bin="$uninstall_home/.local/bin"
+[[ -L "$uninstall_bin/devloop" ]] || fail "uninstall fixture missing symlink"
+[[ -d "$uninstall_root/$remote_version" ]] || fail "uninstall fixture missing runtime"
+[[ -d "$uninstall_home/.agents/skills/devloop-spec" ]] || fail "uninstall fixture missing skill"
+uninstall_dry_output="$(
+  DEVLOOP_BIN_DIR="$uninstall_bin" DEVLOOP_INSTALL_DIR="$uninstall_root" HOME="$uninstall_home" \
+    "$SCRIPTS_DIR/uninstall.sh" --dry-run 2>&1
+)"
+contains "$uninstall_dry_output" "dry run: no files will be changed" "uninstall dry run"
+contains "$uninstall_dry_output" "would remove symlink: $uninstall_bin/devloop" "uninstall dry run symlink"
+contains "$uninstall_dry_output" "would remove staged runtime: $uninstall_root" "uninstall dry run runtime"
+contains "$uninstall_dry_output" "would remove skill: $uninstall_home/.agents/skills/devloop-spec" "uninstall dry run skill"
+[[ -L "$uninstall_bin/devloop" ]] || fail "uninstall dry run removed symlink"
+[[ -d "$uninstall_root/$remote_version" ]] || fail "uninstall dry run removed runtime"
+[[ -d "$uninstall_home/.claude/skills/devloop-review" ]] || fail "uninstall dry run removed skill"
+uninstall_output="$(
+  DEVLOOP_BIN_DIR="$uninstall_bin" DEVLOOP_INSTALL_DIR="$uninstall_root" HOME="$uninstall_home" \
+    "$SCRIPTS_DIR/uninstall.sh" 2>&1
+)"
+contains "$uninstall_output" "removed symlink $uninstall_bin/devloop" "uninstall symlink"
+contains "$uninstall_output" "removed staged runtime $uninstall_root" "uninstall runtime"
+contains "$uninstall_output" "devloop uninstalled" "uninstall banner"
+[[ ! -e "$uninstall_bin/devloop" ]] || fail "uninstall left symlink"
+[[ ! -e "$uninstall_root" ]] || fail "uninstall left staged runtime"
+[[ ! -e "$uninstall_home/.agents/skills/devloop-spec" ]] || fail "uninstall left Codex skill"
+[[ ! -e "$uninstall_home/.claude/skills/devloop-review" ]] || fail "uninstall left Claude skill"
+uninstall_again_output="$(
+  DEVLOOP_BIN_DIR="$uninstall_bin" DEVLOOP_INSTALL_DIR="$uninstall_root" HOME="$uninstall_home" \
+    "$SCRIPTS_DIR/uninstall.sh" 2>&1
+)" || fail "second uninstall run failed"
+contains "$uninstall_again_output" "devloop uninstalled" "uninstall idempotent"
+not_contains "$uninstall_again_output" "removed symlink" "uninstall idempotent no-op"
+ok "uninstall script removes installed footprint"
+
 bin_dir="$work/bin"
 install_home="$work/install-home"
 tool_bin="$work/tool-bin"
@@ -1084,6 +1125,19 @@ equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md"
 helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$tool_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
 contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
 ok "direct skill helpers"
+
+uninstall_helper_home="$work/uninstall-helper-home"
+mkdir -p "$uninstall_helper_home"
+HOME="$uninstall_helper_home" DEVLOOP_FORCE=1 devloop_install_skills "$REPO_ROOT" >/dev/null 2>&1 || fail "uninstall helper install failed"
+printf '%s\n' "user edit" >> "$uninstall_helper_home/.agents/skills/devloop-review/SKILL.md"
+uninstall_helper_out="$(HOME="$uninstall_helper_home" devloop_uninstall_skills "$REPO_ROOT" 2>&1)"
+contains "$uninstall_helper_out" "removed skill devloop-spec" "uninstall helper removes clean skill"
+contains "$uninstall_helper_out" "skipping modified skill" "uninstall helper guards modified skill"
+[[ ! -e "$uninstall_helper_home/.agents/skills/devloop-spec" ]] || fail "uninstall helper left clean skill"
+[[ -f "$uninstall_helper_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "uninstall helper removed modified skill"
+HOME="$uninstall_helper_home" DEVLOOP_FORCE=1 devloop_uninstall_skills "$REPO_ROOT" >/dev/null 2>&1 || fail "forced uninstall failed"
+[[ ! -e "$uninstall_helper_home/.agents/skills/devloop-review" ]] || fail "forced uninstall left modified skill"
+ok "direct uninstall skill helpers"
 
 make_loop_repo() {
   local repo_path="$1"
