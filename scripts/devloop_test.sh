@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2030,SC2031,SC2034,SC2329
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317,SC2329
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
