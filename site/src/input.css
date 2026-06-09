@@ -25,12 +25,12 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "SFMono-Regular",
     "Menlo", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
 
-  --color-bg: #070708;
-  --color-panel: #0e0e10;
-  --color-line: #1b1b1f;
-  --color-ink: #e8e8ea;
-  --color-dim: #7e7e86;
-  --color-faint: #4a4a51;
+  --color-bg: #121212;
+  --color-panel: #1c1c1c;
+  --color-line: #2a2a2a;
+  --color-ink: #ededec;
+  --color-dim: #a3a3a3;
+  --color-faint: #6b6b6b;
 
   --color-violet: #af87ff;
   --color-violet-bright: #d2a8ff;
@@ -55,7 +55,7 @@
   }
   ::selection {
     background: var(--color-violet);
-    color: #070708;
+    color: #121212;
   }
   code {
     background: var(--color-panel);
