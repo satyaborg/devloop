@@ -134,7 +134,7 @@ Devloop maintains a global config at `~/.devloop/config`. By default, spec agent
 Change the shared spec directory from `devloop` > `Settings`, or edit `~/.devloop/config`:
 
 ```ini
-spec_dir=/Users/satya/Projects/specs
+spec_dir=/Users/satyaborg/Projects/specs
 ```
 
 Repo-local `.devloop/config` is still supported for explicit overrides. Prefer absolute paths there unless the override should be repo-relative.
