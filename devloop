@@ -942,7 +942,7 @@ ui_status_line() {
 ui_spinner_wait() {
   local pid="$1"
   local done_file="$2"
-  local title="${3:-working}"
+  local title="${3:-devloop working}"
   local stderr_file="${4:-}"
   local frames="|/-\\"
   local index=0
@@ -984,7 +984,7 @@ ui_compact_spinner_wait() {
   local pid="$1"
   local done_file="$2"
   local stderr_file="${3:-}"
-  local label="${4:-working}"
+  local label="${4:-devloop working}"
   local index=0 frame
   local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   if [ "$USE_TUI" != true ] || [ ! -t 2 ]; then
@@ -2005,9 +2005,9 @@ run_devloop() {
   local base
   base="$(base_branch "$SOURCE_REPO")"
 
-  event_step "preflight" "preflight checks"
+  event_step "preflight" "running preflight checks"
   if preflight_run "$SOURCE_REPO" "$coder" "$reviewer" "$create_pr"; then
-    event_done "preflight" true "ready"
+    event_done "preflight" true "all checks passed"
   else
     STATUS="preflight-error"
     event_done "preflight" false "$PREFLIGHT_ERROR"
@@ -2020,7 +2020,7 @@ run_devloop() {
   naming_error=""
   if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text"; then
     naming_error="$WORK_ITEM_ERROR"
-    event_gate "naming" 0 "$naming_error"
+    event_gate "branch name" 0 "$naming_error"
     if [ -n "${WORK_ITEM_LOG:-}" ]; then
       printf 'naming failed: %s\nnaming log: %s\n' "$naming_error" "$WORK_ITEM_LOG" >&2
     else
@@ -2030,11 +2030,11 @@ run_devloop() {
     return 2
   fi
   local slug="$WORK_SLUG"
-  event_gate "naming" 1 "$(branch_base "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")"
+  event_gate "branch name" 1 "$(branch_base "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")"
 
   local repo="$SOURCE_REPO"
   if [ "$use_worktree" = true ]; then
-    event_step "worktree" "create worktree"
+    event_step "worktree" "creating worktree"
     repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || {
       rm -f "$criteria_file"
       return 2
@@ -2074,9 +2074,13 @@ run_devloop() {
   init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
   if [ "$create_pr" = true ]; then
-    event_step "pull-request-lookup" "find existing PR"
+    event_step "pull-request-lookup" "checking for existing PR"
     if lookup_pull_request "$repo" "$run_branch"; then
-      event_done "pull-request-lookup" true "${PULL_REQUEST:-none}"
+      if [ -n "$PULL_REQUEST" ]; then
+        event_done "pull-request-lookup" true "found $PULL_REQUEST"
+      else
+        event_done "pull-request-lookup" true "no open PR found, will create draft"
+      fi
     else
       STATUS="pr-error"
       event_done "pull-request-lookup" false "$PULL_REQUEST_ERROR"
@@ -2098,9 +2102,9 @@ run_devloop() {
     local pr_review_context=""
     if [ "$create_pr" = true ] && [ "$pass" -gt 1 ] && [ -n "$PULL_REQUEST" ]; then
       local pr_context_id="pr-review-context-$pass"
-      event_step "$pr_context_id" "load latest PR review"
+      event_step "$pr_context_id" "loading latest PR review"
       if pr_review_context="$(latest_pr_review_comment "$repo" "$PULL_REQUEST")" && [ -n "$pr_review_context" ]; then
-        event_done "$pr_context_id" true "loaded"
+        event_done "$pr_context_id" true "review loaded"
       else
         STATUS="pr-error"
         if [ -z "$PULL_REQUEST_ERROR" ]; then PULL_REQUEST_ERROR="PR review lookup failed: no devloop round review comment found"; fi
@@ -2110,17 +2114,17 @@ run_devloop() {
     fi
     local coder_log=".devloop/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
-    event_step "$coder_id" "pass $pass/$max $(agent_label "$coder") implementation"
+    event_step "$coder_id" "pass $pass/$max: $(agent_label "$coder") implementing"
     if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".devloop/reviews/$slug-r$((pass - 1)).md" "$criteria_file" "$pr_review_context")" "$coder_id"; then
-      event_done "$coder_id" true "completed"
+      event_done "$coder_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="coder-error"; fi
-      event_done "$coder_id" false "failed"
+      event_done "$coder_id" false "agent exited with error, see log"
       break
     fi
 
     local commit_id="commit-$pass"
-    event_step "$commit_id" "pass $pass/$max commit"
+    event_step "$commit_id" "pass $pass/$max: committing changes"
     if commit_pass "$repo" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG" "$pass" "$initial_dirty"; then
       if [ -n "$PASS_BRANCH" ]; then FINAL_BRANCH="$PASS_BRANCH"; fi
       if [ -n "$PASS_COMMIT" ]; then
@@ -2132,9 +2136,9 @@ run_devloop() {
         FINAL_COMMIT_MESSAGE="$PASS_MESSAGE"
       fi
       if [ -n "$PASS_COMMIT" ]; then
-        event_done "$commit_id" true "1 commit"
+        event_done "$commit_id" true "changes committed"
       else
-        event_done "$commit_id" true "no changes"
+        event_done "$commit_id" true "nothing to commit"
       fi
     else
       STATUS="commit-error"
@@ -2144,9 +2148,9 @@ run_devloop() {
 
     if [ "$create_pr" = true ] && [ -n "$PASS_COMMIT" ]; then
       local pr_id="pull-request-$pass"
-      event_step "$pr_id" "push branch and ensure draft PR"
+      event_step "$pr_id" "pushing branch and opening draft PR"
       if create_pull_request "$repo" "$FINAL_BRANCH" "$base" "$spec" "$criteria_file" "$FINAL_COMMIT"; then
-        event_done "$pr_id" true "$PULL_REQUEST"
+        event_done "$pr_id" true "draft PR ready: $PULL_REQUEST"
       else
         STATUS="pr-error"
         event_done "$pr_id" false "$PULL_REQUEST_ERROR"
@@ -2156,7 +2160,7 @@ run_devloop() {
 
     local verify_id="verify-$pass"
     if verify_hook_configured "$repo" "$SOURCE_REPO"; then
-      event_step "$verify_id" "pass $pass/$max verification"
+      event_step "$verify_id" "pass $pass/$max: verifying acceptance criteria"
       if run_verify_hook "$repo" "$SOURCE_REPO" "$slug" "$pass"; then
         event_done "$verify_id" true "$VERIFY_DETAIL"
       else
@@ -2180,12 +2184,12 @@ run_devloop() {
     local review=".devloop/reviews/$slug-r$pass.md"
     local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
-    event_step "$reviewer_id" "pass $pass/$max $(agent_label "$reviewer") review"
+    event_step "$reviewer_id" "pass $pass/$max: $(agent_label "$reviewer") reviewing"
     if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$criteria_file" "$strict")" "$reviewer_id"; then
-      event_done "$reviewer_id" true "completed"
+      event_done "$reviewer_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
-      event_done "$reviewer_id" false "failed"
+      event_done "$reviewer_id" false "agent exited with error, see log"
       break
     fi
 
@@ -2196,9 +2200,9 @@ run_devloop() {
 
     if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ]; then
       local pr_comment_id="pr-review-comment-$pass"
-      event_step "$pr_comment_id" "post round review to PR"
+      event_step "$pr_comment_id" "posting review to PR"
       if post_pr_round_review "$repo" "$PULL_REQUEST" "$repo/$review" "$pass"; then
-        event_done "$pr_comment_id" true "posted"
+        event_done "$pr_comment_id" true "comment posted"
       else
         STATUS="pr-error"
         event_done "$pr_comment_id" false "$PULL_REQUEST_ERROR"
@@ -2209,7 +2213,7 @@ run_devloop() {
     local verdict
     verdict="$(parse_verdict "$repo/$review")"
     if [ "$verdict" = "ACCEPT" ]; then
-      event_gate "pass $pass verdict" 1 "$verdict"
+      event_gate "pass $pass review verdict" 1 "$verdict"
       if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$criteria_count"; then
         STATUS="unclear"
       elif [ "$strict" = true ] && ! has_passing_quality_matrix "$repo/$review"; then
@@ -2219,7 +2223,7 @@ run_devloop() {
       fi
       break
     fi
-    event_gate "pass $pass verdict" 0 "${verdict:-MISSING}"
+    event_gate "pass $pass review verdict" 0 "${verdict:-no verdict found in review}"
     if [ "$verdict" = "UNCLEAR" ]; then
       STATUS="unclear"
       break
@@ -2245,9 +2249,9 @@ run_devloop() {
   synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID" "$report_format"
 
   if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" != "pr-error" ]; then
-    event_step "pr-final-report" "post final report to PR"
+    event_step "pr-final-report" "posting final report to PR"
     if post_pr_final_report "$repo" "$PULL_REQUEST" "$slug" "$STATUS" "$PASSES" "$max" "$FINAL_BRANCH"; then
-      event_done "pr-final-report" true "posted"
+      event_done "pr-final-report" true "comment posted"
     else
       STATUS="pr-error"
       event_done "pr-final-report" false "$PULL_REQUEST_ERROR"
@@ -2733,7 +2737,7 @@ resolve_work_item() {
   log="$tmpdir/naming.log"
   WORK_ITEM_LOG="$log"
   prompt="$(naming_prompt "$spec" "$spec_text")"
-  if ! with_compact_wait "name work" run_agent_once "$agent" "$repo" "$log" "$prompt" ""; then
+  if ! with_compact_wait "naming the branch" run_agent_once "$agent" "$repo" "$log" "$prompt" ""; then
     WORK_ITEM_ERROR="${RUN_OUTPUT:-$(agent_label "$agent") failed}"
     return 1
   fi
@@ -3066,7 +3070,7 @@ run_with_prompt() {
   pid=$!
   case "$RUN_WAIT_STYLE" in
     compact) ui_compact_spinner_wait "$pid" "$code_file" "$stderr_file" "$RUN_WAIT_LABEL" ;;
-    *) ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-working}" "$stderr_file" ;;
+    *) ui_spinner_wait "$pid" "$code_file" "${UI_STEP_TITLE:-devloop working}" "$stderr_file" ;;
   esac
   wait "$pid" >/dev/null 2>&1 || true
   if [ -f "$code_file" ]; then
@@ -3873,7 +3877,7 @@ Style:
 - No emoji.
 EOF
 )"
-  with_compact_wait "write report" run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.devloop/logs/$slug-report.log" "$prompt" "" || true
+  with_compact_wait "writing the report" run_agent "$reviewer" "$repo" "$reviewer_session_file" "$repo/.devloop/logs/$slug-report.log" "$prompt" "" || true
 }
 
 report_metadata() {
