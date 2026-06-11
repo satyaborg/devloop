@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2](https://github.com/satyaborg/devloop/releases/tag/v0.4.2) - 2026-06-11
+
+### Added
+
+- clarify runtime status texts ([a4bb592](https://github.com/satyaborg/devloop/commit/a4bb5921b29e7e66e074a02d9916c6665e7172cc))
+- add versioned site install bootstrap ([7f37af1](https://github.com/satyaborg/devloop/commit/7f37af1758fa8924bc0a5edfe3ad976566fa14b6))
+
+
+### Documentation
+
+- note gh requirement for PR-backed loops ([8033b63](https://github.com/satyaborg/devloop/commit/8033b639d8d507d9ab7b914dcc915e39a7ef821e))
+
+
+### Fixed
+
+- avoid interactive test prompt ([85ed558](https://github.com/satyaborg/devloop/commit/85ed5583f74f56de7d51165f50d6b3fa8c262e20))
+- avoid gum pager in tests ([0d7104e](https://github.com/satyaborg/devloop/commit/0d7104e9201019dbbf2193b049b3d016a453db30))
+
 ## [0.4.1](https://github.com/satyaborg/devloop/releases/tag/v0.4.1) - 2026-06-09
 
 ### Fixed
