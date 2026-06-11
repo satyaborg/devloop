@@ -55,6 +55,13 @@ A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec
 
 Strict mode is on by default: specs need `## Acceptance criteria`, and reviews must pass both the spec gate and engineering quality gate.
 
+## Skills
+
+Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents/skills`:
+
+- [`devloop-spec`](skills/devloop-spec/SKILL.md) — turns a rough idea, notes, a URL, or an interview into one concrete, devloop-ready spec.
+- [`devloop-review`](skills/devloop-review/SKILL.md) — judges each pass against the spec and engineering quality gates, returning ACCEPT, REJECT, or UNCLEAR with fix instructions.
+
 ## Runtime
 
 - Uses an isolated sibling git worktree by default; pass `--in-place` to stay in the current worktree.
