@@ -12,7 +12,7 @@ curl -fsSL https://devloop.sh/install | bash
 
 Installs to `~/.local/share/devloop`, links `~/.local/bin/devloop`, and installs the bundled Codex and Claude Code skills.
 
-Required: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`. The installer can install missing `gum` and `fzf`; install the agent CLIs yourself.
+Required: Bash, git, Homebrew, `codex`, `claude`, `gum`, and `fzf`. The installer can install missing `gum` and `fzf`; install the agent CLIs yourself. PR-backed loops (`--create-pr`) additionally require an authenticated `gh`.
 
 From source:
 
