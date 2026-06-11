@@ -552,7 +552,7 @@ old_use_tui="$USE_TUI"
 USE_TUI=false
 if ( cd "$empty_spec_repo" && interactive_run_spec >/dev/null 2>&1 ); then fail "interactive_run_spec accepted missing specs"; fi
 USE_TUI=true
-if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_run_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_run_spec missing specs did not go back"; fi
+if ! ( cd "$empty_spec_repo" && ui_confirm() { return 1; }; UI_BACK=false; interactive_run_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_run_spec missing specs did not go back"; fi
 if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_continue_run >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_continue_run missing tracks did not go back"; fi
 if ! ( cd "$empty_spec_repo" && UI_BACK=false; interactive_open_report >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "interactive_open_report missing reports did not go back"; fi
 USE_TUI="$old_use_tui"
