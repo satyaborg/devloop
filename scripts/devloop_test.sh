@@ -36,7 +36,7 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER"
+bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER" "$REPO_ROOT/site/public/install"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -113,6 +113,77 @@ ok "skill metadata"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+equals "$(sed -n '1p' "$REPO_ROOT/site/public/VERSION")" "$version" "site VERSION matches root VERSION"
+ok "site version file"
+
+bootstrap_bin="$work/install-bootstrap-bin"
+bootstrap_log="$work/install-bootstrap.log"
+mkdir -p "$bootstrap_bin"
+cat > "$bootstrap_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" != "-fsSL" ]; then
+  printf 'unexpected curl args: %s\n' "$*" >&2
+  exit 1
+fi
+url="${2:-}"
+printf '%s\n' "$url" >> "$DEVLOOP_BOOTSTRAP_LOG"
+case "$url" in
+  https://version.example/devloop)
+    printf '%s\n' '9.8.7'
+    ;;
+  https://raw.example/devloop/v*/scripts/install.remote.sh)
+    cat <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'installer args:'
+for arg in "$@"; do printf ' <%s>' "$arg"; done
+printf '\n'
+SCRIPT
+    ;;
+  *)
+    printf 'unexpected url: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac
+CURL
+chmod +x "$bootstrap_bin/curl"
+bootstrap_output="$(
+  DEVLOOP_BOOTSTRAP_LOG="$bootstrap_log" \
+  DEVLOOP_VERSION_URL="https://version.example/devloop" \
+  DEVLOOP_RAW_BASE_URL="https://raw.example/devloop" \
+  PATH="$bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/site/public/install" --dry-run
+)"
+contains "$bootstrap_output" "installer args: <--version> <9.8.7> <--dry-run>" "site install bootstrap"
+contains "$(cat "$bootstrap_log")" "https://version.example/devloop" "site install bootstrap version"
+contains "$(cat "$bootstrap_log")" "https://raw.example/devloop/v9.8.7/scripts/install.remote.sh" "site install bootstrap installer"
+: > "$bootstrap_log"
+bootstrap_pinned_output="$(
+  DEVLOOP_BOOTSTRAP_LOG="$bootstrap_log" \
+  DEVLOOP_VERSION_URL="https://version.example/devloop" \
+  DEVLOOP_RAW_BASE_URL="https://raw.example/devloop" \
+  PATH="$bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/site/public/install" --version=1.2.3 --dry-run
+)"
+contains "$bootstrap_pinned_output" "installer args: <--version> <1.2.3> <--dry-run>" "site install bootstrap pinned"
+not_contains "$(cat "$bootstrap_log")" "https://version.example/devloop" "site install bootstrap pinned"
+contains "$(cat "$bootstrap_log")" "https://raw.example/devloop/v1.2.3/scripts/install.remote.sh" "site install bootstrap pinned"
+: > "$bootstrap_log"
+if bootstrap_bad_version_output="$(
+  DEVLOOP_BOOTSTRAP_LOG="$bootstrap_log" \
+  DEVLOOP_VERSION_URL="https://version.example/devloop" \
+  DEVLOOP_RAW_BASE_URL="https://raw.example/devloop" \
+  PATH="$bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/site/public/install" --version 2>&1
+)"; then
+  printf '%s\n' "$bootstrap_bad_version_output" >&2
+  fail "site install bootstrap accepted bare --version"
+fi
+contains "$bootstrap_bad_version_output" "error: --version requires a value" "site install bootstrap bare version"
+not_contains "$(cat "$bootstrap_log")" "https://version.example/devloop" "site install bootstrap bare version"
+not_contains "$(cat "$bootstrap_log")" "scripts/install.remote.sh" "site install bootstrap bare version"
+ok "site install bootstrap"
 
 make_remote_release() {
   local version="$1"
@@ -545,9 +616,13 @@ ok "pure helpers"
     return 0
   }
   ROOT="$work/release-root"
-  mkdir -p "$ROOT"
+  mkdir -p "$ROOT/site/public"
   git init -q "$ROOT"
+  release_write_version_files "9.9.8"
+  equals "$(sed -n '1p' "$ROOT/VERSION")" "9.9.8" "release writes root version"
+  equals "$(sed -n '1p' "$ROOT/site/public/VERSION")" "9.9.8" "release writes site version"
   printf '%s\n' "9.9.9" > "$ROOT/VERSION"
+  printf '%s\n' "9.9.9" > "$ROOT/site/public/VERSION"
   dry_run_output="$(release_main "patch" --dry-run)" || fail "release dry-run required git-cliff"
   contains "$dry_run_output" "next: 9.9.10 (v9.9.10)" "release dry-run"
   contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
@@ -557,7 +632,7 @@ ok "pure helpers"
   contains "$publish_dry_run_output" "would create GitHub release: gh release create v9.9.10 --verify-tag --generate-notes" "release publish dry-run"
   git -C "$ROOT" config user.email devloop-test@example.com
   git -C "$ROOT" config user.name "devloop test"
-  git -C "$ROOT" add VERSION
+  git -C "$ROOT" add VERSION site/public/VERSION
   git -C "$ROOT" commit -q -m init
   release_assert_clean_tree || fail "release clean tree rejected"
   printf '%s\n' "dirty" > "$ROOT/dirty"
