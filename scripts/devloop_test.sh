@@ -237,6 +237,9 @@ assert_project_function_coverage() {
 set -T
 trap record_project_function_coverage DEBUG
 
+ui_has_gum() { return 1; }
+ui_has_fzf() { return 1; }
+
 contains "$(usage)" "usage: devloop" "usage"
 contains "$(spec_usage)" "devloop spec" "spec usage"
 old_use_tui="$USE_TUI"
@@ -568,8 +571,8 @@ old_use_tui="$USE_TUI"
 USE_TUI=false
 equals "$(ui_pick_from_file "$picker_file" "Pick")" "alpha" "non-tui picker fallback"
 equals "$(USE_TUI=true; ui_numbered_pick "$picker_file" "Pick" 2>/dev/null <<<"2")" "beta" "numbered picker"
-USE_TUI="$old_use_tui"
 view_file "$picker_file" >/dev/null
+USE_TUI="$old_use_tui"
 equals "$(title_from_slug "chat-retry")" "Chat Retry" "title from slug"
 RUN_TIMEOUT_MINUTES=7
 contains "$(timeout_message)" "7 minutes" "timeout message"
