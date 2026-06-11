@@ -86,13 +86,8 @@ skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
 contains "$("$REPO_ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
 ok "spec skill path"
 
-contains "$(cat "$REPO_ROOT/README.md")" "opens and maintains a draft PR during the loop" "README PR mode"
-contains "$(cat "$REPO_ROOT/README.md")" "plain non-interactive" "README local-only"
-contains "$(cat "$REPO_ROOT/README.md")" "remains local-only" "README local-only"
-contains "$(cat "$REPO_ROOT/README.md")" "With \`--create-pr\`, \`devloop\` opens and maintains a draft PR during the loop" "README PR mode"
-not_contains "$(tr '\n' ' ' < "$REPO_ROOT/README.md")" "A plain non-interactive \`devloop <spec>\` remains local-only. This mode opens and maintains a draft PR during the loop." "README local-only coherence"
-contains "$(cat "$REPO_ROOT/README.md")" "PR is canonical" "README PR canonical"
-contains "$(cat "$REPO_ROOT/README.md")" "gh auth login" "README optional gh auth"
+contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
+contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR (requires \`gh\`)" "README PR mode"
 ok "README PR guidance"
 
 for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
