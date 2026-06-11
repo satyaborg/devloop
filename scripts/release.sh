@@ -43,6 +43,15 @@ release_current_version() {
   sed -n '1p' "$ROOT/VERSION" 2>/dev/null || true
 }
 
+release_write_version_files() {
+  local version="$1"
+  local site_version="$ROOT/site/public/VERSION"
+  printf '%s\n' "$version" > "$ROOT/VERSION"
+  if [ -d "$(dirname "$site_version")" ]; then
+    printf '%s\n' "$version" > "$site_version"
+  fi
+}
+
 release_next_version() {
   local bump="$1"
   local current="$2"
@@ -245,8 +254,9 @@ release_main() {
   if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_push_branch; fi
 
   bash "$ROOT/scripts/devloop_test.sh"
-  printf '%s\n' "$version" > "$ROOT/VERSION"
+  release_write_version_files "$version"
   git -C "$ROOT" add VERSION
+  if [ -f "$ROOT/site/public/VERSION" ]; then git -C "$ROOT" add site/public/VERSION; fi
   git -C "$ROOT" commit -m "chore: release $version"
   git -C "$ROOT" tag -a "$tag" -m "devloop $version"
   # Regenerate the changelog after the tag exists and render from the tagged

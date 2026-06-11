@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GITHUB_REPO="${DEVLOOP_GITHUB_REPO:-satyaborg/devloop}"
+VERSION_URL="${DEVLOOP_VERSION_URL:-https://devloop.sh/VERSION}"
+RAW_BASE_URL="${DEVLOOP_RAW_BASE_URL:-https://raw.githubusercontent.com/$GITHUB_REPO}"
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+normalize_version() {
+  local version="$1"
+  version="${version#v}"
+  version="$(printf '%s\n' "$version" | sed -n '1p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  if ! printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'; then
+    fail "invalid version: $1"
+  fi
+  printf '%s\n' "$version"
+}
+
+require_curl() {
+  if ! command -v curl >/dev/null 2>&1; then
+    fail "missing curl; install curl or download the release installer manually"
+  fi
+}
+
+requested_version() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        [ "$#" -ge 2 ] || fail "--version requires a value"
+        printf '%s\n' "$2"
+        return 0
+        ;;
+      --version=*)
+        printf '%s\n' "${1#--version=}"
+        return 0
+        ;;
+    esac
+    shift
+  done
+  return 1
+}
+
+validate_requested_version_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        [ "$#" -ge 2 ] || fail "--version requires a value"
+        shift
+        ;;
+    esac
+    shift
+  done
+}
+
+site_version() {
+  local version
+  version="$(curl -fsSL "$VERSION_URL")" || fail "failed to resolve Devloop version"
+  normalize_version "$version"
+}
+
+main() {
+  local version installer_url
+  local args=()
+  require_curl
+  validate_requested_version_args "$@"
+  if version="$(requested_version "$@")"; then
+    version="$(normalize_version "$version")"
+  else
+    version="$(site_version)"
+  fi
+
+  args=(--version "$version")
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        shift
+        if [ "$#" -gt 0 ]; then shift; fi
+        ;;
+      --version=*) shift ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  installer_url="$RAW_BASE_URL/v$version/scripts/install.remote.sh"
+  curl -fsSL "$installer_url" | bash -s -- "${args[@]}"
+}
+
+main "$@"

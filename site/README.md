@@ -56,11 +56,14 @@ so deployment is only complete once two things are true:
 
 1. `devloop.sh` points at this Pages project (Pages project > Custom domains >
    add `devloop.sh`; Cloudflare provisions the TLS cert).
-2. `https://devloop.sh/install` serves the install script as `text/plain`. Until
-   the real installer exists, either drop an `install` file into the deployed
-   output or add a redirect to the raw `install.sh` in the CLI repo. With Pages,
-   a `dist/_redirects` line like `/install https://raw.githubusercontent.com/satyaborg/devloop/main/install.sh 200`
-   proxies it.
+2. `https://devloop.sh/install` serves `public/install`, a small bootstrap that
+   reads `public/VERSION` from `https://devloop.sh/VERSION` and executes the
+   installer from the matching Git tag.
+
+For releases, push the Git tag and confirm Pages has deployed the release
+commit. A stale Pages deploy keeps new installs on the previous version, while a
+`VERSION` file that points at an unpushed tag makes `/install` fail when it
+fetches the tagged installer.
 
 ## Other static hosts
 
@@ -75,6 +78,9 @@ site/
   index.html         source page (vite entry)
   src/input.css      tailwind entry + theme tokens + @font-face
   vite.config.js     vite + @tailwindcss/vite plugin
+  public/_headers    Cloudflare Pages headers for extensionless files
+  public/install     VERSION-based bootstrap served at /install
+  public/VERSION     release version served at /VERSION
   public/fonts/      JetBrains Mono woff2 (400, 700), served at /fonts/
   dist/              build output (gitignored)
 ```
