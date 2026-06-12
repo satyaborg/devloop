@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3](https://github.com/satyaborg/devloop/releases/tag/v0.4.3) - 2026-06-12
+
+### Added
+
+- add demo video to site ([93de4f5](https://github.com/satyaborg/devloop/commit/93de4f5a1e1460fe94dfa668f7de72239446f691))
+- document bundled skills in readme and site ([a4bd95d](https://github.com/satyaborg/devloop/commit/a4bd95d9915620468c2dde62282ad72d04d8eac9))
+- make site demo click-to-play with poster ([243cf77](https://github.com/satyaborg/devloop/commit/243cf771f7b730e58ebba43d02f81414bcb6d9aa))
+
+
+### Fixed
+
+- align readme assertions with restyled docs ([0eaace9](https://github.com/satyaborg/devloop/commit/0eaace9517407d85fe356bcc8b3120bc18a83664))
+- use poster frame showing all four demo panes ([fbf2b30](https://github.com/satyaborg/devloop/commit/fbf2b304ec6f68ea414824d4a6eee9ccca011d68))
+
 ## [0.4.2](https://github.com/satyaborg/devloop/releases/tag/v0.4.2) - 2026-06-11
 
 ### Added
