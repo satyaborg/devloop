@@ -5,10 +5,6 @@
 ░▀▀░░▀▀▀░░▀░░▀▀▀░▀▀▀░▀▀▀░▀░░
   </pre>
   <p align="center">Spec in. Reviewed code out.</p>
-  <p align="center">
-    <a href="https://github.com/satyaborg/devloop/tags"><img src="https://img.shields.io/github/v/tag/satyaborg/devloop?color=blue" alt="Version"></a>
-    <a href="https://github.com/satyaborg/devloop/blob/main/LICENSE"><img src="https://img.shields.io/github/license/satyaborg/devloop" alt="License"></a>
-  </p>
 </p>
 
 <p align="center">
