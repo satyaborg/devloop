@@ -540,9 +540,19 @@ if ! create_spec_output="$(
 )"; then fail "create spec launch failed"; fi
 equals "$create_spec_output" "--agent codex" "create spec launches immediately"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
-if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup back navigation"; fi
+if ! run_setup_output="$(
+  HOME="$config_home"
+  USE_TUI=false
+  UI_BACK=false
+  interactive_create_pr_choice() { printf '%s\n' "false"; }
+  run_header() { :; }
+  run_devloop() { printf '%s\n' "$*"; return 0; }
+  maybe_enter_worktree() { :; }
+  interactive_run_setup "spec.md"
+)"; then fail "run setup defaults failed"; fi
+equals "$run_setup_output" "spec.md 5 html true true codex claude false 30" "run setup launches with defaults"
 if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec escape navigation"; fi
-if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup escape navigation"; fi
+if ! ( interactive_create_pr_choice() { return 130; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup PR prompt navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Quit"; }; UI_BACK=false; interactive_menu >/dev/null 2>&1 ); then fail "menu quit failed"; fi
 empty_spec_repo="$work/empty-spec-repo"
 mkdir -p "$empty_spec_repo"
@@ -1408,6 +1418,14 @@ PATH="$fake_bin:$bin_dir:$tool_bin:$PATH"
 USE_TUI=false
 export HOME PATH
 equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "true" "interactive PR prompt defaults yes when ready"
+pr_cancel_code="$(
+  set +e
+  cd "$interactive_pr_repo" || exit 99
+  ui_confirm() { return 130; }
+  interactive_create_pr_choice "$interactive_pr_repo" >/dev/null 2>&1
+  printf '%s\n' "$?"
+)"
+equals "$pr_cancel_code" "130" "interactive PR prompt preserves cancel"
 PATH="$no_gh_bin:$bin_dir:$tool_bin:$sys_clean"
 equals "$(cd "$interactive_pr_repo" && interactive_create_pr_choice "$interactive_pr_repo")" "false" "interactive PR prompt falls back local-only when unavailable"
 PATH="$old_path"

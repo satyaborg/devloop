@@ -1250,16 +1250,23 @@ interactive_settings() {
 
 interactive_create_pr_choice() {
   local repo="$1"
+  local code
   if github_pr_prompt_default "$repo"; then
-    if ui_confirm "Create a draft PR during this loop?" true; then
+    ui_confirm "Create a draft PR during this loop?" true
+    code=$?
+    if [ "$code" -eq 0 ]; then
       printf '%s\n' "true"
+    elif [ "$code" -eq 130 ]; then
+      return 130
     else
       printf '%s\n' "false"
     fi
     return 0
   fi
   UI_NOTICE="GitHub PR mode is unavailable in this repo; continuing local-only."
-  if ui_confirm "GitHub PR mode is unavailable. Continue local-only?" true; then
+  ui_confirm "GitHub PR mode is unavailable. Continue local-only?" true
+  code=$?
+  if [ "$code" -eq 0 ]; then
     printf '%s\n' "false"
     return 0
   fi
@@ -1276,89 +1283,23 @@ interactive_run_setup() {
   local create_pr=false
   local max="5"
   local timeout_minutes
-  local choice value code
+  local code
   timeout_minutes="$(devloop_timeout_minutes)"
 
-  while true; do
-    ui_header "Run setup" "$spec"
-    ui_print_key_values \
-      "mode" "$(if [ "$use_worktree" = true ]; then printf '%s' "isolated worktree"; else printf '%s' "current worktree"; fi)" \
-      "coder" "$(agent_label "$coder")" \
-      "reviewer" "$(agent_label "$reviewer")" \
-      "passes" "$max" \
-      "timeout" "$timeout_minutes minutes" \
-      "strict" "$strict" \
-      "report" "$report_format" \
-      "pr" "$create_pr"
-    choice="$(ui_choose "Change settings or start" \
-      "Start run" \
-      "Change coder" \
-      "Change reviewer" \
-      "Change pass limit" \
-      "Change timeout" \
-      "Toggle strict mode" \
-      "Toggle worktree mode" \
-      "Toggle PR creation" \
-      "Change report format" \
-      "Back")"
-    code=$?
-    if [ "$code" -ne 0 ]; then
-      ui_go_back
-      return 0
-    fi
-    case "$choice" in
-      "Start run")
-        create_pr="$(interactive_create_pr_choice "$PWD")" || continue
-        run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
-        run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
-        code=$?
-        maybe_enter_worktree
-        return "$(final_exit_code "$code")"
-        ;;
-      "Change coder")
-        value="$(ui_choose "Implementation agent" "Codex" "Claude Code" "Back")" || continue
-        [ "$value" = "Back" ] && continue
-        coder="$(agent_choice_value "$value")"
-        ;;
-      "Change reviewer")
-        value="$(ui_choose "Review agent" "Claude Code" "Codex" "Back")" || continue
-        [ "$value" = "Back" ] && continue
-        reviewer="$(agent_choice_value "$value")"
-        ;;
-      "Change pass limit")
-        value="$(ui_input "Pass limit, 1-10" "$max")" || continue
-        if printf '%s\n' "$value" | grep -Eq '^[0-9]+$' && [ "$value" -ge 1 ] && [ "$value" -le 10 ]; then
-          max="$value"
-        else
-          UI_NOTICE="pass limit must be an integer between 1 and 10"
-        fi
-        ;;
-      "Change timeout")
-        value="$(ui_input "Timeout minutes, 1-1440" "$timeout_minutes")" || continue
-        if timeout_minutes="$(normalize_timeout_minutes "$value")"; then
-          :
-        else
-          UI_NOTICE="timeout must be an integer between 1 and 1440 minutes"
-          timeout_minutes="$(devloop_timeout_minutes)"
-        fi
-        ;;
-      "Toggle strict mode")
-        if [ "$strict" = true ]; then strict=false; else strict=true; fi
-        ;;
-      "Toggle worktree mode")
-        if [ "$use_worktree" = true ]; then use_worktree=false; else use_worktree=true; fi
-        ;;
-      "Toggle PR creation")
-        if [ "$create_pr" = true ]; then create_pr=false; else create_pr=true; fi
-        ;;
-      "Change report format")
-        value="$(ui_choose "Report format" "html" "markdown" "Back")" || continue
-        [ "$value" = "Back" ] && continue
-        report_format="$value"
-        ;;
-      "Back") ui_go_back; return 0 ;;
-    esac
-  done
+  if [ "$USE_TUI" = true ]; then
+    ui_header "Run spec" "$spec"
+  fi
+  create_pr="$(interactive_create_pr_choice "$PWD")"
+  code=$?
+  if [ "$code" -ne 0 ]; then
+    ui_go_back
+    return 0
+  fi
+  run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  code=$?
+  maybe_enter_worktree
+  return "$(final_exit_code "$code")"
 }
 
 select_spec_file() {
