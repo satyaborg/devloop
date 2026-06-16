@@ -1451,8 +1451,15 @@ if ! accept_output="$(run_loop "$loop_repo" "e2e-accept" accept 1 2>&1)"; then
   fail "accept loop failed"
 fi
 contains "$accept_output" "accepted" "accept loop"
-accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^worktree:[[:space:]]+//p')"
+accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^[[:space:]]*Worktree[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
+contains "$accept_output" "Open Next" "accept loop"
+if ! printf '%s\n' "$accept_output" | grep -F "Report" | grep -F "$accept_worktree/.devloop/reports/e2e-accept.html" >/dev/null; then
+  fail "accept loop missing worktree-qualified report path"
+fi
+if ! printf '%s\n' "$accept_output" | grep -F "Track" | grep -F "$accept_worktree/.devloop/tracks/e2e-accept.md" >/dev/null; then
+  fail "accept loop missing worktree-qualified track path"
+fi
 contains "$(cat "$accept_worktree/.devloop/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
 contains "$(run_repo_main "$loop_repo" status)" "e2e-accept" "status command"
 contains "$(run_repo_main "$loop_repo" clean --dry-run)" "skip:" "clean skips accepted"
@@ -1493,7 +1500,8 @@ if ! pr_accept_output="$(run_loop "$pr_repo" "e2e-pr-accept" accept 1 "--create-
   fail "PR accept loop failed"
 fi
 contains "$pr_accept_output" "accepted" "PR accept loop"
-contains "$pr_accept_output" "pr:" "PR accept loop"
+contains "$pr_accept_output" "Open Next" "PR accept loop"
+contains "$pr_accept_output" "PR         https://github.com/satyaborg/devloop/pull/123" "PR accept loop"
 create_line="$(grep -n 'gh pr create' "$pr_log" | cut -d: -f1 | head -n 1)"
 review_line="$(grep -n 'agent reviewer 1' "$pr_log" | cut -d: -f1 | head -n 1)"
 [[ -n "$create_line" && -n "$review_line" && "$create_line" -lt "$review_line" ]] || fail "PR was not created before reviewer pass 1"
@@ -1705,7 +1713,7 @@ if ! no_changes_output="$(run_loop "$loop_repo" "e2e-no-changes" no-changes 1 2>
   fail "no changes loop failed"
 fi
 contains "$no_changes_output" "accepted" "no changes loop"
-contains "$no_changes_output" "commit:   none" "no changes loop"
+contains "$no_changes_output" "Commit     none" "no changes loop"
 ok "e2e no changes"
 
 loop_repo="$work/loop-dirty"
