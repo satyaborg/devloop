@@ -1771,21 +1771,22 @@ next_pass_from_track() {
 
 maybe_enter_worktree() {
   local shell_path old_pwd
-  if [ "$ENTER_WORKTREE" != true ]; then return; fi
-  if [ "$USE_TUI" != true ]; then return; fi
-  if [ ! -t 0 ] || [ ! -t 1 ]; then return; fi
-  if [ -z "$WORKTREE_REPO" ] || [ -z "$SOURCE_REPO" ]; then return; fi
-  if [ "$WORKTREE_REPO" = "$SOURCE_REPO" ]; then return; fi
-  if [ ! -d "$WORKTREE_REPO" ]; then return; fi
+  if ! will_enter_worktree_shell; then return; fi
 
   shell_path="${SHELL:-/bin/sh}"
   old_pwd="$PWD"
-  printf '\n' >&2
-  ui_status_line "ok" "worktree shell" "$WORKTREE_REPO"
-  printf '%s\n' "exit the shell to return to devloop's final status" >&2
   cd "$WORKTREE_REPO" || return
   "$shell_path" -i
   cd "$old_pwd" || return
+}
+
+will_enter_worktree_shell() {
+  [ "$ENTER_WORKTREE" = true ] || return 1
+  [ "$USE_TUI" = true ] || return 1
+  [ -t 0 ] && [ -t 1 ] || return 1
+  [ -n "$WORKTREE_REPO" ] && [ -n "$SOURCE_REPO" ] || return 1
+  [ "$WORKTREE_REPO" != "$SOURCE_REPO" ] || return 1
+  [ -d "$WORKTREE_REPO" ] || return 1
 }
 
 run_command() {
@@ -3948,27 +3949,33 @@ title_from_slug() {
 
 print_result() {
   printf '\n'
-  result_line "result" "$STATUS"
-  result_line "passes" "$PASSES / $MAX"
-  result_line "coder" "$(agent_label "$CODER")"
-  result_line "reviewer" "$(agent_label "$REVIEWER")"
-  result_line "branch" "$FINAL_BRANCH"
-  result_line "commit" "${FINAL_COMMIT:-none}"
-  if [ -n "$PULL_REQUEST" ]; then result_line "pr" "$PULL_REQUEST"; fi
-  if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then result_line "worktree" "$WORKTREE_REPO"; fi
-  result_line "report" "$(display_path "$REPORT")"
-  result_line "track" "$(display_path "$TRACK")"
+  printf 'devloop %s\n\n' "$STATUS"
+  result_line "Passes" "$PASSES / $MAX"
+  result_line "Agents" "$(agent_label "$CODER") -> $(agent_label "$REVIEWER")"
+  result_line "Branch" "$FINAL_BRANCH"
+  result_line "Commit" "${FINAL_COMMIT:-none}"
+  if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then result_line "Worktree" "$WORKTREE_REPO"; fi
+  printf '\nOpen Next\n'
+  if [ -n "$PULL_REQUEST" ]; then result_line "PR" "$PULL_REQUEST"; fi
+  result_line "Report" "$(display_path "$REPORT")"
+  result_line "Track" "$(display_path "$TRACK")"
+  if will_enter_worktree_shell; then
+    printf '\nShell\n'
+    printf '  Exit the shell to return to devloop.\n'
+  fi
 }
 
 result_line() {
-  local label="$1:"
+  local label="$1"
   local value="$2"
-  printf '%-10s%s\n' "$label" "$value"
+  printf '  %-10s %s\n' "$label" "$value"
 }
 
 display_path() {
   local file="$1"
-  if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then
+  if will_enter_worktree_shell; then
+    printf '%s\n' "$file"
+  elif [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then
     printf '%s/%s\n' "$WORKTREE_REPO" "$file"
   else
     printf '%s\n' "$file"
