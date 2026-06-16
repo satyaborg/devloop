@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0](https://github.com/satyaborg/devloop/releases/tag/v0.5.0) - 2026-06-16
+
+### Added
+
+- canonicalize devloop spec skill ([0684636](https://github.com/satyaborg/devloop/commit/0684636d223bd40bd4fea9fa75305d94f60549c9))
+
 ## [0.4.4](https://github.com/satyaborg/devloop/releases/tag/v0.4.4) - 2026-06-16
 
 ### Added
