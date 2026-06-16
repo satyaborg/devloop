@@ -640,7 +640,7 @@ if ! run_setup_output="$(
   maybe_enter_worktree() { :; }
   interactive_run_setup "spec.md"
 )"; then fail "run setup defaults failed"; fi
-equals "$run_setup_output" "spec.md 5 html true true codex claude false 30" "run setup launches with defaults"
+equals "$run_setup_output" "spec.md 5 html true true codex claude false 60" "run setup launches with defaults"
 if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec escape navigation"; fi
 if ! ( interactive_create_pr_choice() { return 130; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup PR prompt navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Quit"; }; UI_BACK=false; interactive_menu >/dev/null 2>&1 ); then fail "menu quit failed"; fi
