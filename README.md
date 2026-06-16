@@ -39,6 +39,7 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 | `devloop spec "..."` | Have an agent interview you and write a spec |
 | `devloop <spec.md>` | Run a spec |
 | `devloop --create-pr <spec.md>` | Run a spec and maintain a draft PR (requires `gh`) |
+| `devloop upgrade` | Install the latest released Devloop |
 | `devloop continue` | Resume a tracked run |
 | `devloop status` | Show run status |
 | `devloop clean` | Remove run artifacts |
