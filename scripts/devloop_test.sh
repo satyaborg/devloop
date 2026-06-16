@@ -633,8 +633,12 @@ ok "pure helpers"
   printf '%s\n' "9.9.9" > "$ROOT/site/public/VERSION"
   dry_run_output="$(release_main "patch" --dry-run)" || fail "release dry-run required git-cliff"
   contains "$dry_run_output" "next: 9.9.10 (v9.9.10)" "release dry-run"
+  contains "$dry_run_output" "would skip local tests (use --run-tests to run bash scripts/devloop_test.sh)" "release dry-run"
   contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
+  test_dry_run_output="$(release_main "patch" --run-tests --dry-run)" || fail "release test dry-run required git-cliff"
+  contains "$test_dry_run_output" "would run bash scripts/devloop_test.sh" "release test dry-run"
   publish_dry_run_output="$(release_main "patch" --publish --dry-run)" || fail "release publish dry-run required git-cliff"
+  contains "$publish_dry_run_output" "would verify local HEAD matches upstream, then skip local tests" "release publish dry-run"
   contains "$publish_dry_run_output" "would push branch and tag" "release publish dry-run"
   contains "$publish_dry_run_output" "would build release assets: devloop-9.9.10.tar.gz and devloop-9.9.10.tar.gz.sha256" "release publish dry-run"
   contains "$publish_dry_run_output" "would create GitHub release: gh release create v9.9.10 --verify-tag --generate-notes" "release publish dry-run"
@@ -646,6 +650,12 @@ ok "pure helpers"
   printf '%s\n' "dirty" > "$ROOT/dirty"
   if release_assert_clean_tree >/dev/null 2>&1; then fail "release clean tree accepted dirty repo"; fi
   rm "$ROOT/dirty"
+  if release_assert_head_matches_upstream >/dev/null 2>&1; then fail "release upstream accepted missing upstream"; fi
+  git -C "$ROOT" branch verified-main
+  git -C "$ROOT" branch --set-upstream-to=verified-main >/dev/null
+  release_assert_head_matches_upstream || fail "release upstream rejected matching HEAD"
+  git -C "$ROOT" commit --allow-empty -q -m local-ahead
+  if release_assert_head_matches_upstream >/dev/null 2>&1; then fail "release upstream accepted local ahead HEAD"; fi
   [ -n "$(release_current_branch)" ] || fail "release current branch missing"
   DEVLOOP_RELEASE_ALLOW_BRANCH=1 release_assert_push_branch || fail "release push branch rejected"
 )
