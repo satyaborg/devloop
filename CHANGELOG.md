@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4](https://github.com/satyaborg/devloop/releases/tag/v0.4.4) - 2026-06-16
+
+### Added
+
+- autoplay site demo with minimal play fallback ([16c8f23](https://github.com/satyaborg/devloop/commit/16c8f23341f23474cffbc11a2d504fbe95a02ce2))
+- add og image tags and align social meta with readme copy ([30b6ff2](https://github.com/satyaborg/devloop/commit/30b6ff2f2e2fff0750a0722112513adbea8d4340))
+- group loop result output into sections ([26b3c6f](https://github.com/satyaborg/devloop/commit/26b3c6f886b19cdb590b194c1988261cd5843a58))
+
+
+### Fixed
+
+- simplify interactive spec run setup ([6eef311](https://github.com/satyaborg/devloop/commit/6eef3119472fac2aee7064bf38cec8ff267640f0))
+
 ## [0.4.3](https://github.com/satyaborg/devloop/releases/tag/v0.4.3) - 2026-06-12
 
 ### Added
