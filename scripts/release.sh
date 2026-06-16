@@ -18,13 +18,15 @@ RELEASE_CHECKSUM=""
 
 release_usage() {
   cat <<'EOF'
-usage: ./scripts/release.sh <patch|minor|major> [--dry-run] [--publish] [--push]
+usage: ./scripts/release.sh <patch|minor|major> [--dry-run] [--run-tests] [--publish] [--push]
 
 Bumps VERSION, creates a release commit, and creates an annotated tag.
+Use --run-tests to run bash scripts/devloop_test.sh before changing files.
 Use --publish to push the commit and tag, then create a GitHub Release.
 
 Examples:
   ./scripts/release.sh patch --dry-run
+  ./scripts/release.sh patch --run-tests
   ./scripts/release.sh minor --publish
   ./scripts/release.sh major --push
 EOF
@@ -171,18 +173,58 @@ release_assert_push_branch() {
   return 1
 }
 
+release_assert_head_matches_upstream() {
+  local branch remote merge head upstream_head upstream_label
+  branch="$(release_current_branch)"
+  if [ -z "$branch" ]; then
+    printf '%s\n' "refusing to skip tests from detached HEAD" >&2
+    return 1
+  fi
+
+  remote="$(git -C "$ROOT" config "branch.$branch.remote" || true)"
+  merge="$(git -C "$ROOT" config "branch.$branch.merge" || true)"
+  if [ -z "$remote" ] || [ -z "$merge" ]; then
+    printf 'refusing to skip tests without an upstream for branch: %s\n' "$branch" >&2
+    printf '%s\n' "set an upstream, sync with it, or pass --run-tests" >&2
+    return 1
+  fi
+
+  head="$(git -C "$ROOT" rev-parse HEAD)"
+  if [ "$remote" = "." ]; then
+    upstream_label="${merge#refs/heads/}"
+    upstream_head="$(git -C "$ROOT" rev-parse "$upstream_label")" || return 1
+  else
+    upstream_label="$remote/${merge#refs/heads/}"
+    if ! git -C "$ROOT" fetch --quiet "$remote" "$merge"; then
+      printf 'failed to fetch upstream: %s\n' "$upstream_label" >&2
+      printf '%s\n' "fetch manually or pass --run-tests" >&2
+      return 1
+    fi
+    upstream_head="$(git -C "$ROOT" rev-parse FETCH_HEAD)" || return 1
+  fi
+
+  if [ "$head" = "$upstream_head" ]; then return 0; fi
+  printf '%s\n' "refusing to skip tests for a HEAD that differs from upstream" >&2
+  printf 'local HEAD: %s\n' "$head" >&2
+  printf 'upstream %s: %s\n' "$upstream_label" "$upstream_head" >&2
+  printf '%s\n' "sync with upstream or pass --run-tests" >&2
+  return 1
+}
+
 release_main() {
   local bump=""
   local current version
   local dry_run=false
   local publish=false
   local push=false
+  local run_tests=false
   local tag branch
   local artifact_dir
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dry-run) dry_run=true ;;
+      --run-tests) run_tests=true ;;
       --publish) publish=true ;;
       --push) push=true ;;
       -h|--help) release_usage; return 0 ;;
@@ -235,7 +277,13 @@ release_main() {
     if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
       printf '%s\n' "note: actual release requires a clean working tree"
     fi
-    printf '%s\n' "would run bash scripts/devloop_test.sh"
+    if [ "$run_tests" = true ]; then
+      printf '%s\n' "would run bash scripts/devloop_test.sh"
+    elif [ "$publish" = true ] || [ "$push" = true ]; then
+      printf '%s\n' "would verify local HEAD matches upstream, then skip local tests"
+    else
+      printf '%s\n' "would skip local tests (use --run-tests to run bash scripts/devloop_test.sh)"
+    fi
     printf 'would commit: chore: release %s\n' "$version"
     printf 'would tag: %s\n' "$tag"
     printf '%s\n' "would regenerate CHANGELOG.md from tagged history, amend the release commit, and move the tag"
@@ -253,7 +301,12 @@ release_main() {
   release_assert_clean_tree
   if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_push_branch; fi
 
-  bash "$ROOT/scripts/devloop_test.sh"
+  if [ "$run_tests" = true ]; then
+    bash "$ROOT/scripts/devloop_test.sh"
+  else
+    if [ "$publish" = true ] || [ "$push" = true ]; then release_assert_head_matches_upstream; fi
+    printf '%s\n' "skip local tests (use --run-tests to run bash scripts/devloop_test.sh)"
+  fi
   release_write_version_files "$version"
   git -C "$ROOT" add VERSION
   if [ -f "$ROOT/site/public/VERSION" ]; then git -C "$ROOT" add site/public/VERSION; fi

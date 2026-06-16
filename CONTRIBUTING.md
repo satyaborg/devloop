@@ -44,7 +44,7 @@ See [AGENTS.md](AGENTS.md) for the repository map and the same guidelines in age
 
 ## Releases
 
-Releases are cut by maintainers with [`scripts/release.sh`](scripts/release.sh), which bumps `VERSION`, regenerates `CHANGELOG.md` from commit history with [git-cliff](https://git-cliff.org/), tags, and publishes the GitHub Release. You do not need to touch `VERSION` or `CHANGELOG.md` in a normal PR.
+Releases are cut by maintainers from a CI-green `main` with [`scripts/release.sh`](scripts/release.sh), which bumps `VERSION`, regenerates `CHANGELOG.md` from commit history with [git-cliff](https://git-cliff.org/), tags, and publishes the GitHub Release. The release script skips the full local shell suite by default because CI already runs it on merge to `main`; for `--push` and `--publish`, it first verifies local `HEAD` matches upstream. Pass `--run-tests` when you want an extra local preflight. You do not need to touch `VERSION` or `CHANGELOG.md` in a normal PR.
 
 ## Reporting bugs and proposing features
 
