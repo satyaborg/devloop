@@ -6,6 +6,13 @@ pr: null
 ---
 
 # <Concise title>
+<One-sentence subtitle that names the implementation slice and why it matters.>
+
+```mermaid
+flowchart LR
+  Current["Current behavior"] --> Change["Implementation change"]
+  Change --> Result["Expected outcome"]
+```
 
 ## Problem
 <The real user pain or failure. Include the concrete moment this hurts.>
@@ -18,11 +25,11 @@ pr: null
 - Out: <explicit exclusions>
 
 ## Behavior
-Happy path:
+### Happy path
 1. <User/system action>
 2. <Expected observable result>
 
-Edge cases:
+### Edge cases
 - <Condition>: <expected result>
 - <Condition>: <expected result>
 

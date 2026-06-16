@@ -95,10 +95,30 @@ for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
   description="$(sed -n 's/^description: *//p' "$skill" | head -n 1)"
   dirname="$(basename "$(dirname "$skill")")"
   reference_nesting=""
+  in_frontmatter=false
+  frontmatter_end=false
   [[ "$name" == "$dirname" ]] || fail "skill name mismatch: $skill declares $name"
   [[ "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "invalid skill name: $name"
   [[ -n "$description" ]] || fail "missing skill description: $skill"
   [[ "${#description}" -le 1024 ]] || fail "skill description too long: $skill"
+  while IFS= read -r line; do
+    if [ "$line" = "---" ]; then
+      if [ "$in_frontmatter" = false ]; then
+        in_frontmatter=true
+        continue
+      fi
+      frontmatter_end=true
+      break
+    fi
+    [ "$in_frontmatter" = true ] || continue
+    [[ "$line" =~ ^[[:space:]] ]] && continue
+    key="${line%%:*}"
+    case "$key" in
+      name|description|metadata) ;;
+      *) fail "unexpected skill frontmatter key in $skill: $key" ;;
+    esac
+  done < "$skill"
+  [ "$frontmatter_end" = true ] || fail "unterminated skill frontmatter: $skill"
   if [ -d "$(dirname "$skill")/references" ]; then
     reference_nesting="$(find "$(dirname "$skill")/references" -mindepth 2 -type f -print)"
     [[ -z "$reference_nesting" ]] || fail "nested skill references: $reference_nesting"
@@ -108,6 +128,76 @@ ok "skill metadata"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+renderer_fixture="$work/spec-render-fixture.md"
+cat > "$renderer_fixture" <<'SPEC'
+---
+status: draft
+type: feat
+created: 2026-06-16
+pr: null
+---
+
+# Renderer Fixture
+Render the spec with light styling and robust Mermaid labels.
+
+```mermaid
+flowchart LR
+  Modes[Gmail/Outlook | IMAP] --> Result["Rendered HTML"]
+  Danger["</pre>"] --> Result
+```
+
+## Problem
+Renderer regressions are hard to spot from markdown alone.
+
+```markdown
+## This is inside a code fence
+- not a real section
+```
+
+The paragraph after the fenced heading still belongs to Problem.
+
+## Outcome
+The HTML companion renders the spec sections.
+
+## Scope
+- In: renderer fixture
+- Out: browser automation
+
+## Behavior
+### Happy path
+1. Run the bundled renderer.
+2. HTML is written next to the markdown.
+
+### Edge cases
+- Mermaid label contains `|`: renderer quotes the label.
+
+## Acceptance criteria
+1. The generated HTML uses the light theme.
+
+## Test plan
+- Red: Not applicable for fixture.
+- Green: `python3 skills/devloop-spec/scripts/render.py <fixture>`
+- Full: `bash scripts/devloop_test.sh`
+- Coverage: Not applicable for Bash fixture.
+
+## Constraints
+- Must: keep markdown canonical.
+- Avoid: editing generated HTML by hand.
+- Existing convention: derived files sit beside the source markdown.
+
+## Notes
+No gaps.
+SPEC
+renderer_output="$(python3 "$REPO_ROOT/skills/devloop-spec/scripts/render.py" "$renderer_fixture")"
+[[ -f "$renderer_output" ]] || fail "spec renderer did not create HTML"
+contains "$(cat "$renderer_output")" "--bg: #ffffff" "spec renderer light theme"
+contains "$(cat "$renderer_output")" 'Modes["Gmail/Outlook | IMAP"]' "spec renderer Mermaid quoting"
+contains "$(cat "$renderer_output")" 'Danger["&lt;/pre&gt;"]' "spec renderer Mermaid escaping"
+not_contains "$(cat "$renderer_output")" '<h2><span class="chev">▶</span>This is inside a code fence</h2>' "spec renderer fenced heading"
+contains "$(cat "$renderer_output")" "The paragraph after the fenced heading still belongs to Problem." "spec renderer fenced content"
+contains "$(cat "$renderer_output")" $'<section class="open" data-toggle>\n  <h2><span class="chev">▶</span>Acceptance criteria</h2>' "spec renderer acceptance open"
+ok "spec renderer"
 
 equals "$(sed -n '1p' "$REPO_ROOT/site/public/VERSION")" "$version" "site VERSION matches root VERSION"
 ok "site version file"
@@ -869,9 +959,11 @@ PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not m
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
+[[ -f "$install_home/.agents/skills/devloop-spec/scripts/render.py" ]] || fail "installer did not install Codex spec renderer"
 [[ -f "$install_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Codex review skill"
 [[ -f "$install_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Codex checksum"
 [[ -f "$install_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Claude spec skill"
+[[ -f "$install_home/.claude/skills/devloop-spec/scripts/render.py" ]] || fail "installer did not install Claude spec renderer"
 [[ -f "$install_home/.claude/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Claude review skill"
 [[ -f "$install_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Claude checksum"
 "$bin_dir/devloop" --help >/tmp/devloop-help-test.out
