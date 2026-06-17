@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1](https://github.com/satyaborg/devloop/releases/tag/v0.5.1) - 2026-06-17
+
+### Added
+
+- upgrade-command ([0cf71f9](https://github.com/satyaborg/devloop/commit/0cf71f93a265d7f624977a217ee12f365c51b6d8))
+
 ## [0.5.0](https://github.com/satyaborg/devloop/releases/tag/v0.5.0) - 2026-06-16
 
 ### Added
