@@ -35,6 +35,7 @@ UI_DIM_COLOR="244"
 UI_BORDER_COLOR="141"
 UI_BACK=false
 UI_NOTICE=""
+DEVLOOP_UPGRADE_PROMPTED=false
 
 EVENT_IDS=()
 EVENT_TITLES=()
@@ -87,6 +88,12 @@ main() {
     return 0
   fi
 
+  if [ "${1:-}" = "upgrade" ]; then
+    shift
+    upgrade_command "$@"
+    return $?
+  fi
+
   if [ "${1:-}" = "spec" ]; then
     shift
     spec_command "$@"
@@ -95,6 +102,7 @@ main() {
 
   if [ "${1:-}" = "menu" ]; then
     shift
+    if [ "$#" -eq 0 ]; then maybe_prompt_upgrade; fi
     interactive_menu "$@"
     return $?
   fi
@@ -135,6 +143,7 @@ main() {
 
   if [ "$#" -eq 0 ] || has_arg "-h" "$@" || has_arg "--help" "$@"; then
     if [ "$#" -eq 0 ] && [ "$USE_TUI" = true ]; then
+      maybe_prompt_upgrade
       interactive_menu
       return $?
     fi
@@ -172,6 +181,7 @@ Usage:
 
 Common commands:
   devloop doctor
+  devloop upgrade
   devloop reports
   devloop status
   devloop clean
@@ -210,6 +220,7 @@ welcome_tui() {
   printf '  devloop [options] <spec.md> [max=5]\n\n'
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Common commands"
   printf '  %-42s %s\n' "devloop doctor" "check required tools"
+  printf '  %-42s %s\n' "devloop upgrade" "install the latest release"
   printf '  %-42s %s\n' "devloop reports" "open previous run reports"
   printf '  %-42s %s\n' "devloop status" "summarize tracked runs"
   printf '  %-42s %s\n' "devloop clean" "show safe cleanup candidates"
@@ -274,6 +285,168 @@ version_args_only() {
     esac
   done
   [ "$saw_version" = true ]
+}
+
+devloop_normalize_version() {
+  local version="$1"
+  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+  version="${version#v}"
+  if ! [[ "$version" =~ $semver_re ]]; then
+    printf 'invalid version: %s\n' "$1" >&2
+    return 1
+  fi
+  printf '%s\n' "$version"
+}
+
+devloop_version_gt() {
+  local left right left_main right_main left_pre="" right_pre=""
+  local left_parts right_parts left_ids right_ids
+  local i left_value right_value left_id right_id left_numeric right_numeric
+  left="$(devloop_normalize_version "$1")" || return 1
+  right="$(devloop_normalize_version "$2")" || return 1
+  left="${left%%+*}"
+  right="${right%%+*}"
+  left_main="${left%%-*}"
+  right_main="${right%%-*}"
+  if [ "$left" != "$left_main" ]; then left_pre="${left#*-}"; fi
+  if [ "$right" != "$right_main" ]; then right_pre="${right#*-}"; fi
+
+  IFS=. read -r -a left_parts <<< "$left_main"
+  IFS=. read -r -a right_parts <<< "$right_main"
+  i=0
+  while [ "$i" -lt 3 ]; do
+    left_value="${left_parts[$i]}"
+    right_value="${right_parts[$i]}"
+    if [ "$((10#$left_value))" -gt "$((10#$right_value))" ]; then return 0; fi
+    if [ "$((10#$left_value))" -lt "$((10#$right_value))" ]; then return 1; fi
+    i=$((i + 1))
+  done
+
+  if [ -z "$left_pre" ] && [ -n "$right_pre" ]; then return 0; fi
+  if [ -n "$left_pre" ] && [ -z "$right_pre" ]; then return 1; fi
+  if [ -z "$left_pre" ] && [ -z "$right_pre" ]; then return 1; fi
+
+  IFS=. read -r -a left_ids <<< "$left_pre"
+  IFS=. read -r -a right_ids <<< "$right_pre"
+  i=0
+  while [ "$i" -lt "${#left_ids[@]}" ] || [ "$i" -lt "${#right_ids[@]}" ]; do
+    if [ "$i" -ge "${#left_ids[@]}" ]; then return 1; fi
+    if [ "$i" -ge "${#right_ids[@]}" ]; then return 0; fi
+    left_id="${left_ids[$i]}"
+    right_id="${right_ids[$i]}"
+    left_numeric=false
+    right_numeric=false
+    if [[ "$left_id" =~ ^[0-9]+$ ]]; then left_numeric=true; fi
+    if [[ "$right_id" =~ ^[0-9]+$ ]]; then right_numeric=true; fi
+    if [ "$left_numeric" = true ] && [ "$right_numeric" = true ]; then
+      if [ "$((10#$left_id))" -gt "$((10#$right_id))" ]; then return 0; fi
+      if [ "$((10#$left_id))" -lt "$((10#$right_id))" ]; then return 1; fi
+    elif [ "$left_numeric" = true ]; then
+      return 1
+    elif [ "$right_numeric" = true ]; then
+      return 0
+    else
+      if [[ "$left_id" > "$right_id" ]]; then return 0; fi
+      if [[ "$left_id" < "$right_id" ]]; then return 1; fi
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+devloop_resolve_latest_version() {
+  local github_repo github_api_url response source_path version
+  github_repo="${DEVLOOP_GITHUB_REPO:-satyaborg/devloop}"
+  github_api_url="${DEVLOOP_GITHUB_API_URL:-https://api.github.com/repos/$github_repo/releases/latest}"
+  case "$github_api_url" in
+    file://*)
+      source_path="${github_api_url#file://}"
+      if [ ! -f "$source_path" ]; then
+        printf 'missing latest release fixture: %s\n' "$source_path" >&2
+        return 1
+      fi
+      response="$(<"$source_path")"
+      ;;
+    *)
+      if ! command -v curl >/dev/null 2>&1; then
+        printf 'missing curl; cannot resolve latest Devloop release\n' >&2
+        return 1
+      fi
+      response="$(curl -fsSL "$github_api_url")" || {
+        printf 'failed to resolve latest Devloop release\n' >&2
+        return 1
+      }
+      ;;
+  esac
+  version="$(printf '%s\n' "$response" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/p' | head -n 1)"
+  if [ -z "$version" ]; then
+    printf 'latest release response did not include tag_name\n' >&2
+    return 1
+  fi
+  devloop_normalize_version "$version"
+}
+
+devloop_upgrade_install() {
+  local latest="$1"
+  local current="$2"
+  local installer="$ROOT_DIR/scripts/install.remote.sh"
+  if [ ! -f "$installer" ]; then
+    printf 'error: remote installer not found: %s\n' "$installer" >&2
+    return 1
+  fi
+  printf 'upgrading devloop %s -> %s\n' "$current" "$latest"
+  bash "$installer" --yes --version "$latest"
+}
+
+upgrade_command() {
+  local resolved latest current
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      -h|--help)
+        printf '%s\n' "usage: devloop upgrade"
+        return 0
+        ;;
+      *)
+        printf '%s\n' "usage: devloop upgrade" >&2
+        return 2
+        ;;
+    esac
+  fi
+  current="$(devloop_normalize_version "$DEVLOOP_VERSION" 2>/dev/null || printf '%s\n' "$DEVLOOP_VERSION")"
+  if ! resolved="$(devloop_resolve_latest_version 2>&1)"; then
+    printf '%s\n' "error: could not resolve latest Devloop release" >&2
+    if [ -n "$resolved" ]; then printf '%s\n' "$resolved" >&2; fi
+    return 1
+  fi
+  latest="$resolved"
+  if ! devloop_version_gt "$latest" "$current"; then
+    printf 'devloop %s is already latest\n' "$current"
+    return 0
+  fi
+  devloop_upgrade_install "$latest" "$current"
+}
+
+devloop_prompt_tty_ready() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+maybe_prompt_upgrade() {
+  local resolved latest current
+  if [ "$DEVLOOP_UPGRADE_PROMPTED" = true ]; then return 0; fi
+  DEVLOOP_UPGRADE_PROMPTED=true
+  devloop_prompt_tty_ready || return 0
+  current="$(devloop_normalize_version "$DEVLOOP_VERSION" 2>/dev/null || printf '%s\n' "$DEVLOOP_VERSION")"
+  resolved="$(devloop_resolve_latest_version 2>/dev/null)" || return 0
+  latest="$resolved"
+  devloop_version_gt "$latest" "$current" || return 0
+  printf 'upgrade available: devloop %s -> %s\n' "$current" "$latest" >&2
+  if ui_confirm "Upgrade Devloop to $latest now?"; then
+    if ! devloop_upgrade_install "$latest" "$current"; then
+      UI_NOTICE="upgrade failed; continuing without upgrade"
+    fi
+  else
+    UI_NOTICE="upgrade skipped"
+  fi
 }
 
 trim_string() {
