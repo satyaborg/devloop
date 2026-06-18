@@ -16,7 +16,7 @@ The markdown spec is the source of truth that `devloop` will use as implementati
 Available resources:
 
 - `references/spec-template.md`: read when drafting or validating the spec shape.
-- `scripts/render.py`: run after writing a markdown spec to create a sibling HTML companion.
+- `scripts/render.sh`: run after writing a markdown spec to create a sibling HTML companion.
 
 ## Scope Guard
 
@@ -162,12 +162,12 @@ Do not wrap the spec in a code fence unless the caller explicitly asks for a fen
 When a markdown spec is written to a file, render the interactive HTML companion if the bundled script is available:
 
 ```bash
-python3 scripts/render.py <path-to-spec.md>
+scripts/render.sh <path-to-spec.md>
 ```
 
-Run the command from the skill directory, or resolve `scripts/render.py` relative to this skill's `SKILL.md`. The script writes `<path-to-spec>.html` next to the markdown.
+Run the command from the skill directory, or resolve `scripts/render.sh` relative to this skill's `SKILL.md`. The script writes `<path-to-spec>.html` next to the markdown.
 
-If rendering fails because of Mermaid syntax, fix the markdown source and rerun the renderer. If rendering cannot run in the current environment, keep the markdown spec and say HTML was not generated.
+If Mermaid fails in the browser, fix the markdown source and rerun the renderer. If rendering cannot run in the current environment, keep the markdown spec and say HTML was not generated.
 
 ## Signoff
 
