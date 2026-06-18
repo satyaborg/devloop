@@ -35,7 +35,7 @@ UI_DIM_COLOR="244"
 UI_BORDER_COLOR="141"
 UI_BACK=false
 UI_NOTICE=""
-DEVLOOP_UPGRADE_PROMPTED=false
+DEVLOOP_UPDATE_PROMPTED=false
 
 EVENT_IDS=()
 EVENT_TITLES=()
@@ -88,9 +88,9 @@ main() {
     return 0
   fi
 
-  if [ "${1:-}" = "upgrade" ]; then
+  if [ "${1:-}" = "update" ]; then
     shift
-    upgrade_command "$@"
+    update_command "$@"
     return $?
   fi
 
@@ -102,7 +102,7 @@ main() {
 
   if [ "${1:-}" = "menu" ]; then
     shift
-    if [ "$#" -eq 0 ]; then maybe_prompt_upgrade; fi
+    if [ "$#" -eq 0 ]; then maybe_prompt_update; fi
     interactive_menu "$@"
     return $?
   fi
@@ -143,7 +143,7 @@ main() {
 
   if [ "$#" -eq 0 ] || has_arg "-h" "$@" || has_arg "--help" "$@"; then
     if [ "$#" -eq 0 ] && [ "$USE_TUI" = true ]; then
-      maybe_prompt_upgrade
+      maybe_prompt_update
       interactive_menu
       return $?
     fi
@@ -181,7 +181,7 @@ Usage:
 
 Common commands:
   devloop doctor
-  devloop upgrade
+  devloop update
   devloop reports
   devloop status
   devloop clean
@@ -220,7 +220,7 @@ welcome_tui() {
   printf '  devloop [options] <spec.md> [max=5]\n\n'
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Common commands"
   printf '  %-42s %s\n' "devloop doctor" "check required tools"
-  printf '  %-42s %s\n' "devloop upgrade" "install the latest release"
+  printf '  %-42s %s\n' "devloop update" "install the latest release"
   printf '  %-42s %s\n' "devloop reports" "open previous run reports"
   printf '  %-42s %s\n' "devloop status" "summarize tracked runs"
   printf '  %-42s %s\n' "devloop clean" "show safe cleanup candidates"
@@ -386,7 +386,7 @@ devloop_resolve_latest_version() {
   devloop_normalize_version "$version"
 }
 
-devloop_upgrade_install() {
+devloop_update_install() {
   local latest="$1"
   local current="$2"
   local installer="$ROOT_DIR/scripts/install.remote.sh"
@@ -394,20 +394,20 @@ devloop_upgrade_install() {
     printf 'error: remote installer not found: %s\n' "$installer" >&2
     return 1
   fi
-  printf 'upgrading devloop %s -> %s\n' "$current" "$latest"
+  printf 'updating devloop %s -> %s\n' "$current" "$latest"
   bash "$installer" --yes --version "$latest"
 }
 
-upgrade_command() {
+update_command() {
   local resolved latest current
   if [ "$#" -gt 0 ]; then
     case "$1" in
       -h|--help)
-        printf '%s\n' "usage: devloop upgrade"
+        printf '%s\n' "usage: devloop update"
         return 0
         ;;
       *)
-        printf '%s\n' "usage: devloop upgrade" >&2
+        printf '%s\n' "usage: devloop update" >&2
         return 2
         ;;
     esac
@@ -423,29 +423,29 @@ upgrade_command() {
     printf 'devloop %s is already latest\n' "$current"
     return 0
   fi
-  devloop_upgrade_install "$latest" "$current"
+  devloop_update_install "$latest" "$current"
 }
 
 devloop_prompt_tty_ready() {
   [ -t 0 ] && [ -t 1 ]
 }
 
-maybe_prompt_upgrade() {
+maybe_prompt_update() {
   local resolved latest current
-  if [ "$DEVLOOP_UPGRADE_PROMPTED" = true ]; then return 0; fi
-  DEVLOOP_UPGRADE_PROMPTED=true
+  if [ "$DEVLOOP_UPDATE_PROMPTED" = true ]; then return 0; fi
+  DEVLOOP_UPDATE_PROMPTED=true
   devloop_prompt_tty_ready || return 0
   current="$(devloop_normalize_version "$DEVLOOP_VERSION" 2>/dev/null || printf '%s\n' "$DEVLOOP_VERSION")"
   resolved="$(devloop_resolve_latest_version 2>/dev/null)" || return 0
   latest="$resolved"
   devloop_version_gt "$latest" "$current" || return 0
-  printf 'upgrade available: devloop %s -> %s\n' "$current" "$latest" >&2
-  if ui_confirm "Upgrade Devloop to $latest now?"; then
-    if ! devloop_upgrade_install "$latest" "$current"; then
-      UI_NOTICE="upgrade failed; continuing without upgrade"
+  printf 'update available: devloop %s -> %s\n' "$current" "$latest" >&2
+  if ui_confirm "Update Devloop to $latest now?"; then
+    if ! devloop_update_install "$latest" "$current"; then
+      UI_NOTICE="update failed; continuing without update"
     fi
   else
-    UI_NOTICE="upgrade skipped"
+    UI_NOTICE="update skipped"
   fi
 }
 

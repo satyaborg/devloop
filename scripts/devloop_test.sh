@@ -56,7 +56,9 @@ contains "$help" "devloop doctor" "help"
 contains "$help" "devloop reports" "help"
 contains "$help" "devloop status" "help"
 contains "$help" "devloop clean" "help"
-contains "$help" "devloop upgrade" "help"
+contains "$help" "devloop update" "help"
+obsolete_update_command="up""grade"
+not_contains "$help" "devloop $obsolete_update_command" "help"
 contains "$help" "--create-pr" "help"
 contains "$help" "draft PR during the loop" "help"
 contains "$help" "--no-shell" "help"
@@ -80,7 +82,8 @@ contains "$readme_text" "curl -fsSL https://devloop.sh/install | bash" "README r
 contains "$readme_text" "git clone https://github.com/satyaborg/devloop.git" "README source install"
 contains "$readme_text" "cd devloop" "README source install"
 contains "$readme_text" "./scripts/install.sh" "README source install"
-contains "$readme_text" "\`devloop upgrade\`" "README command table"
+contains "$readme_text" "\`devloop update\`" "README command table"
+not_contains "$readme_text" "\`devloop $obsolete_update_command\`" "README command table"
 ok "README install docs"
 
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
@@ -338,7 +341,8 @@ gum() { return 0; }
 old_use_tui="$USE_TUI"
 USE_TUI=true
 tui_help="$(welcome_tui)"
-contains "$tui_help" "devloop upgrade" "TUI help"
+contains "$tui_help" "devloop update" "TUI help"
+not_contains "$tui_help" "devloop $obsolete_update_command" "TUI help"
 USE_TUI="$old_use_tui"
 unset -f gum
 
@@ -433,7 +437,7 @@ devloop_version_gt 1.2.3 1.2.3-alpha.1 || fail "devloop version comparison rejec
 devloop_version_gt 1.2.3-alpha.2 1.2.3-alpha.1 || fail "devloop version comparison rejected prerelease identifier"
 if devloop_version_gt 1.2.3 1.2.3; then fail "devloop version comparison accepted equal version"; fi
 if devloop_version_gt 1.2.3-alpha.1 1.2.3; then fail "devloop version comparison accepted prerelease over release"; fi
-if devloop_prompt_tty_ready; then fail "upgrade prompt tty check accepted non-tty test shell"; fi
+if devloop_prompt_tty_ready; then fail "update prompt tty check accepted non-tty test shell"; fi
 
 frontmatter_text=$'---\ntype: fix!\nslug: "Chat Retry"\nbreaking: true\nempty: null\n---\n# Title'
 equals "$(frontmatter_value type "$frontmatter_text")" "fix!" "frontmatter type"
@@ -637,26 +641,26 @@ if ! menu_default_output="$(
 )"; then fail "menu default choice failed"; fi
 equals "$menu_default_output" "create" "menu starts with create spec"
 if ! menu_dispatch_output="$(
-  maybe_prompt_upgrade() { printf '%s\n' "prompt"; }
+  maybe_prompt_update() { printf '%s\n' "prompt"; }
   interactive_menu() { printf '%s\n' "menu"; }
   USE_TUI=true
   main menu
-)"; then fail "menu dispatch upgrade prompt failed"; fi
+)"; then fail "menu dispatch update prompt failed"; fi
 equals "$menu_dispatch_output" $'prompt\nmenu' "menu dispatch prompts before menu"
 if ! no_arg_dispatch_output="$(
-  maybe_prompt_upgrade() { printf '%s\n' "prompt"; }
+  maybe_prompt_update() { printf '%s\n' "prompt"; }
   interactive_menu() { printf '%s\n' "menu"; }
   USE_TUI=true
   main
-)"; then fail "no-arg dispatch upgrade prompt failed"; fi
+)"; then fail "no-arg dispatch update prompt failed"; fi
 equals "$no_arg_dispatch_output" $'prompt\nmenu' "no-arg dispatch prompts before menu"
 if ! explicit_work_output="$(
-  maybe_prompt_upgrade() { printf '%s\n' "prompt"; }
+  maybe_prompt_update() { printf '%s\n' "prompt"; }
   run_command() { printf 'run'; }
   USE_TUI=true
   main "$criteria_file"
 )"; then fail "explicit work dispatch failed"; fi
-equals "$explicit_work_output" "run" "explicit work skips upgrade prompt"
+equals "$explicit_work_output" "run" "explicit work skips update prompt"
 if ! create_spec_output="$(
   ui_choose() { printf '%s\n' "Codex"; }
   ui_input() { printf '%s\n' "unexpected input"; return 1; }
@@ -871,51 +875,62 @@ for tool in gum fzf codex claude; do
 done
 remote_path="$remote_tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-upgrade_root="$work/upgrade-root"
-upgrade_bin="$work/upgrade-bin"
-upgrade_home="$work/upgrade-home"
-if ! upgrade_output="$(
-  HOME="$upgrade_home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$upgrade_root" DEVLOOP_BIN_DIR="$upgrade_bin" \
-    main upgrade 2>&1
+update_root="$work/update-root"
+update_bin="$work/update-bin"
+update_home="$work/update-home"
+if ! update_output="$(
+  HOME="$update_home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$update_root" DEVLOOP_BIN_DIR="$update_bin" \
+    main update 2>&1
 )"; then
-  printf '%s\n' "$upgrade_output" >&2
-  fail "devloop upgrade failed"
+  printf '%s\n' "$update_output" >&2
+  fail "devloop update failed"
 fi
-contains "$upgrade_output" "upgrading devloop $version -> $remote_version" "devloop upgrade"
-contains "$upgrade_output" "verified checksum" "devloop upgrade checksum"
-contains "$upgrade_output" "devloop $remote_version installed" "devloop upgrade install"
-[[ -L "$upgrade_bin/devloop" ]] || fail "devloop upgrade did not create symlink"
-equals "$(readlink "$upgrade_bin/devloop")" "$upgrade_root/$remote_version/devloop" "devloop upgrade symlink target"
-equals "$("$upgrade_bin/devloop" --version)" "devloop $remote_version" "devloop upgrade installed version"
-[[ -f "$upgrade_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "devloop upgrade did not install Codex skills"
-[[ -f "$upgrade_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "devloop upgrade did not install Claude skills"
-ok "devloop upgrade installs newer release"
+contains "$update_output" "updating devloop $version -> $remote_version" "devloop update"
+contains "$update_output" "verified checksum" "devloop update checksum"
+contains "$update_output" "devloop $remote_version installed" "devloop update install"
+[[ -L "$update_bin/devloop" ]] || fail "devloop update did not create symlink"
+equals "$(readlink "$update_bin/devloop")" "$update_root/$remote_version/devloop" "devloop update symlink target"
+equals "$("$update_bin/devloop" --version)" "devloop $remote_version" "devloop update installed version"
+[[ -f "$update_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "devloop update did not install Codex skills"
+[[ -f "$update_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "devloop update did not install Claude skills"
+ok "devloop update installs newer release"
 
 current_api_file="$work/current-release.json"
 printf '{"tag_name":"v%s"}\n' "$version" > "$current_api_file"
-current_upgrade_root="$work/current-upgrade-root"
-current_upgrade_bin="$work/current-upgrade-bin"
-if ! current_upgrade_output="$(
-  HOME="$work/current-upgrade-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$current_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$current_upgrade_root" DEVLOOP_BIN_DIR="$current_upgrade_bin" \
-    main upgrade 2>&1
+current_update_root="$work/current-update-root"
+current_update_bin="$work/current-update-bin"
+if ! current_update_output="$(
+  HOME="$work/current-update-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$current_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$current_update_root" DEVLOOP_BIN_DIR="$current_update_bin" \
+    main update 2>&1
 )"; then
-  printf '%s\n' "$current_upgrade_output" >&2
-  fail "devloop upgrade current version failed"
+  printf '%s\n' "$current_update_output" >&2
+  fail "devloop update current version failed"
 fi
-contains "$current_upgrade_output" "devloop $version is already latest" "devloop upgrade current"
-[[ ! -e "$current_upgrade_bin/devloop" ]] || fail "devloop upgrade reinstalled already-current version"
-ok "devloop upgrade already current"
+contains "$current_update_output" "devloop $version is already latest" "devloop update current"
+[[ ! -e "$current_update_bin/devloop" ]] || fail "devloop update reinstalled already-current version"
+ok "devloop update already current"
 
 if resolver_failure_output="$(
   HOME="$work/resolver-failure-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$work/missing-latest.json" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$work/resolver-failure-root" DEVLOOP_BIN_DIR="$work/resolver-failure-bin" \
-    main upgrade 2>&1
+    main update 2>&1
 )"; then
   printf '%s\n' "$resolver_failure_output" >&2
-  fail "devloop upgrade accepted missing latest version"
+  fail "devloop update accepted missing latest version"
 fi
-contains "$resolver_failure_output" "could not resolve latest Devloop release" "devloop upgrade resolver failure"
+contains "$resolver_failure_output" "could not resolve latest Devloop release" "devloop update resolver failure"
 [[ ! -e "$work/resolver-failure-bin/devloop" ]] || fail "resolver failure created devloop symlink"
-ok "devloop upgrade resolver failure"
+ok "devloop update resolver failure"
+
+if obsolete_command_output="$(
+  HOME="$work/obsolete-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$work/obsolete-root" DEVLOOP_BIN_DIR="$work/obsolete-bin" \
+    main "$obsolete_update_command" 2>&1
+)"; then
+  printf '%s\n' "$obsolete_command_output" >&2
+  fail "obsolete update command still accepted"
+fi
+contains "$obsolete_command_output" "usage: devloop" "obsolete update command removed"
+not_contains "$obsolete_command_output" "updating devloop" "obsolete update command removed"
+ok "obsolete update command removed"
 
 prompt_accept_root="$work/prompt-accept-root"
 prompt_accept_bin="$work/prompt-accept-bin"
@@ -924,18 +939,18 @@ if ! prompt_accept_output="$(
   devloop_prompt_tty_ready() { return 0; }
   ui_confirm() { return 0; }
   interactive_menu() { printf '%s\n' "menu after prompt"; }
-  DEVLOOP_UPGRADE_PROMPTED=false
+  DEVLOOP_UPDATE_PROMPTED=false
   USE_TUI=true
   HOME="$prompt_accept_home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$prompt_accept_root" DEVLOOP_BIN_DIR="$prompt_accept_bin" \
     main menu 2>&1
 )"; then
   printf '%s\n' "$prompt_accept_output" >&2
-  fail "automatic upgrade prompt accept failed"
+  fail "automatic update prompt accept failed"
 fi
-contains "$prompt_accept_output" "upgrade available: devloop $version -> $remote_version" "automatic upgrade prompt accept"
-contains "$prompt_accept_output" "menu after prompt" "automatic upgrade prompt accept menu"
-equals "$(readlink "$prompt_accept_bin/devloop")" "$prompt_accept_root/$remote_version/devloop" "automatic upgrade prompt accept symlink"
-ok "automatic upgrade prompt accept"
+contains "$prompt_accept_output" "update available: devloop $version -> $remote_version" "automatic update prompt accept"
+contains "$prompt_accept_output" "menu after prompt" "automatic update prompt accept menu"
+equals "$(readlink "$prompt_accept_bin/devloop")" "$prompt_accept_root/$remote_version/devloop" "automatic update prompt accept symlink"
+ok "automatic update prompt accept"
 
 prompt_decline_root="$work/prompt-decline-root"
 prompt_decline_bin="$work/prompt-decline-bin"
@@ -946,60 +961,60 @@ if ! prompt_decline_output="$(
   devloop_prompt_tty_ready() { return 0; }
   ui_confirm() { return 1; }
   interactive_menu() { printf '%s\n' "menu after decline"; }
-  DEVLOOP_UPGRADE_PROMPTED=false
+  DEVLOOP_UPDATE_PROMPTED=false
   USE_TUI=true
   HOME="$work/prompt-decline-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$prompt_decline_root" DEVLOOP_BIN_DIR="$prompt_decline_bin" \
     main menu 2>&1
 )"; then
   printf '%s\n' "$prompt_decline_output" >&2
-  fail "automatic upgrade prompt decline failed"
+  fail "automatic update prompt decline failed"
 fi
-contains "$prompt_decline_output" "upgrade available: devloop $version -> $remote_version" "automatic upgrade prompt decline"
-contains "$prompt_decline_output" "menu after decline" "automatic upgrade prompt decline menu"
-equals "$(readlink "$prompt_decline_bin/devloop")" "$prompt_decline_target" "automatic upgrade prompt decline symlink"
-[[ ! -e "$prompt_decline_root/$remote_version" ]] || fail "automatic upgrade prompt decline installed release"
-ok "automatic upgrade prompt decline"
+contains "$prompt_decline_output" "update available: devloop $version -> $remote_version" "automatic update prompt decline"
+contains "$prompt_decline_output" "menu after decline" "automatic update prompt decline menu"
+equals "$(readlink "$prompt_decline_bin/devloop")" "$prompt_decline_target" "automatic update prompt decline symlink"
+[[ ! -e "$prompt_decline_root/$remote_version" ]] || fail "automatic update prompt decline installed release"
+ok "automatic update prompt decline"
 
 prompt_skip_root="$work/prompt-skip-root"
 prompt_skip_bin="$work/prompt-skip-bin"
 if ! prompt_skip_output="$(
-  DEVLOOP_UPGRADE_PROMPTED=false
+  DEVLOOP_UPDATE_PROMPTED=false
   HOME="$work/prompt-skip-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$latest_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$prompt_skip_root" DEVLOOP_BIN_DIR="$prompt_skip_bin" \
-    maybe_prompt_upgrade 2>&1
+    maybe_prompt_update 2>&1
 )"; then
   printf '%s\n' "$prompt_skip_output" >&2
-  fail "automatic upgrade prompt non-tty skip failed"
+  fail "automatic update prompt non-tty skip failed"
 fi
-equals "$prompt_skip_output" "" "automatic upgrade prompt non-tty skip"
-[[ ! -e "$prompt_skip_bin/devloop" ]] || fail "automatic upgrade prompt non-tty skip installed release"
+equals "$prompt_skip_output" "" "automatic update prompt non-tty skip"
+[[ ! -e "$prompt_skip_bin/devloop" ]] || fail "automatic update prompt non-tty skip installed release"
 
 if ! prompt_current_output="$(
   devloop_prompt_tty_ready() { return 0; }
   ui_confirm() { printf '%s\n' "unexpected prompt"; return 1; }
-  DEVLOOP_UPGRADE_PROMPTED=false
+  DEVLOOP_UPDATE_PROMPTED=false
   HOME="$work/prompt-current-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$current_api_file" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$work/prompt-current-root" DEVLOOP_BIN_DIR="$work/prompt-current-bin" \
-    maybe_prompt_upgrade 2>&1
+    maybe_prompt_update 2>&1
 )"; then
   printf '%s\n' "$prompt_current_output" >&2
-  fail "automatic upgrade prompt current skip failed"
+  fail "automatic update prompt current skip failed"
 fi
-equals "$prompt_current_output" "" "automatic upgrade prompt current skip"
+equals "$prompt_current_output" "" "automatic update prompt current skip"
 
 if ! prompt_failure_output="$(
   devloop_prompt_tty_ready() { return 0; }
   ui_confirm() { printf '%s\n' "unexpected prompt"; return 1; }
   interactive_menu() { printf '%s\n' "menu after failed check"; }
-  DEVLOOP_UPGRADE_PROMPTED=false
+  DEVLOOP_UPDATE_PROMPTED=false
   USE_TUI=true
   HOME="$work/prompt-failure-home" PATH="$remote_path" DEVLOOP_GITHUB_API_URL="file://$work/missing-prompt-latest.json" DEVLOOP_RELEASE_BASE_URL="$remote_release_base" DEVLOOP_INSTALL_DIR="$work/prompt-failure-root" DEVLOOP_BIN_DIR="$work/prompt-failure-bin" \
     main menu 2>&1
 )"; then
   printf '%s\n' "$prompt_failure_output" >&2
-  fail "automatic upgrade prompt resolver skip failed"
+  fail "automatic update prompt resolver skip failed"
 fi
-contains "$prompt_failure_output" "menu after failed check" "automatic upgrade prompt resolver skip"
-not_contains "$prompt_failure_output" "unexpected prompt" "automatic upgrade prompt resolver skip"
-ok "automatic upgrade prompt skip paths"
+contains "$prompt_failure_output" "menu after failed check" "automatic update prompt resolver skip"
+not_contains "$prompt_failure_output" "unexpected prompt" "automatic update prompt resolver skip"
+ok "automatic update prompt skip paths"
 
 remote_home="$work/remote-home"
 remote_install_output="$(
