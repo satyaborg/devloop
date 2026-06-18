@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- upgrade-command ([0cf71f9](https://github.com/satyaborg/devloop/commit/0cf71f93a265d7f624977a217ee12f365c51b6d8))
+- update-command ([0cf71f9](https://github.com/satyaborg/devloop/commit/0cf71f93a265d7f624977a217ee12f365c51b6d8))
 
 ## [0.5.0](https://github.com/satyaborg/devloop/releases/tag/v0.5.0) - 2026-06-16
 
@@ -173,4 +173,3 @@ All notable changes to this project will be documented in this file.
 - preserve interactive run status ([48cadbb](https://github.com/satyaborg/devloop/commit/48cadbb140662919f6ae8ce6597274cf755d13a1))
 - compute release bumps ([167b903](https://github.com/satyaborg/devloop/commit/167b903c58b5fbbc2658136e13eb42214cab54f2))
 - classify clean devloop worktrees ([546a59b](https://github.com/satyaborg/devloop/commit/546a59bac144e061a61d671770c7209a6dd4a76c))
-
