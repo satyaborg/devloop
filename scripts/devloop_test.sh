@@ -36,7 +36,22 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER" "$REPO_ROOT/site/public/install"
+count_occurrences() {
+  local file="$1"
+  local needle="$2"
+  awk -v needle="$needle" '
+    {
+      line = $0
+      while ((idx = index(line, needle)) > 0) {
+        count++
+        line = substr(line, idx + length(needle))
+      }
+    }
+    END { print count + 0 }
+  ' "$file"
+}
+
+bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER" "$REPO_ROOT/site/public/install" "$REPO_ROOT/skills/devloop-spec/scripts/render.sh"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -134,8 +149,11 @@ ok "skill metadata"
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-renderer_fixture="$work/spec-render-fixture.md"
-cat > "$renderer_fixture" <<'SPEC'
+renderer_script="$REPO_ROOT/skills/devloop-spec/scripts/render.sh"
+[[ -x "$renderer_script" ]] || fail "missing executable bash spec renderer"
+
+regular_renderer_fixture="$work/spec-render-fixture.md"
+cat > "$regular_renderer_fixture" <<'SPEC'
 ---
 status: draft
 type: feat
@@ -144,13 +162,7 @@ pr: null
 ---
 
 # Renderer Fixture
-Render the spec with light styling and robust Mermaid labels.
-
-```mermaid
-flowchart LR
-  Modes[Gmail/Outlook | IMAP] --> Result["Rendered HTML"]
-  Danger["</pre>"] --> Result
-```
+Render the spec with light styling and robust escaping.
 
 ## Problem
 Renderer regressions are hard to spot from markdown alone.
@@ -158,6 +170,7 @@ Renderer regressions are hard to spot from markdown alone.
 ```markdown
 ## This is inside a code fence
 - not a real section
+</pre><script>alert("x")</script>&
 ```
 
 The paragraph after the fenced heading still belongs to Problem.
@@ -175,14 +188,14 @@ The HTML companion renders the spec sections.
 2. HTML is written next to the markdown.
 
 ### Edge cases
-- Mermaid label contains `|`: renderer quotes the label.
+- HTML-sensitive fenced content is escaped.
 
 ## Acceptance criteria
 1. The generated HTML uses the light theme.
 
 ## Test plan
 - Red: Not applicable for fixture.
-- Green: `python3 skills/devloop-spec/scripts/render.py <fixture>`
+- Green: `skills/devloop-spec/scripts/render.sh <fixture>`
 - Full: `bash scripts/devloop_test.sh`
 - Coverage: Not applicable for Bash fixture.
 
@@ -194,14 +207,53 @@ The HTML companion renders the spec sections.
 ## Notes
 No gaps.
 SPEC
-renderer_output="$(python3 "$REPO_ROOT/skills/devloop-spec/scripts/render.py" "$renderer_fixture")"
+if "$renderer_script" >/tmp/devloop-renderer-usage.out 2>&1; then
+  fail "spec renderer accepted missing argument"
+fi
+if "$renderer_script" "$regular_renderer_fixture" "$regular_renderer_fixture" >/tmp/devloop-renderer-usage.out 2>&1; then
+  fail "spec renderer accepted extra argument"
+fi
+renderer_output="$("$renderer_script" "$regular_renderer_fixture")"
 [[ -f "$renderer_output" ]] || fail "spec renderer did not create HTML"
 contains "$(cat "$renderer_output")" "--bg: #ffffff" "spec renderer light theme"
-contains "$(cat "$renderer_output")" 'Modes["Gmail/Outlook | IMAP"]' "spec renderer Mermaid quoting"
-contains "$(cat "$renderer_output")" 'Danger["&lt;/pre&gt;"]' "spec renderer Mermaid escaping"
-not_contains "$(cat "$renderer_output")" '<h2><span class="chev">▶</span>This is inside a code fence</h2>' "spec renderer fenced heading"
+not_contains "$(cat "$renderer_output")" '<summary><span class="chev">▶</span>This is inside a code fence</summary>' "spec renderer fenced heading"
+contains "$(cat "$renderer_output")" '&lt;/pre&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;' "spec renderer escaped fenced HTML"
 contains "$(cat "$renderer_output")" "The paragraph after the fenced heading still belongs to Problem." "spec renderer fenced content"
-contains "$(cat "$renderer_output")" $'<section class="open" data-toggle>\n  <h2><span class="chev">▶</span>Acceptance criteria</h2>' "spec renderer acceptance open"
+contains "$(cat "$renderer_output")" $'<details class="section open" open>\n  <summary><span class="chev">▶</span>Acceptance criteria</summary>' "spec renderer acceptance open"
+not_contains "$(cat "$renderer_output")" "mermaid.esm.min.mjs" "spec renderer without Mermaid"
+expected_renderer_output="$(cd -P "$(dirname "$regular_renderer_fixture")" >/dev/null 2>&1 && pwd)/$(basename "${regular_renderer_fixture%.md}.html")"
+equals "$renderer_output" "$expected_renderer_output" "spec renderer output path"
+
+mermaid_renderer_fixture="$work/spec-render-mermaid-fixture.md"
+cat > "$mermaid_renderer_fixture" <<'SPEC'
+---
+status: draft
+type: feat
+created: 2026-06-16
+pr: null
+---
+
+# Mermaid Renderer Fixture
+Render Mermaid fences without requiring local dependencies.
+
+```mermaid
+flowchart LR
+  Modes["Gmail/Outlook | IMAP"] --> Result["Rendered HTML"]
+  Danger["</pre>"] --> Result
+```
+
+## Problem
+Mermaid should render in the browser when diagrams are present.
+
+## Acceptance criteria
+1. The generated HTML imports Mermaid exactly once.
+SPEC
+mermaid_renderer_output="$("$renderer_script" "$mermaid_renderer_fixture")"
+[[ -f "$mermaid_renderer_output" ]] || fail "Mermaid spec renderer did not create HTML"
+contains "$(cat "$mermaid_renderer_output")" '<pre class="mermaid">' "spec renderer Mermaid pre"
+contains "$(cat "$mermaid_renderer_output")" 'Modes[&quot;Gmail/Outlook | IMAP&quot;]' "spec renderer Mermaid pass-through"
+contains "$(cat "$mermaid_renderer_output")" 'Danger[&quot;&lt;/pre&gt;&quot;]' "spec renderer Mermaid escaping"
+equals "$(count_occurrences "$mermaid_renderer_output" "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")" "1" "spec renderer Mermaid import count"
 ok "spec renderer"
 
 equals "$(sed -n '1p' "$REPO_ROOT/site/public/VERSION")" "$version" "site VERSION matches root VERSION"
@@ -1141,11 +1193,13 @@ PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not m
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
-[[ -f "$install_home/.agents/skills/devloop-spec/scripts/render.py" ]] || fail "installer did not install Codex spec renderer"
+[[ -x "$install_home/.agents/skills/devloop-spec/scripts/render.sh" ]] || fail "installer did not install Codex spec renderer"
+[[ ! -e "$install_home/.agents/skills/devloop-spec/scripts/render.py" ]] || fail "installer installed removed Codex Python spec renderer"
 [[ -f "$install_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Codex review skill"
 [[ -f "$install_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Codex checksum"
 [[ -f "$install_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Claude spec skill"
-[[ -f "$install_home/.claude/skills/devloop-spec/scripts/render.py" ]] || fail "installer did not install Claude spec renderer"
+[[ -x "$install_home/.claude/skills/devloop-spec/scripts/render.sh" ]] || fail "installer did not install Claude spec renderer"
+[[ ! -e "$install_home/.claude/skills/devloop-spec/scripts/render.py" ]] || fail "installer installed removed Claude Python spec renderer"
 [[ -f "$install_home/.claude/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Claude review skill"
 [[ -f "$install_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Claude checksum"
 "$bin_dir/devloop" --help >/tmp/devloop-help-test.out
