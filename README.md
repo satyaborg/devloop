@@ -45,7 +45,7 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 | `devloop clean` | Remove run artifacts |
 
 Each run writes an HTML report, spec, and reviews under `.devloop/`.
-When you pick a spec from the interactive menu, devloop uses the standard run defaults and only prompts for PR mode. Use CLI flags such as `--coder`, `--reviewer`, `--in-place`, or `--timeout-minutes` when you need to override those defaults.
+When you pick a spec from the interactive menu, devloop uses your configured run defaults and only prompts for PR mode. The interactive **Settings** menu sets the default coder and reviewer agents (Codex or Claude Code), spec path, and run timeout, saved to `~/.devloop/config`. Use CLI flags such as `--coder`, `--reviewer`, `--in-place`, or `--timeout-minutes` to override those defaults per run.
 
 ## Specs
 

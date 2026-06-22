@@ -614,6 +614,9 @@ printf '%s\n' "spec_dir=.specs" > "$global_repo/.devloop/config"
 equals "$(cd "$global_repo" && HOME="$global_home" devloop_spec_dir)" ".specs" "repo .specs overrides global spec dir"
 equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir)" ".specs" "repo .specs reported as override"
 equals "$(cd "$global_repo" && HOME="$global_home" configured_spec_dir_scope)" "local" "repo .specs override scope"
+equals "$(cd "$global_repo" && HOME="$global_home" devloop_coder)" "codex" "global coder applies without local override"
+printf '%s\n' "coder=claude" >> "$global_repo/.devloop/config"
+equals "$(cd "$global_repo" && HOME="$global_home" devloop_coder)" "claude" "local coder overrides global"
 
 default_scope_repo="$work/default-scope-repo"
 default_scope_home="$work/default-scope-home"
@@ -648,6 +651,20 @@ equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "45
 equals "$(cd "$config_repo" && HOME="$config_home" configured_timeout_minutes_scope)" "global" "configured timeout scope"
 (cd "$config_repo" && HOME="$config_home" remove_config_timeout_minutes)
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_timeout_minutes)" "30" "removed timeout falls back"
+
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_coder)" "codex" "default coder"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_reviewer)" "claude" "default reviewer"
+equals "$(cd "$config_repo" && HOME="$config_home" write_config_coder Claude)" "claude" "write coder defaults to global and normalizes label"
+equals "$(grep '^coder=' "$config_home/.devloop/config")" "coder=claude" "coder persisted to config"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_coder)" "claude" "configured coder"
+equals "$(cd "$config_repo" && HOME="$config_home" write_config_reviewer global codex)" "codex" "write reviewer"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_reviewer)" "codex" "configured reviewer"
+if (cd "$config_repo" && HOME="$config_home" write_config_coder global nope) >/dev/null 2>&1; then fail "write_config_coder accepted invalid agent"; fi
+if (cd "$config_repo" && HOME="$config_home" write_config_value global bogus x) >/dev/null 2>&1; then fail "write_config_value accepted unknown key"; fi
+(cd "$config_repo" && HOME="$config_home" remove_config_value global coder)
+(cd "$config_repo" && HOME="$config_home" remove_config_value global reviewer)
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_coder)" "codex" "removed coder falls back"
+equals "$(cd "$config_repo" && HOME="$config_home" devloop_reviewer)" "claude" "removed reviewer falls back"
 
 lint_spec_text=$'---\ntype: feat\n---\n# Title\n\n## Acceptance criteria\n1. Thing'
 lint_spec_file "$criteria_file" "$lint_spec_text" 1 true || fail "lint_spec_file rejected valid spec"
@@ -722,6 +739,32 @@ if ! create_spec_output="$(
 )"; then fail "create spec launch failed"; fi
 equals "$create_spec_output" "--agent codex" "create spec launches immediately"
 if ! ( ui_choose() { printf '%s\n' "Back"; }; UI_BACK=false; interactive_settings >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "settings back navigation"; fi
+settings_choose_state="$work/settings-choose-state"
+: > "$settings_choose_state"
+settings_agents_home="$work/settings-agents-home"
+mkdir -p "$settings_agents_home"
+if ! (
+  HOME="$settings_agents_home"
+  USE_TUI=false
+  UI_BACK=false
+  ui_header() { :; }
+  ui_print_key_values() { :; }
+  ui_choose() {
+    local count
+    count="$(wc -l < "$settings_choose_state" | tr -d ' ')"
+    printf 'x\n' >> "$settings_choose_state"
+    case "$count" in
+      0) printf '%s\n' "Set coder" ;;
+      1) printf '%s\n' "Claude Code" ;;
+      2) printf '%s\n' "Set reviewer" ;;
+      3) printf '%s\n' "Codex" ;;
+      *) printf '%s\n' "Back" ;;
+    esac
+  }
+  interactive_settings >/dev/null 2>&1
+); then fail "settings agent selection flow failed"; fi
+equals "$(HOME="$settings_agents_home" devloop_coder)" "claude" "settings menu writes coder to config"
+equals "$(HOME="$settings_agents_home" devloop_reviewer)" "codex" "settings menu writes reviewer to config"
 if ! run_setup_output="$(
   HOME="$config_home"
   USE_TUI=false
@@ -733,6 +776,23 @@ if ! run_setup_output="$(
   interactive_run_setup "spec.md"
 )"; then fail "run setup defaults failed"; fi
 equals "$run_setup_output" "spec.md 5 html true true codex claude false 60" "run setup launches with defaults"
+configured_agents_home="$work/agents-home"
+configured_agents_repo="$work/agents-repo"
+mkdir -p "$configured_agents_home" "$configured_agents_repo/.devloop/specs"
+HOME="$configured_agents_home" write_config_coder global claude >/dev/null
+HOME="$configured_agents_home" write_config_reviewer global codex >/dev/null
+if ! agents_setup_output="$(
+  cd "$configured_agents_repo"
+  HOME="$configured_agents_home"
+  USE_TUI=false
+  UI_BACK=false
+  interactive_create_pr_choice() { printf '%s\n' "false"; }
+  run_header() { :; }
+  run_devloop() { printf '%s\n' "$*"; return 0; }
+  maybe_enter_worktree() { :; }
+  interactive_run_setup "spec.md"
+)"; then fail "configured agents run setup failed"; fi
+contains "$agents_setup_output" " claude codex " "run setup honors configured coder and reviewer"
 if ! ( ui_choose() { return 130; }; UI_BACK=false; interactive_create_spec >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "create spec escape navigation"; fi
 if ! ( interactive_create_pr_choice() { return 130; }; UI_BACK=false; interactive_run_setup "spec.md" >/dev/null 2>&1; [ "$UI_BACK" = true ] ); then fail "run setup PR prompt navigation"; fi
 if ! ( ui_choose() { printf '%s\n' "Quit"; }; UI_BACK=false; interactive_menu >/dev/null 2>&1 ); then fail "menu quit failed"; fi
