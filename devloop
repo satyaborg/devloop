@@ -7,6 +7,8 @@ CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort max)
 DEFAULT_TIMEOUT_MINUTES=30
 DEFAULT_SPEC_DIR=".devloop/specs"
+DEFAULT_CODER="codex"
+DEFAULT_REVIEWER="claude"
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -198,8 +200,8 @@ Common commands:
 Options:
   --tui                         force terminal UI output
   --plain                       force plain output
-  --coder codex|claude          choose Codex or Claude Code for implementation
-  --reviewer codex|claude       choose Codex or Claude Code for review
+  --coder codex|claude          choose Codex or Claude Code for implementation (default from Settings)
+  --reviewer codex|claude       choose Codex or Claude Code for review (default from Settings)
   --report-format html|markdown choose report format
   --timeout-minutes N           cap one run, default 30
   --no-strict                   weaken strict review gates
@@ -233,8 +235,8 @@ welcome_tui() {
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Options"
   printf '  %-30s %s\n' "--tui" "force terminal UI output"
   printf '  %-30s %s\n' "--plain" "force plain output"
-  printf '  %-30s %s\n' "--coder codex|claude" "choose implementation agent"
-  printf '  %-30s %s\n' "--reviewer codex|claude" "choose review agent"
+  printf '  %-30s %s\n' "--coder codex|claude" "choose implementation agent (default from Settings)"
+  printf '  %-30s %s\n' "--reviewer codex|claude" "choose review agent (default from Settings)"
   printf '  %-30s %s\n' "--report-format html|markdown" "choose report format"
   printf '  %-30s %s\n' "--timeout-minutes N" "cap one run, default 30"
   printf '  %-30s %s\n' "--no-strict" "weaken strict review gates"
@@ -545,7 +547,7 @@ write_config_value() {
   local value="$3"
   local file tmp
   case "$key" in
-    spec_dir|timeout_minutes) ;;
+    spec_dir|timeout_minutes|coder|reviewer) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
@@ -563,7 +565,7 @@ remove_config_value() {
   local key="$2"
   local file tmp
   case "$key" in
-    spec_dir|timeout_minutes) ;;
+    spec_dir|timeout_minutes|coder|reviewer) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
@@ -810,6 +812,58 @@ remove_config_timeout_minutes() {
   local scope="global"
   if [ "$#" -eq 1 ]; then scope="$1"; fi
   remove_config_value "$scope" timeout_minutes
+}
+
+devloop_agent_setting() {
+  local key="$1"
+  local default="$2"
+  local scope file value normalized
+  ensure_global_config >/dev/null 2>&1 || true
+  for scope in local global; do
+    file="$(devloop_config_file_for_scope "$scope" 2>/dev/null)" || continue
+    value="$(config_file_value "$key" "$file" || true)"
+    [ -n "$value" ] || continue
+    normalized="$(normalize_agent "$value")"
+    [ -n "$normalized" ] || continue
+    printf '%s\n' "$normalized"
+    return 0
+  done
+  printf '%s\n' "$default"
+}
+
+write_config_agent() {
+  local key="$1"
+  local scope="global"
+  local value normalized
+  if [ "$#" -eq 3 ]; then
+    scope="$2"
+    value="$3"
+  else
+    value="$2"
+  fi
+  normalized="$(normalize_agent "$value")"
+  if [ -z "$normalized" ]; then
+    printf '%s must be Codex or Claude Code\n' "$key" >&2
+    return 2
+  fi
+  write_config_value "$scope" "$key" "$normalized" || return $?
+  printf '%s\n' "$normalized"
+}
+
+devloop_coder() {
+  devloop_agent_setting coder "$DEFAULT_CODER"
+}
+
+devloop_reviewer() {
+  devloop_agent_setting reviewer "$DEFAULT_REVIEWER"
+}
+
+write_config_coder() {
+  write_config_agent coder "$@"
+}
+
+write_config_reviewer() {
+  write_config_agent reviewer "$@"
 }
 
 ui_has_gum() {
@@ -1355,31 +1409,39 @@ interactive_create_spec() {
 }
 
 interactive_settings() {
-  local choice custom_spec_dir custom_timeout scope saved value timeout_display code
-  local default_spec_dir
+  local choice custom_spec_dir custom_timeout scope saved value timeout_display code agent
+  local default_spec_dir coder_display reviewer_display
   local choices=()
   while true; do
     custom_spec_dir="$(configured_spec_dir || true)"
     custom_timeout="$(configured_timeout_minutes || true)"
     timeout_display="$(devloop_timeout_minutes) minutes"
     default_spec_dir="$(devloop_default_spec_dir)"
-    ui_header "Settings" "Global spec path and run timeout"
+    coder_display="$(agent_label "$(devloop_coder)")"
+    reviewer_display="$(agent_label "$(devloop_reviewer)")"
+    ui_header "Settings" "Global spec path, agents, and run timeout"
     if [ -n "$custom_spec_dir" ]; then
       ui_print_key_values \
         "configured" "$custom_spec_dir" \
         "fallback" "$default_spec_dir" \
+        "coder" "$coder_display" \
+        "reviewer" "$reviewer_display" \
         "timeout" "$timeout_display"
-      choices=("Remove spec path" "Set timeout" "Back")
+      choices=("Remove spec path")
     else
       ui_print_key_values \
         "default" "$default_spec_dir" \
+        "coder" "$coder_display" \
+        "reviewer" "$reviewer_display" \
         "timeout" "$timeout_display"
-      choices=("Add spec path" "Set timeout" "Back")
+      choices=("Add spec path")
     fi
+    choices+=("Set coder" "Set reviewer" "Set timeout")
     if [ -n "$custom_timeout" ]; then
-      choices=("${choices[@]:0:${#choices[@]}-1}" "Remove timeout" "Back")
+      choices+=("Remove timeout")
     fi
-    choice="$(ui_choose "Spec paths" "${choices[@]}")"
+    choices+=("Back")
+    choice="$(ui_choose "Settings" "${choices[@]}")"
     code=$?
     if [ "$code" -ne 0 ]; then
       ui_go_back
@@ -1399,6 +1461,24 @@ interactive_settings() {
         if [ -n "$scope" ]; then
           remove_config_spec_dir "$scope"
           UI_NOTICE="spec path removed"
+        fi
+        ;;
+      "Set coder")
+        agent="$(ui_choose "Coder" "Codex" "Claude Code" "Back")" || continue
+        [ "$agent" = "Back" ] && continue
+        if saved="$(write_config_coder global "$(agent_choice_value "$agent")")"; then
+          UI_NOTICE="coder saved: $(agent_label "$saved")"
+        else
+          UI_NOTICE="coder not saved"
+        fi
+        ;;
+      "Set reviewer")
+        agent="$(ui_choose "Reviewer" "Codex" "Claude Code" "Back")" || continue
+        [ "$agent" = "Back" ] && continue
+        if saved="$(write_config_reviewer global "$(agent_choice_value "$agent")")"; then
+          UI_NOTICE="reviewer saved: $(agent_label "$saved")"
+        else
+          UI_NOTICE="reviewer not saved"
         fi
         ;;
       "Set timeout")
@@ -1451,12 +1531,14 @@ interactive_run_setup() {
   local report_format="html"
   local strict=true
   local use_worktree=true
-  local coder="codex"
-  local reviewer="claude"
+  local coder
+  local reviewer
   local create_pr=false
   local max="5"
   local timeout_minutes
   local code
+  coder="$(devloop_coder)"
+  reviewer="$(devloop_reviewer)"
   timeout_minutes="$(devloop_timeout_minutes)"
 
   if [ "$USE_TUI" = true ]; then
@@ -1894,8 +1976,8 @@ run_from_track() {
   if [ -z "$max" ]; then max=5; fi
   if [ -z "$report_format" ]; then report_format="html"; fi
   if [ -z "$strict" ]; then strict=true; fi
-  if [ -z "$coder" ]; then coder="codex"; fi
-  if [ -z "$reviewer" ]; then reviewer="claude"; fi
+  if [ -z "$coder" ]; then coder="$(devloop_coder)"; fi
+  if [ -z "$reviewer" ]; then reviewer="$(devloop_reviewer)"; fi
   if [ -z "$create_pr" ]; then create_pr=false; fi
   if ! timeout_minutes="$(normalize_timeout_minutes "$timeout_minutes")"; then timeout_minutes="$(devloop_timeout_minutes)"; fi
   next_pass="$(next_pass_from_track "$track")"
@@ -1966,14 +2048,16 @@ run_command() {
   local report_format="html"
   local strict=true
   local use_worktree=true
-  local coder="codex"
-  local reviewer="claude"
+  local coder
+  local reviewer
   local create_pr=false
   local timeout_minutes
   local spec=""
   local max_raw="5"
   local max_set=false
   local arg value
+  coder="$(devloop_coder)"
+  reviewer="$(devloop_reviewer)"
   timeout_minutes="$(devloop_timeout_minutes)"
 
   while [ "$#" -gt 0 ]; do
