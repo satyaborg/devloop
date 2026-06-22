@@ -2350,6 +2350,9 @@ run_devloop() {
       event_step "$pr_id" "pushing branch and opening draft PR"
       if create_pull_request "$repo" "$FINAL_BRANCH" "$base" "$spec" "$criteria_file" "$FINAL_COMMIT" "$SOURCE_REPO"; then
         event_done "$pr_id" true "draft PR ready: $PULL_REQUEST"
+        if ! sync_spec_pr "$spec" "$PULL_REQUEST"; then
+          event_log "$pr_id" "spec backlink skipped (could not update $spec)"
+        fi
       else
         STATUS="pr-error"
         event_done "$pr_id" false "$PULL_REQUEST_ERROR"
@@ -2852,6 +2855,48 @@ frontmatter_value() {
     /\|/ { next }
     { print }
   '
+}
+
+sync_spec_pr() {
+  local spec="$1"
+  local url="$2"
+  [ -n "$spec" ] && [ -n "$url" ] || return 1
+  [ -f "$spec" ] || return 1
+
+  local spec_text
+  spec_text="$(cat "$spec" 2>/dev/null)" || return 1
+  if [ "$(frontmatter_value pr "$spec_text")" = "$url" ]; then
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/devloop-backlink.XXXXXX")" || return 1
+  if awk -v url="$url" '
+    BEGIN { inside = 0; closed = 0; replaced = 0 }
+    NR == 1 && $0 == "---" { inside = 1; print; next }
+    inside && !closed && $0 == "---" {
+      if (!replaced) { print "pr: " url }
+      closed = 1
+      print
+      next
+    }
+    inside && !closed {
+      split($0, parts, ":")
+      if (tolower(parts[1]) == "pr") {
+        print "pr: " url
+        replaced = 1
+        next
+      }
+      print
+      next
+    }
+    { print }
+    END { if (!closed) exit 1 }
+  ' "$spec" > "$tmp" && mv "$tmp" "$spec"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }
 
 slugify() {
