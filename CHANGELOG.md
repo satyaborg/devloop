@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2](https://github.com/satyaborg/devloop/releases/tag/v0.5.2) - 2026-06-22
+
+### Added
+
+- pr-body-spec-backlink ([faebad2](https://github.com/satyaborg/devloop/commit/faebad2be74e599bb8b39236629104a24ce88fbe))
+- configurable coder and reviewer agents in settings ([bcd10e0](https://github.com/satyaborg/devloop/commit/bcd10e00e6384238c9f493e1a50241f82a3b5b60))
+
+
+### Breaking changes
+
+- replace upgrade command with update ([8554466](https://github.com/satyaborg/devloop/commit/85544668be468e8bd3e1fbcae9dbaa787089c506))
+
+
+### Fixed
+
+- bash-spec-renderer ([b5ebdfc](https://github.com/satyaborg/devloop/commit/b5ebdfc94b16e95b659439cd813357560d2efcd3))
+
 ## [0.5.1](https://github.com/satyaborg/devloop/releases/tag/v0.5.1) - 2026-06-17
 
 ### Added
