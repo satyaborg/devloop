@@ -496,6 +496,52 @@ equals "$(frontmatter_value type "$frontmatter_text")" "fix!" "frontmatter type"
 equals "$(frontmatter_value slug "$frontmatter_text")" "Chat Retry" "frontmatter slug"
 equals "$(frontmatter_value empty "$frontmatter_text")" "" "frontmatter ignores null"
 
+backlink_url="https://github.com/owner/repo/pull/123"
+backlink_spec="$work/backlink-spec.md"
+backlink_expected="$work/backlink-expected.md"
+printf '%s\n' '---' 'status: draft' 'type: feat' 'created: 2026-06-18' 'pr: null' '---' '# Title' '' 'Body mentions pr: leave me alone.' > "$backlink_spec"
+printf '%s\n' '---' 'status: draft' 'type: feat' 'created: 2026-06-18' "pr: $backlink_url" '---' '# Title' '' 'Body mentions pr: leave me alone.' > "$backlink_expected"
+sync_spec_pr "$backlink_spec" "$backlink_url" || fail "sync_spec_pr returned non-zero on writable spec"
+equals "$(frontmatter_value pr "$(cat "$backlink_spec")")" "$backlink_url" "sync_spec_pr sets pr value"
+cmp -s "$backlink_expected" "$backlink_spec" || fail "sync_spec_pr changed lines other than pr"
+
+cp "$backlink_spec" "$work/backlink-snapshot.md"
+sync_spec_pr "$backlink_spec" "$backlink_url" || fail "sync_spec_pr idempotent call returned non-zero"
+cmp -s "$work/backlink-snapshot.md" "$backlink_spec" || fail "sync_spec_pr was not idempotent"
+
+backlink_nopr="$work/backlink-nopr.md"
+backlink_nopr_expected="$work/backlink-nopr-expected.md"
+printf '%s\n' '---' 'status: draft' 'type: feat' '---' '# Title' 'Body' > "$backlink_nopr"
+printf '%s\n' '---' 'status: draft' 'type: feat' "pr: $backlink_url" '---' '# Title' 'Body' > "$backlink_nopr_expected"
+sync_spec_pr "$backlink_nopr" "$backlink_url" || fail "sync_spec_pr insert returned non-zero"
+cmp -s "$backlink_nopr_expected" "$backlink_nopr" || fail "sync_spec_pr did not insert pr inside frontmatter"
+
+backlink_bad="$work/backlink-bad.md"
+printf '%s\n' '---' 'status: draft' 'pr: null' '# No closing delimiter' 'Body' > "$backlink_bad"
+cp "$backlink_bad" "$work/backlink-bad-orig.md"
+if sync_spec_pr "$backlink_bad" "$backlink_url"; then fail "sync_spec_pr should skip malformed frontmatter"; fi
+cmp -s "$work/backlink-bad-orig.md" "$backlink_bad" || fail "sync_spec_pr changed malformed spec"
+
+if [ "$(id -u)" -ne 0 ]; then
+  backlink_rodir="$work/backlink-ro-dir"
+  mkdir -p "$backlink_rodir"
+  backlink_rospec="$backlink_rodir/spec.md"
+  printf '%s\n' '---' 'pr: null' '---' '# Title' > "$backlink_rospec"
+  cp "$backlink_rospec" "$work/backlink-ro-orig.md"
+  backlink_status_save="${STATUS:-}"
+  STATUS="running"
+  chmod 0555 "$backlink_rodir"
+  if sync_spec_pr "$backlink_rospec" "$backlink_url"; then
+    chmod 0755 "$backlink_rodir"
+    fail "sync_spec_pr should fail when the spec dir is read-only"
+  fi
+  chmod 0755 "$backlink_rodir"
+  equals "$STATUS" "running" "sync_spec_pr leaves STATUS untouched on write failure"
+  cmp -s "$work/backlink-ro-orig.md" "$backlink_rospec" || fail "sync_spec_pr changed spec on write failure"
+  STATUS="$backlink_status_save"
+fi
+ok "sync_spec_pr"
+
 parse_work_item 'noise {"type":"feat","slug":"chat-retry","breaking":false}' || fail "parse_work_item failed"
 equals "$WORK_TYPE" "feat" "work item type"
 equals "$WORK_SLUG" "chat-retry" "work item slug"
