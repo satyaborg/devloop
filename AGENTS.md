@@ -22,7 +22,8 @@ Tests use `scripts/devloop_test.sh`. Keep behavior fixture-style where possible:
 
 ## Commit & Pull Request Guidelines
 
-Git history follows Conventional Commits, for example `fix: surface devloop commit failures` and `chore: cover shell runtime`. Use concise subjects in imperative style and keep unrelated changes in separate commits. Pull requests should include a short problem summary, the implementation approach, and test evidence (`bash scripts/devloop_test.sh`).
+- Branch names: `type/short-description` (e.g., `feat/auth-flow`, `fix/null-check`)
+- Conventional imperative-style commits with three prefixes: `feat:`, `fix:`, `chore:`. Append `!` for breaking changes (e.g. `feat!:`)
 
 ## Agent-Specific Instructions
 
