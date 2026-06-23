@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3](https://github.com/satyaborg/devloop/releases/tag/v0.5.3) - 2026-06-23
+
+### Added
+
+- spec-pr-backlink ([3829f00](https://github.com/satyaborg/devloop/commit/3829f003f61be38f68ca00ba1055d6a87953089b))
+
 ## [0.5.2](https://github.com/satyaborg/devloop/releases/tag/v0.5.2) - 2026-06-22
 
 ### Added
