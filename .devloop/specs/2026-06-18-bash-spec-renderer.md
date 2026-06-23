@@ -2,7 +2,7 @@
 status: draft
 type: fix
 created: 2026-06-18
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/72
 ---
 
 # Bash Spec Renderer
