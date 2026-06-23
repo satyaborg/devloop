@@ -24,6 +24,7 @@ Tests use `scripts/devloop_test.sh`. Keep behavior fixture-style where possible:
 
 - Branch names: `type/short-description` (e.g., `feat/auth-flow`, `fix/null-check`)
 - Conventional imperative-style commits with three prefixes: `feat:`, `fix:`, `chore:`. Append `!` for breaking changes (e.g. `feat!:`)
+- Subject is imperative prose, not the kebab branch slug: `feat: back link specs to their pull request`, not `feat: spec-pr-backlink`
 
 ## Agent-Specific Instructions
 
