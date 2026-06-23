@@ -2,7 +2,7 @@
 status: draft
 type: feat
 created: 2026-06-16
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/71
 ---
 
 # Devloop Update Command

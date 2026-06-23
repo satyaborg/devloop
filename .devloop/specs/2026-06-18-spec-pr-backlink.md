@@ -2,7 +2,7 @@
 status: draft
 type: feat
 created: 2026-06-18
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/75
 ---
 
 # Backlink specs to their pull request
