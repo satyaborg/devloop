@@ -49,7 +49,7 @@ When you pick a spec from the interactive menu, devloop uses your configured run
 
 ## Specs
 
-A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md). The bundled `devloop-spec` skill can also render a sibling HTML companion with [`skills/devloop-spec/scripts/render.sh`](skills/devloop-spec/scripts/render.sh).
+A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md).
 
 Strict mode is on by default: specs need `## Acceptance criteria`, and reviews must pass both the spec gate and engineering quality gate.
 
@@ -57,7 +57,7 @@ Strict mode is on by default: specs need `## Acceptance criteria`, and reviews m
 
 Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents/skills`:
 
-- [`devloop-spec`](skills/devloop-spec/SKILL.md) — turns a rough idea, notes, a URL, or an interview into one concrete, devloop-ready spec, with optional HTML rendering.
+- [`devloop-spec`](skills/devloop-spec/SKILL.md) — turns a rough idea, notes, a URL, or an interview into one concrete, devloop-ready spec.
 - [`devloop-review`](skills/devloop-review/SKILL.md) — judges each pass against the spec and engineering quality gates, returning ACCEPT, REJECT, or UNCLEAR with fix instructions.
 
 ## Runtime

@@ -11,12 +11,11 @@ Produce exactly one implementation spec that conforms to the devloop standard. T
 
 Use this skill for both cold-start interviews and distilling existing material. Do not hand off to a separate interview or spec-writing skill.
 
-The markdown spec is the source of truth that `devloop` will use as implementation input. If a file is written and the environment supports it, also render the optional HTML companion.
+The markdown spec is the source of truth that `devloop` will use as implementation input. Author diagrams as ASCII art inside plain code fences so terminal readers, GitHub, and plain text show the same schematic.
 
 Available resources:
 
 - `references/spec-template.md`: read when drafting or validating the spec shape.
-- `scripts/render.sh`: run after writing a markdown spec to create a sibling HTML companion.
 
 ## Scope Guard
 
@@ -70,7 +69,7 @@ If the spec depends on something cheap to verify, verify it rather than assertin
 
 Read `references/spec-template.md` when creating the draft. Every section appears in this order. Frontmatter uses exactly these fields:
 
-```markdown
+````markdown
 ---
 status: draft
 type: feat|fix|chore
@@ -81,10 +80,10 @@ pr: null
 # <Concise title>
 <One-sentence subtitle that names the implementation slice and why it matters.>
 
-```mermaid
-flowchart LR
-  Current["Current behavior"] --> Change["Implementation change"]
-  Change --> Result["Expected outcome"]
+```
+  current             change                 result
+  -------             ------                 ------
+  Current behavior -> Implementation change -> Expected outcome
 ```
 
 ## Problem
@@ -121,14 +120,14 @@ flowchart LR
 
 ## Notes
 <Only material implementation hints, risks, dependencies, migrations, or open questions.>
-```
+````
 
 - `created` is today's date.
 - Infer `type`: `feat` for new capability, `fix` for broken behavior, and `chore` for maintenance, docs, tests, dependencies, or refactors.
 - The H1 is a concise title, not a sentence.
 - The subtitle is a plain one-sentence line directly under the H1.
-- The Mermaid schematic is optional but preferred when it clarifies architecture, data flow, ownership, or before/after behavior. Omit it if it would be decorative or speculative.
-- In Mermaid flowchart node labels, quote labels containing `|`. Use `Node["A | B"]`, not `Node[A | B]`.
+- The ASCII schematic is optional but preferred when it clarifies architecture, data flow, ownership, or before/after behavior. Omit it if it would be decorative or speculative.
+- Put schematics inside a plain code fence: three backticks on a line by themselves, ASCII diagram lines, then three closing backticks.
 - Under `## Behavior`, use `### Happy path` and `### Edge cases` H3 headings, not plain `Happy path:` labels.
 - Acceptance criteria must be singular, verifiable, and observable.
 - Include concrete paths, commands, APIs, and behaviors when the context provides them.
@@ -157,18 +156,6 @@ Do not hard-code personal paths. Use this precedence:
 
 Do not wrap the spec in a code fence unless the caller explicitly asks for a fenced snippet.
 
-## HTML Companion
-
-When a markdown spec is written to a file, render the interactive HTML companion if the bundled script is available:
-
-```bash
-scripts/render.sh <path-to-spec.md>
-```
-
-Run the command from the skill directory, or resolve `scripts/render.sh` relative to this skill's `SKILL.md`. The script writes `<path-to-spec>.html` next to the markdown.
-
-If Mermaid fails in the browser, fix the markdown source and rerun the renderer. If rendering cannot run in the current environment, keep the markdown spec and say HTML was not generated.
-
 ## Signoff
 
-After writing, report the spec path, HTML path if generated, inferred `type`, acceptance criteria, and remaining gaps. Offer `devloop --create-pr <spec path>` as the next handoff when a file path exists.
+After writing, report the spec path, inferred `type`, acceptance criteria, and remaining gaps. Offer `devloop --create-pr <spec path>` as the next handoff when a file path exists.
