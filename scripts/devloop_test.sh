@@ -65,6 +65,8 @@ contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
 contains "$help" "--version" "help"
 contains "$help" "--timeout-minutes" "help"
+not_contains "$help" "--report-format" "help"
+not_contains "$help" "--html" "help"
 ok "help output"
 
 remote_help="$("$REMOTE_INSTALLER" --help)"
@@ -87,6 +89,7 @@ not_contains "$readme_text" "\`devloop $obsolete_update_command\`" "README comma
 not_contains "$readme_text" "render.py" "README Python spec renderer"
 not_contains "$readme_text" "render.sh" "README spec renderer"
 not_contains "$readme_text" "sibling HTML companion" "README spec renderer"
+not_contains "$readme_text" "HTML report" "README report docs"
 ok "README install docs"
 
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
@@ -718,7 +721,7 @@ if ! run_setup_output="$(
   maybe_enter_worktree() { :; }
   interactive_run_setup "spec.md"
 )"; then fail "run setup defaults failed"; fi
-equals "$run_setup_output" "spec.md 5 html true true codex claude false 60" "run setup launches with defaults"
+equals "$run_setup_output" "spec.md 5 true true codex claude false 60" "run setup launches with defaults"
 configured_agents_home="$work/agents-home"
 configured_agents_repo="$work/agents-repo"
 mkdir -p "$configured_agents_home" "$configured_agents_repo/.devloop/specs"
@@ -1835,12 +1838,15 @@ contains "$accept_output" "accepted" "accept loop"
 accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^[[:space:]]*Worktree[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
 contains "$accept_output" "Open Next" "accept loop"
-if ! printf '%s\n' "$accept_output" | grep -F "Report" | grep -F "$accept_worktree/.devloop/reports/e2e-accept.html" >/dev/null; then
+if ! printf '%s\n' "$accept_output" | grep -F "Report" | grep -F "$accept_worktree/.devloop/reports/e2e-accept.md" >/dev/null; then
   fail "accept loop missing worktree-qualified report path"
 fi
+[[ -f "$accept_worktree/.devloop/reports/e2e-accept.md" ]] || fail "accept loop did not write markdown report"
+[[ ! -e "$accept_worktree/.devloop/reports/e2e-accept.html" ]] || fail "accept loop wrote html report"
 if ! printf '%s\n' "$accept_output" | grep -F "Track" | grep -F "$accept_worktree/.devloop/tracks/e2e-accept.md" >/dev/null; then
   fail "accept loop missing worktree-qualified track path"
 fi
+not_contains "$(cat "$accept_worktree/.devloop/tracks/e2e-accept.md")" "report-format" "accept loop track metadata"
 contains "$(cat "$accept_worktree/.devloop/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
 contains "$(run_repo_main "$loop_repo" status)" "e2e-accept" "status command"
 contains "$(run_repo_main "$loop_repo" clean --dry-run)" "skip:" "clean skips accepted"
