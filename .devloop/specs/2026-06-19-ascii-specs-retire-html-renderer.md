@@ -2,7 +2,7 @@
 status: draft
 type: chore
 created: 2026-06-19
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/78
 ---
 
 # ASCII spec diagrams, retire the HTML spec renderer
