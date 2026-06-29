@@ -766,6 +766,149 @@ equals "$(ui_pick_from_file "$picker_file" "Pick")" "alpha" "non-tui picker fall
 equals "$(USE_TUI=true; ui_numbered_pick "$picker_file" "Pick" 2>/dev/null <<<"2")" "beta" "numbered picker"
 view_file "$picker_file" >/dev/null
 USE_TUI="$old_use_tui"
+
+preview_bin="$work/preview-bin"
+preview_log="$work/preview.log"
+mkdir -p "$preview_bin"
+cat > "$preview_bin/glow" <<'GLOW'
+#!/usr/bin/env bash
+{
+  printf 'glow'
+  for arg in "$@"; do printf ' <%s>' "$arg"; done
+  printf '\n'
+} >> "$DEVLOOP_PREVIEW_LOG"
+printf '%s\n' "rendered"
+GLOW
+cat > "$preview_bin/sed" <<'SED'
+#!/usr/bin/env bash
+{
+  printf 'sed'
+  for arg in "$@"; do printf ' <%s>' "$arg"; done
+  printf '\n'
+} >> "$DEVLOOP_PREVIEW_LOG"
+printf '%s\n' "raw"
+SED
+chmod +x "$preview_bin/glow" "$preview_bin/sed"
+preview_md="$work/preview.md"
+preview_log_file="$work/preview-file.log"
+preview_list="$work/preview-list.txt"
+printf '%s\n' "# Preview" > "$preview_md"
+printf '%s\n' "plain log" > "$preview_log_file"
+printf '%s\n' "$preview_md" > "$preview_list"
+: > "$preview_log"
+DEVLOOP_PREVIEW_LOG="$preview_log"
+export DEVLOOP_PREVIEW_LOG
+old_use_tui="$USE_TUI"
+USE_TUI=true
+(
+  ui_has_fzf() { return 0; }
+  fzf() {
+    local preview="" arg selection quoted_selection expanded
+    while [ "$#" -gt 0 ]; do
+      arg="$1"
+      shift
+      if [ "$arg" = "--preview" ]; then
+        preview="$1"
+        shift
+      fi
+    done
+    IFS= read -r selection || return 1
+    quoted_selection="'$selection'"
+    expanded="${preview//\{\}/$quoted_selection}"
+    FZF_PREVIEW_COLUMNS=77 PATH="$preview_bin:/usr/bin:/bin:/usr/sbin:/sbin" sh -c "$expanded" >/dev/null
+    printf '%s\n' "$selection"
+  }
+  ui_pick_from_file "$preview_list" "Pick" >/dev/null
+)
+contains "$(cat "$preview_log")" "glow <-w> <77> <$preview_md>" "fzf markdown preview"
+not_contains "$(cat "$preview_log")" "sed" "fzf markdown preview"
+printf '%s\n' "$preview_log_file" > "$preview_list"
+: > "$preview_log"
+(
+  ui_has_fzf() { return 0; }
+  fzf() {
+    local preview="" arg selection quoted_selection expanded
+    while [ "$#" -gt 0 ]; do
+      arg="$1"
+      shift
+      if [ "$arg" = "--preview" ]; then
+        preview="$1"
+        shift
+      fi
+    done
+    IFS= read -r selection || return 1
+    quoted_selection="'$selection'"
+    expanded="${preview//\{\}/$quoted_selection}"
+    FZF_PREVIEW_COLUMNS=77 PATH="$preview_bin:/usr/bin:/bin:/usr/sbin:/sbin" sh -c "$expanded" >/dev/null
+    printf '%s\n' "$selection"
+  }
+  ui_pick_from_file "$preview_list" "Pick" >/dev/null
+)
+not_contains "$(cat "$preview_log")" "glow" "fzf non-markdown preview"
+contains "$(cat "$preview_log")" "sed" "fzf non-markdown preview"
+unset DEVLOOP_PREVIEW_LOG
+
+view_bin="$work/view-bin"
+view_log="$work/view.log"
+mkdir -p "$view_bin"
+cat > "$view_bin/glow" <<'GLOW'
+#!/usr/bin/env bash
+{
+  printf 'glow'
+  for arg in "$@"; do printf ' <%s>' "$arg"; done
+  printf '\n'
+} >> "$DEVLOOP_VIEW_LOG"
+printf '%s\n' "rendered markdown"
+GLOW
+cat > "$view_bin/gum" <<'GUM'
+#!/usr/bin/env bash
+{
+  printf 'gum'
+  for arg in "$@"; do printf ' <%s>' "$arg"; done
+  printf '\n'
+} >> "$DEVLOOP_VIEW_LOG"
+cat >/dev/null
+GUM
+chmod +x "$view_bin/glow" "$view_bin/gum"
+view_md="$work/view.md"
+view_log_file="$work/view.logfile"
+printf '%s\n' "# View" > "$view_md"
+printf '%s\n' "raw log" > "$view_log_file"
+old_path="$PATH"
+old_use_tui="$USE_TUI"
+DEVLOOP_VIEW_LOG="$view_log"
+export DEVLOOP_VIEW_LOG
+PATH="$view_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+USE_TUI=true
+ui_has_gum() { [ "$USE_TUI" = true ] && command -v gum >/dev/null 2>&1; }
+: > "$view_log"
+view_file "$view_md" >/dev/null
+contains "$(cat "$view_log")" "glow <$view_md>" "markdown view uses glow"
+contains "$(cat "$view_log")" "gum <pager>" "markdown view uses pager"
+rm -f "$view_bin/glow"
+: > "$view_log"
+view_file "$view_md" >/dev/null
+not_contains "$(cat "$view_log")" "glow" "markdown view absent glow"
+contains "$(cat "$view_log")" "gum <pager>" "markdown view absent glow fallback"
+cat > "$view_bin/glow" <<'GLOW'
+#!/usr/bin/env bash
+{
+  printf 'glow'
+  for arg in "$@"; do printf ' <%s>' "$arg"; done
+  printf '\n'
+} >> "$DEVLOOP_VIEW_LOG"
+printf '%s\n' "rendered markdown"
+GLOW
+chmod +x "$view_bin/glow"
+USE_TUI=false
+: > "$view_log"
+equals "$(view_file "$view_log_file")" "raw log" "non-markdown raw view"
+not_contains "$(cat "$view_log")" "glow" "non-markdown view skips glow"
+PATH="$old_path"
+USE_TUI="$old_use_tui"
+ui_has_gum() { return 1; }
+unset DEVLOOP_VIEW_LOG
+
 equals "$(title_from_slug "chat-retry")" "Chat Retry" "title from slug"
 RUN_TIMEOUT_MINUTES=7
 contains "$(timeout_message)" "7 minutes" "timeout message"
@@ -875,8 +1018,8 @@ contains "$remote_dry_output" "verify: $remote_release_base/v$remote_version/dev
 contains "$remote_dry_output" "install: $remote_custom_root/$remote_version" "remote dry run install dir"
 contains "$remote_dry_output" "link: $remote_custom_bin/devloop -> $remote_custom_root/$remote_version/devloop" "remote dry run bin dir"
 contains "$remote_dry_output" "skills: $work/remote-dry-home/.agents/skills, $work/remote-dry-home/.claude/skills" "remote dry run skills"
-contains "$remote_dry_output" "missing UI tools: gum fzf" "remote missing UI guidance"
-contains "$remote_dry_output" "install with: brew install gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "missing UI tools: glow gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "install with: brew install glow gum fzf" "remote missing UI guidance"
 contains "$remote_dry_output" "missing agent CLIs: codex claude" "remote missing agent guidance"
 contains "$remote_dry_output" "Devloop does not install codex or claude automatically." "remote missing agent guidance"
 [[ ! -e "$remote_custom_root" ]] || fail "remote dry run created install root"
@@ -927,7 +1070,7 @@ ok "remote installer rejects checksum mismatch"
 
 remote_tool_bin="$work/remote-tool-bin"
 mkdir -p "$remote_tool_bin"
-for tool in gum fzf codex claude; do
+for tool in glow gum fzf codex claude; do
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_tool_bin/$tool"
   chmod +x "$remote_tool_bin/$tool"
 done
@@ -1091,6 +1234,7 @@ equals "$("$remote_default_bin/devloop" --version)" "devloop $remote_version" "r
 contains "$remote_install_output" "verified checksum" "remote install checksum"
 contains "$remote_install_output" "$remote_default_bin is not on PATH" "remote install PATH guidance"
 contains "$remote_install_output" "export PATH=\"$remote_default_bin:\$PATH\"" "remote install PATH guidance"
+contains "$remote_install_output" "[ok] glow:" "remote install UI check"
 contains "$remote_install_output" "[ok] gum:" "remote install UI check"
 contains "$remote_install_output" "[ok] codex:" "remote install agent check"
 contains "$remote_install_output" "devloop $remote_version installed" "remote install banner version"
@@ -1181,7 +1325,7 @@ shift
 tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 for formula in "$@"; do
   case "$formula" in
-    gum|fzf)
+    glow|gum|fzf)
       printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$formula"
       chmod +x "$tool_dir/$formula"
       ;;
@@ -1195,6 +1339,7 @@ DEVLOOP_BIN_DIR="$bin_dir" HOME="$install_home" PATH="$install_path" "$SCRIPTS_D
 [[ -x "$REPO_ROOT/devloop" ]] || fail "devloop is not executable"
 [[ -L "$bin_dir/devloop" ]] || fail "installer did not create symlink"
 contains "$(cat /tmp/devloop-install-test.out)" "gh auth login" "installer optional gh auth"
+PATH="$install_path" command -v glow >/dev/null 2>&1 || fail "installer did not make glow available"
 PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
@@ -1225,6 +1370,7 @@ fake_bin="$work/fake-bin"
 mkdir -p "$fake_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/glow"
 cat > "$fake_bin/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1340,7 +1486,7 @@ case "${1:-}" in
 esac
 GH
 chmod +x "$fake_bin/gh"
-chmod +x "$fake_bin/codex" "$fake_bin/claude"
+chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/glow"
 
 backlink_repo="$work/spec-backlink-repo"
 git init -q "$backlink_repo"
@@ -1386,6 +1532,7 @@ contains "$doctor_output" "devloop doctor: ready" "doctor"
 contains "$doctor_output" "Required dependencies" "doctor"
 contains "$doctor_output" "[ok] codex:" "doctor"
 contains "$doctor_output" "[ok] claude:" "doctor"
+contains "$doctor_output" "[ok] glow:" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
 contains "$doctor_output" "[ok] gum:" "doctor"
 contains "$doctor_output" "[ok] fzf:" "doctor"
@@ -1403,7 +1550,8 @@ no_gh_bin="$work/no-gh-bin"
 mkdir -p "$no_gh_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
-chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/glow"
+chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude" "$no_gh_bin/glow"
 # Mirror the system bin dirs without gh so `command -v gh` fails regardless of
 # where gh is installed on the host (CI runners ship gh in /usr/bin).
 sys_clean="$work/sys-clean"
@@ -1422,6 +1570,21 @@ contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
 contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
 contains "$doctor_no_gh_output" "PR-backed loop readiness unavailable" "doctor no gh"
 ok "doctor optional GitHub readiness"
+
+no_glow_bin="$work/no-glow-bin"
+mkdir -p "$no_glow_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/codex"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/gum"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/fzf"
+chmod +x "$no_glow_bin/codex" "$no_glow_bin/claude" "$no_glow_bin/gum" "$no_glow_bin/fzf"
+if doctor_no_glow_output="$(HOME="$install_home" PATH="$bin_dir:$no_glow_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)"; then
+  printf '%s\n' "$doctor_no_glow_output" >&2
+  fail "doctor passed when glow was unavailable"
+fi
+contains "$doctor_no_glow_output" "[fail] missing command: glow" "doctor no glow"
+contains "$doctor_no_glow_output" "devloop doctor: not ready" "doctor no glow"
+ok "doctor requires glow"
 
 agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'

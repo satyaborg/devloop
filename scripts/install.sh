@@ -50,7 +50,7 @@ install_required_ui_tools() {
   local missing=()
   local tool
 
-  for tool in gum fzf; do
+  for tool in glow gum fzf; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       missing+=("$tool")
     fi

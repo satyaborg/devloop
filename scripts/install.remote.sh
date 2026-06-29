@@ -205,6 +205,7 @@ check_ui_tools() {
   local missing_items=()
   local reply
   if [ -z "$missing_text" ]; then
+    info "[ok] glow: $(command -v glow)"
     info "[ok] gum: $(command -v gum)"
     info "[ok] fzf: $(command -v fzf)"
     return 0
@@ -234,10 +235,11 @@ check_ui_tools() {
     return 0
   fi
 
-  missing_text="$(missing_commands gum fzf)"
+  missing_text="$(missing_commands glow gum fzf)"
   if [ -n "$missing_text" ]; then
     info "still missing UI tools: $missing_text"
   else
+    info "[ok] glow: $(command -v glow)"
     info "[ok] gum: $(command -v gum)"
     info "[ok] fzf: $(command -v fzf)"
   fi
@@ -352,7 +354,7 @@ main() {
     VERSION="$(resolve_latest_version)"
   fi
   version="$(normalize_version "$VERSION")"
-  ui_missing="$(missing_commands gum fzf)"
+  ui_missing="$(missing_commands glow gum fzf)"
   agent_missing="$(missing_commands codex claude)"
 
   if [ "$DRY_RUN" = true ]; then

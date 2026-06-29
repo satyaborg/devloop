@@ -871,6 +871,10 @@ ui_has_fzf() {
   [ "$USE_TUI" = true ] && command -v fzf >/dev/null 2>&1
 }
 
+ui_has_glow() {
+  [ "$USE_TUI" = true ] && command -v glow >/dev/null 2>&1
+}
+
 ui_color_code() {
   local color="$1"
   case "$color" in
@@ -1109,15 +1113,18 @@ ui_numbered_pick() {
 ui_pick_from_file() {
   local file="$1"
   local header="$2"
+  local preview_cmd
   if [ ! -s "$file" ]; then return 1; fi
   if ui_has_fzf; then
+    # shellcheck disable=SC2016
+    preview_cmd='case {} in *.md) if command -v glow >/dev/null 2>&1; then glow -w "$FZF_PREVIEW_COLUMNS" {}; else sed -n "1,80p" {} 2>/dev/null; fi ;; *) sed -n "1,80p" {} 2>/dev/null ;; esac'
     fzf \
       --height 70% \
       --layout reverse \
       --border \
       --color "fg:-1,bg:-1,fg+:${UI_OK_COLOR},bg+:-1,hl:${UI_REC_COLOR},hl+:${UI_REC_COLOR},prompt:${UI_DIM_COLOR},pointer:${UI_REC_COLOR},marker:${UI_OK_COLOR},spinner:${UI_REC_COLOR},info:${UI_DIM_COLOR},border:${UI_BORDER_COLOR},header:${UI_ACCENT_COLOR},gutter:-1" \
       --prompt "$header > " \
-      --preview 'sed -n "1,80p" {} 2>/dev/null' < "$file"
+      --preview "$preview_cmd" < "$file"
     return $?
   fi
   if ui_has_gum; then
@@ -1783,6 +1790,22 @@ list_artifact_files() {
 
 view_file() {
   local file="$1"
+  case "$file" in
+    *.md)
+      if ui_has_glow; then
+        if ui_has_gum; then
+          glow "$file" | gum pager
+          return $?
+        fi
+        if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+          glow "$file" | "${PAGER:-less}"
+          return $?
+        fi
+        glow "$file"
+        return $?
+      fi
+      ;;
+  esac
   if ui_has_gum; then
     gum pager < "$file"
     return $?
