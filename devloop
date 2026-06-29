@@ -871,6 +871,10 @@ ui_has_fzf() {
   [ "$USE_TUI" = true ] && command -v fzf >/dev/null 2>&1
 }
 
+ui_has_glow() {
+  [ "$USE_TUI" = true ] && command -v glow >/dev/null 2>&1
+}
+
 ui_color_code() {
   local color="$1"
   case "$color" in
@@ -1109,15 +1113,18 @@ ui_numbered_pick() {
 ui_pick_from_file() {
   local file="$1"
   local header="$2"
+  local preview_cmd
   if [ ! -s "$file" ]; then return 1; fi
   if ui_has_fzf; then
+    # shellcheck disable=SC2016
+    preview_cmd='case "{}" in *.md) if command -v glow >/dev/null 2>&1; then glow -w "$FZF_PREVIEW_COLUMNS" "{}"; else sed -n "1,80p" "{}" 2>/dev/null; fi ;; *) sed -n "1,80p" "{}" 2>/dev/null ;; esac'
     fzf \
       --height 70% \
       --layout reverse \
       --border \
       --color "fg:-1,bg:-1,fg+:${UI_OK_COLOR},bg+:-1,hl:${UI_REC_COLOR},hl+:${UI_REC_COLOR},prompt:${UI_DIM_COLOR},pointer:${UI_REC_COLOR},marker:${UI_OK_COLOR},spinner:${UI_REC_COLOR},info:${UI_DIM_COLOR},border:${UI_BORDER_COLOR},header:${UI_ACCENT_COLOR},gutter:-1" \
       --prompt "$header > " \
-      --preview 'sed -n "1,80p" {} 2>/dev/null' < "$file"
+      --preview "$preview_cmd" < "$file"
     return $?
   fi
   if ui_has_gum; then
@@ -1545,7 +1552,7 @@ interactive_run_setup() {
     return 0
   fi
   run_header "$spec" "$max" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
-  run_devloop "$spec" "$max" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "markdown" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   code=$?
   maybe_enter_worktree
   return "$(final_exit_code "$code")"
@@ -1776,13 +1783,38 @@ list_artifact_files() {
     while IFS= read -r root; do
       dir="$root/$subdir"
       if [ -d "$dir" ]; then
-        find "$dir" -type f -name '*.md' | LC_ALL=C sort
+        case "$subdir" in
+          .devloop/reports) find "$dir" -type f \( -name '*.md' -o -name '*.html' -o -name '*.htm' \) | LC_ALL=C sort ;;
+          *) find "$dir" -type f -name '*.md' | LC_ALL=C sort ;;
+        esac
       fi
     done
 }
 
 view_file() {
   local file="$1"
+  case "$file" in
+    *.html|*.htm)
+      if command -v open >/dev/null 2>&1 && open "$file" >/dev/null 2>&1; then return 0; fi
+      if command -v xdg-open >/dev/null 2>&1 && xdg-open "$file" >/dev/null 2>&1; then return 0; fi
+      ;;
+  esac
+  case "$file" in
+    *.md)
+      if ui_has_glow; then
+        if ui_has_gum; then
+          glow "$file" | gum pager
+          return $?
+        fi
+        if [ "$USE_TUI" = true ] && [ -t 0 ]; then
+          glow "$file" | "${PAGER:-less}"
+          return $?
+        fi
+        glow "$file"
+        return $?
+      fi
+      ;;
+  esac
   if ui_has_gum; then
     gum pager < "$file"
     return $?
@@ -1856,8 +1888,12 @@ track_report_path() {
   local slug dir report
   slug="$(basename "$track" .md)"
   dir="$(cd "$(dirname "$track")/.." >/dev/null 2>&1 && pwd -P)/reports"
-  report="$dir/$slug.md"
-  if [ -f "$report" ]; then printf '%s\n' "$report"; fi
+  for report in "$dir/$slug.html" "$dir/$slug.md"; do
+    if [ -f "$report" ]; then
+      printf '%s\n' "$report"
+      return
+    fi
+  done
 }
 
 print_track_status() {
@@ -1938,7 +1974,7 @@ remove_devloop_worktree() {
 
 run_from_track() {
   local track="$1"
-  local worktree spec max strict coder reviewer create_pr timeout_minutes old_pwd code next_pass
+  local worktree spec max report_format strict coder reviewer create_pr timeout_minutes old_pwd code next_pass
   track="$(absolute_existing_file "$track")" || {
     printf 'track not found: %s\n' "$track" >&2
     return 2
@@ -1946,6 +1982,7 @@ run_from_track() {
   worktree="$(track_value "worktree" "$track")"
   spec="$(track_value "spec" "$track")"
   max="$(track_value "max" "$track")"
+  report_format="$(track_value "report-format" "$track")"
   strict="$(track_value "strict" "$track")"
   coder="$(track_value "coder" "$track")"
   reviewer="$(track_value "reviewer" "$track")"
@@ -1955,6 +1992,10 @@ run_from_track() {
   if [ -z "$worktree" ]; then worktree="$(cd "$(dirname "$track")/../.." >/dev/null 2>&1 && pwd -P)"; fi
   if [ -z "$spec" ]; then spec="$(track_value "source-spec" "$track")"; fi
   if [ -z "$max" ]; then max=5; fi
+  case "$report_format" in
+    html) ;;
+    *) report_format="markdown" ;;
+  esac
   if [ -z "$strict" ]; then strict=true; fi
   if [ -z "$coder" ]; then coder="$(devloop_coder)"; fi
   if [ -z "$reviewer" ]; then reviewer="$(devloop_reviewer)"; fi
@@ -1976,7 +2017,7 @@ run_from_track() {
   cd "$worktree" || return 2
   RUN_START_PASS="$next_pass"
   run_header "$spec" "$max" "$strict" false "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
-  run_devloop "$spec" "$max" "$strict" false "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "$report_format" "$strict" false "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   code=$?
   RUN_START_PASS=1
   maybe_enter_worktree
@@ -2025,6 +2066,7 @@ will_enter_worktree_shell() {
 }
 
 run_command() {
+  local report_format="markdown"
   local strict=true
   local use_worktree=true
   local coder
@@ -2043,6 +2085,16 @@ run_command() {
     arg="$1"
     shift
     case "$arg" in
+      --report-format)
+        if [ "$#" -eq 0 ]; then usage >&2; return 2; fi
+        value="$1"
+        shift
+        case "$value" in
+          html) report_format="html" ;;
+          markdown|md) report_format="markdown" ;;
+          *) usage >&2; return 2 ;;
+        esac
+        ;;
       --coder)
         if [ "$#" -eq 0 ]; then printf '%s\n' "coder must be Codex or Claude Code" >&2; usage >&2; return 2; fi
         value="$(normalize_agent "$1")"
@@ -2104,7 +2156,7 @@ run_command() {
   if [ "$max" -gt 10 ]; then max=10; fi
 
   run_header "$spec" "$max" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
-  run_devloop "$spec" "$max" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+  run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   local code=$?
   maybe_enter_worktree
   return "$(final_exit_code "$code")"
@@ -2113,12 +2165,13 @@ run_command() {
 run_devloop() {
   local spec_arg="$1"
   local max="$2"
-  local strict="$3"
-  local use_worktree="$4"
-  local coder="$5"
-  local reviewer="$6"
-  local create_pr="$7"
-  local timeout_minutes="${8:-$DEFAULT_TIMEOUT_MINUTES}"
+  local report_format="$3"
+  local strict="$4"
+  local use_worktree="$5"
+  local coder="$6"
+  local reviewer="$7"
+  local create_pr="$8"
+  local timeout_minutes="${9:-$DEFAULT_TIMEOUT_MINUTES}"
 
   MAX="$max"
   CODER="$coder"
@@ -2228,11 +2281,15 @@ run_devloop() {
   run_branch="$(git -C "$repo" branch --show-current)"
   FINAL_BRANCH="$run_branch"
   TRACK=".devloop/tracks/$slug.md"
-  REPORT=".devloop/reports/$slug.md"
+  if [ "$report_format" = "html" ]; then
+    REPORT=".devloop/reports/$slug.html"
+  else
+    REPORT=".devloop/reports/$slug.md"
+  fi
   local coder_session=".devloop/sessions/$slug-coder-$coder.id"
   local reviewer_session=".devloop/sessions/$slug-reviewer-$reviewer.id"
 
-  init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
+  init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
   if [ "$create_pr" = true ]; then
     event_step "pull-request-lookup" "checking for existing PR"
@@ -2410,7 +2467,7 @@ run_devloop() {
 
   CODER_SESSION_ID="$(read_first_line "$repo/$coder_session")"
   REVIEWER_SESSION_ID="$(read_first_line "$repo/$reviewer_session")"
-  synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID"
+  synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID" "$report_format"
 
   if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" != "pr-error" ]; then
     event_step "pr-final-report" "posting final report to PR"
@@ -3138,17 +3195,19 @@ init_track() {
   local branch="$8"
   local worktree_branch="$9"
   local max="${10}"
-  local strict="${11}"
-  local coder="${12}"
-  local reviewer="${13}"
-  local type="${14}"
-  local breaking="${15}"
-  local create_pr="${16}"
-  local timeout_minutes="${17}"
+  local report_format="${11}"
+  local strict="${12}"
+  local coder="${13}"
+  local reviewer="${14}"
+  local type="${15}"
+  local breaking="${16}"
+  local create_pr="${17}"
+  local timeout_minutes="${18}"
   local track_name
   if [ -f "$file" ]; then return; fi
   track_name="$(basename "$file" .md)"
-  cat > "$file" <<EOF
+  {
+    cat <<EOF
 # Track: $track_name
 
 - spec: $spec
@@ -3164,12 +3223,18 @@ init_track() {
 - type: $type
 - breaking: $breaking
 - max: $max
+EOF
+    if [ "$report_format" = "html" ]; then
+      printf '%s\n' "- report-format: html"
+    fi
+    cat <<EOF
 - strict: $strict
 - create-pr: $create_pr
 - timeout-minutes: $timeout_minutes
 - started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 EOF
+  } > "$file"
 }
 
 read_first_line() {
@@ -4063,12 +4128,17 @@ synthesize_report() {
   local reviewer_session_file="${22}"
   local coder_session_id="${23}"
   local reviewer_session_id="${24}"
+  local format="${25}"
   local title subtitle reviews metadata body prompt
   title="$(report_title "$spec_text" "$slug")"
   subtitle="$(report_subtitle "$spec_text" "$title")"
   reviews="$(list_reviews "$slug" "$pass" "$max")"
   metadata="$(report_metadata "$status" "$pass" "$max" "$repo" "$run_spec" "$source_spec" "$source_repo" "$worktree" "$base" "$initial_branch" "$branch" "$commit" "$commit_message" "$pull_request" "$pull_request_error" "$coder" "$reviewer" "$coder_session_id" "$reviewer_session_id" "$track" "$reviews")"
-  body="Write the report to $report in plain Markdown. Start with the report title as the H1, put the subtitle directly below it, put a topical three-line haiku immediately after the subtitle, then include these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Use terminal-friendly Markdown only: no HTML tags, embedded CSS, Mermaid, SVG, images, or external assets. If a diagram clarifies the run, draw it as ASCII inside a plain code fence. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run."
+  if [ "$format" = "html" ]; then
+    body="Write the report to $report as valid standalone HTML. Use a readable document layout with embedded CSS, set the HTML <title> to the report title, render the report title and subtitle before Metadata, render a topical three-line haiku immediately after the subtitle, use a compact metadata table, and add substantive sections after it. Include these visible section headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run."
+  else
+    body="Write the report to $report in plain Markdown. Start with the report title as the H1, put the subtitle directly below it, put a topical three-line haiku immediately after the subtitle, then include these headings: Metadata, The shape of the problem, What was built, What the review caught (and why it mattered), What to remember next time, Residual risk, Pointers. Use terminal-friendly Markdown only: no HTML tags, embedded CSS, Mermaid, SVG, images, or external assets. If a diagram clarifies the run, draw it as ASCII inside a plain code fence. Do not optimize away substance: explain the decisions, tradeoffs, evidence, and transferable lessons clearly enough that the reader learns from the run."
+  fi
   prompt="$(cat <<EOF
 You are writing a learning-oriented post-mortem for a developer who just ran a devloop.
 

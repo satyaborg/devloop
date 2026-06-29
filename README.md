@@ -27,7 +27,7 @@ cd devloop
 ./scripts/install.sh
 ```
 
-> Requires Bash, git, `codex`, `claude`, `gum`, and `fzf`. Run `devloop doctor` to check.
+> Requires Bash, git, `codex`, `claude`, `glow`, `gum`, and `fzf`. Run `devloop doctor` to check.
 
 Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 

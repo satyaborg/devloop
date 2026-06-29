@@ -350,6 +350,7 @@ devloop_doctor() {
   devloop_doctor_command git || status=1
   devloop_doctor_command codex || status=1
   devloop_doctor_command claude || status=1
+  devloop_doctor_command glow || status=1
   devloop_doctor_command gum || status=1
   devloop_doctor_command fzf || status=1
   printf '\nSkills\n'
