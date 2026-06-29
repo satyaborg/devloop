@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0](https://github.com/satyaborg/devloop/releases/tag/v0.7.0) - 2026-06-29
+
+### Added
+
+- glow-terminal-rendering ([d567c83](https://github.com/satyaborg/devloop/commit/d567c838a9d798a4465d8dbeb535aa69881a3d4f))
+
+
+### Fixed
+
+- glow-terminal-rendering ([fad20e5](https://github.com/satyaborg/devloop/commit/fad20e57816af4802162b12af0c3c2a606c68075))
+- keep glow rendering markdown-only ([9cbdc63](https://github.com/satyaborg/devloop/commit/9cbdc63eeec783916f05ffb57174d3e77e64d49b))
+
 ## [0.5.3](https://github.com/satyaborg/devloop/releases/tag/v0.5.3) - 2026-06-23
 
 ### Added
