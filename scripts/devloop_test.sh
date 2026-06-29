@@ -721,7 +721,7 @@ if ! run_setup_output="$(
   maybe_enter_worktree() { :; }
   interactive_run_setup "spec.md"
 )"; then fail "run setup defaults failed"; fi
-equals "$run_setup_output" "spec.md 5 markdown true true codex claude false 60" "run setup launches with defaults"
+equals "$run_setup_output" "spec.md 5 true true codex claude false 60" "run setup launches with defaults"
 configured_agents_home="$work/agents-home"
 configured_agents_repo="$work/agents-repo"
 mkdir -p "$configured_agents_home" "$configured_agents_repo/.devloop/specs"
@@ -869,20 +869,10 @@ cat > "$view_bin/gum" <<'GUM'
 } >> "$DEVLOOP_VIEW_LOG"
 cat >/dev/null
 GUM
-cat > "$view_bin/open" <<'OPEN'
-#!/usr/bin/env bash
-{
-  printf 'open'
-  for arg in "$@"; do printf ' <%s>' "$arg"; done
-  printf '\n'
-} >> "$DEVLOOP_VIEW_LOG"
-OPEN
-chmod +x "$view_bin/glow" "$view_bin/gum" "$view_bin/open"
+chmod +x "$view_bin/glow" "$view_bin/gum"
 view_md="$work/view.md"
-view_html="$work/view.html"
 view_log_file="$work/view.logfile"
 printf '%s\n' "# View" > "$view_md"
-printf '%s\n' "<html></html>" > "$view_html"
 printf '%s\n' "raw log" > "$view_log_file"
 old_path="$PATH"
 old_use_tui="$USE_TUI"
@@ -911,11 +901,6 @@ printf '%s\n' "rendered markdown"
 GLOW
 chmod +x "$view_bin/glow"
 USE_TUI=false
-: > "$view_log"
-view_file "$view_html" >/dev/null
-contains "$(cat "$view_log")" "open <$view_html>" "html view opens browser"
-not_contains "$(cat "$view_log")" "glow" "html view skips glow"
-rm -f "$view_bin/gum" "$view_bin/open"
 : > "$view_log"
 equals "$(view_file "$view_log_file")" "raw log" "non-markdown raw view"
 not_contains "$(cat "$view_log")" "glow" "non-markdown view skips glow"
@@ -1854,6 +1839,7 @@ run_loop() {
   local slug="$2"
   local mode="$3"
   local max="${4:-1}"
+  local extra="${5:-}"
   local args=()
   local old_home="$HOME"
   local old_path="$PATH"
@@ -1863,9 +1849,8 @@ run_loop() {
   local old_enter_worktree="$ENTER_WORKTREE"
   local old_start_pass="$RUN_START_PASS"
   local code
-  shift 4
   if [ "${DEVLOOP_FAKE_MODE+x}" = "x" ]; then had_mode=true; fi
-  args+=("$@")
+  if [ -n "$extra" ]; then args+=("$extra"); fi
   args+=(".specs/$slug.md" "$max")
   HOME="$install_home"
   PATH="$fake_bin:$bin_dir:$PATH"
@@ -2038,20 +2023,6 @@ contains "$(run_repo_main "$loop_repo" continue)" ".devloop/tracks/e2e-accept.md
 if grep -Eq '^gh pr (create|comment|list|view)' "$no_pr_gh_log" 2>/dev/null; then fail "local-only loop touched PR commands"; fi
 unset DEVLOOP_GH_LOG
 ok "e2e accept and verify"
-
-loop_repo="$work/loop-html"
-make_loop_repo "$loop_repo" "e2e-html" "E2E HTML"
-if ! html_output="$(run_loop "$loop_repo" "e2e-html" accept 1 --report-format html 2>&1)"; then
-  printf '%s\n' "$html_output" >&2
-  fail "html report loop failed"
-fi
-html_worktree="$(printf '%s\n' "$html_output" | sed -nE 's/^[[:space:]]*Worktree[[:space:]]+//p')"
-[[ -f "$html_worktree/.devloop/reports/e2e-html.html" ]] || fail "html report loop did not write html report"
-[[ ! -e "$html_worktree/.devloop/reports/e2e-html.md" ]] || fail "html report loop wrote markdown report"
-contains "$(cat "$html_worktree/.devloop/tracks/e2e-html.md")" "- report-format: html" "html report track metadata"
-contains "$(run_repo_main "$loop_repo" reports)" ".devloop/reports/e2e-html.html" "reports command includes html"
-contains "$(run_repo_main "$loop_repo" status)" ".devloop/reports/e2e-html.html" "status command includes html report"
-ok "e2e html report"
 
 loop_repo="$work/loop-retry"
 make_loop_repo "$loop_repo" "e2e-retry" "E2E Retry"
