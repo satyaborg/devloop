@@ -1117,7 +1117,7 @@ ui_pick_from_file() {
   if [ ! -s "$file" ]; then return 1; fi
   if ui_has_fzf; then
     # shellcheck disable=SC2016
-    preview_cmd='case "{}" in *.md) if command -v glow >/dev/null 2>&1; then glow -w "$FZF_PREVIEW_COLUMNS" "{}"; else sed -n "1,80p" "{}" 2>/dev/null; fi ;; *) sed -n "1,80p" "{}" 2>/dev/null ;; esac'
+    preview_cmd='case {} in *.md) if command -v glow >/dev/null 2>&1; then glow -w "$FZF_PREVIEW_COLUMNS" {}; else sed -n "1,80p" {} 2>/dev/null; fi ;; *) sed -n "1,80p" {} 2>/dev/null ;; esac'
     fzf \
       --height 70% \
       --layout reverse \

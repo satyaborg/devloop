@@ -803,7 +803,7 @@ USE_TUI=true
 (
   ui_has_fzf() { return 0; }
   fzf() {
-    local preview="" arg selection expanded
+    local preview="" arg selection quoted_selection expanded
     while [ "$#" -gt 0 ]; do
       arg="$1"
       shift
@@ -813,7 +813,8 @@ USE_TUI=true
       fi
     done
     IFS= read -r selection || return 1
-    expanded="${preview//\{\}/$selection}"
+    quoted_selection="'$selection'"
+    expanded="${preview//\{\}/$quoted_selection}"
     FZF_PREVIEW_COLUMNS=77 PATH="$preview_bin:/usr/bin:/bin:/usr/sbin:/sbin" sh -c "$expanded" >/dev/null
     printf '%s\n' "$selection"
   }
@@ -826,7 +827,7 @@ printf '%s\n' "$preview_log_file" > "$preview_list"
 (
   ui_has_fzf() { return 0; }
   fzf() {
-    local preview="" arg selection expanded
+    local preview="" arg selection quoted_selection expanded
     while [ "$#" -gt 0 ]; do
       arg="$1"
       shift
@@ -836,7 +837,8 @@ printf '%s\n' "$preview_log_file" > "$preview_list"
       fi
     done
     IFS= read -r selection || return 1
-    expanded="${preview//\{\}/$selection}"
+    quoted_selection="'$selection'"
+    expanded="${preview//\{\}/$quoted_selection}"
     FZF_PREVIEW_COLUMNS=77 PATH="$preview_bin:/usr/bin:/bin:/usr/sbin:/sbin" sh -c "$expanded" >/dev/null
     printf '%s\n' "$selection"
   }
