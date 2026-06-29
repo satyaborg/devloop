@@ -2,7 +2,7 @@
 status: draft
 type: feat
 created: 2026-06-19
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/79
 ---
 
 # Glow-rendered specs and reports in the terminal
