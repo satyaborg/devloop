@@ -73,7 +73,7 @@ main() {
     version="$(site_version)"
   fi
 
-  args=(--version "$version")
+  args=(--yes --version "$version")
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --version)

@@ -44,7 +44,7 @@ Primary install:
   curl -fsSL https://devloop.sh/install | bash
 
 Options:
-  --yes                 Run without optional prompts.
+  --yes                 Install missing dependencies without prompting.
   --version <version>   Install a specific tagged version, for example 0.2.0.
   --no-skills           Install only the devloop CLI.
   --dry-run             Print planned actions without changing files.
@@ -200,61 +200,117 @@ missing_commands() {
   printf '%s\n' "${missing[*]}"
 }
 
-check_ui_tools() {
-  local missing_text="$1"
-  local missing_items=()
-  local reply
-  if [ -z "$missing_text" ]; then
-    info "[ok] glow: $(command -v glow)"
-    info "[ok] gum: $(command -v gum)"
-    info "[ok] fzf: $(command -v fzf)"
+missing_agent_casks() {
+  local missing=()
+  if ! command -v codex >/dev/null 2>&1; then
+    missing+=(codex)
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    missing+=(claude-code)
+  fi
+  if [ "${#missing[@]}" -eq 0 ]; then
+    printf '\n'
     return 0
   fi
+  printf '%s\n' "${missing[*]}"
+}
 
-  read -r -a missing_items <<< "$missing_text"
-  info "missing UI tools: $missing_text"
-  if command -v brew >/dev/null 2>&1; then
-    if [ "$YES" = false ] && [ -t 0 ]; then
-      printf 'Install missing UI tools with Homebrew now? [y/N] '
-      read -r reply
-      case "$reply" in
-        y|Y|yes|YES)
-          brew install "${missing_items[@]}"
-          ;;
-        *)
-          info "install with: brew install $missing_text"
-          return 0
-          ;;
-      esac
-    else
-      info "install with: brew install $missing_text"
-      return 0
+print_dependency_status() {
+  local tool
+  for tool in git glow gum fzf codex claude; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      info "[ok] $tool: $(command -v "$tool")"
     fi
-  else
-    info "install with: brew install $missing_text"
+  done
+}
+
+report_required_dependencies() {
+  local formula_missing_text="$1"
+  local cask_missing_text="$2"
+
+  if [ -z "$formula_missing_text" ] && [ -z "$cask_missing_text" ]; then
+    print_dependency_status
     return 0
   fi
 
-  missing_text="$(missing_commands glow gum fzf)"
-  if [ -n "$missing_text" ]; then
-    info "still missing UI tools: $missing_text"
-  else
-    info "[ok] glow: $(command -v glow)"
-    info "[ok] gum: $(command -v gum)"
-    info "[ok] fzf: $(command -v fzf)"
+  if [ -n "$formula_missing_text" ]; then
+    info "missing required dependencies: $formula_missing_text"
+    info "install with: brew install $formula_missing_text"
+  fi
+  if [ -n "$cask_missing_text" ]; then
+    info "missing required cask dependencies: $cask_missing_text"
+    info "install with: brew install --cask $cask_missing_text"
   fi
 }
 
-check_agent_tools() {
-  local agent_missing_text="$1"
-  if [ -z "$agent_missing_text" ]; then
-    info "[ok] codex: $(command -v codex)"
-    info "[ok] claude: $(command -v claude)"
+confirm_dependency_install() {
+  local formula_missing_text="$1"
+  local cask_missing_text="$2"
+  local reply
+
+  if [ "$YES" = true ]; then
+    return 0
+  fi
+  report_required_dependencies "$formula_missing_text" "$cask_missing_text"
+  if [ ! -t 0 ]; then
+    info "pass --yes to install missing dependencies without a prompt."
+    return 1
+  fi
+
+  printf 'Install missing dependencies with Homebrew now? [y/N] '
+  read -r reply
+  case "$reply" in
+    y|Y|yes|YES) return 0 ;;
+    *)
+      info "skipping dependency install"
+      return 1
+      ;;
+  esac
+}
+
+install_required_dependencies() {
+  local formula_missing_text="$1"
+  local cask_missing_text="$2"
+  local missing_formulas=()
+  local missing_casks=()
+  local still_missing
+
+  if [ -z "$formula_missing_text" ] && [ -z "$cask_missing_text" ]; then
+    print_dependency_status
     return 0
   fi
 
-  info "missing agent CLIs: $agent_missing_text"
-  info "Devloop does not install codex or claude automatically."
+  if [ -n "$formula_missing_text" ]; then
+    read -r -a missing_formulas <<< "$formula_missing_text"
+  fi
+  if [ -n "$cask_missing_text" ]; then
+    read -r -a missing_casks <<< "$cask_missing_text"
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    report_required_dependencies "$formula_missing_text" "$cask_missing_text"
+    info "install Homebrew, then rerun the installer."
+    return 1
+  fi
+  if ! confirm_dependency_install "$formula_missing_text" "$cask_missing_text"; then
+    return 1
+  fi
+
+  if [ "${#missing_formulas[@]}" -gt 0 ]; then
+    info "installing required dependencies: ${missing_formulas[*]}"
+    brew install "${missing_formulas[@]}"
+  fi
+  if [ "${#missing_casks[@]}" -gt 0 ]; then
+    info "installing required cask dependencies: ${missing_casks[*]}"
+    brew install --cask "${missing_casks[@]}"
+  fi
+
+  still_missing="$(missing_commands git glow gum fzf codex claude)"
+  if [ -n "$still_missing" ]; then
+    info "still missing required dependencies: $still_missing"
+    return 1
+  fi
+  print_dependency_status
 }
 
 print_path_guidance() {
@@ -347,24 +403,24 @@ dry_run() {
 }
 
 main() {
-  local version ui_missing agent_missing tmp archive checksum installed_root
+  local version formula_missing cask_missing tmp archive checksum installed_root dependency_status
   parse_args "$@"
 
   if [ -z "$VERSION" ]; then
     VERSION="$(resolve_latest_version)"
   fi
   version="$(normalize_version "$VERSION")"
-  ui_missing="$(missing_commands glow gum fzf)"
-  agent_missing="$(missing_commands codex claude)"
+  formula_missing="$(missing_commands git glow gum fzf)"
+  cask_missing="$(missing_agent_casks)"
 
   if [ "$DRY_RUN" = true ]; then
     dry_run "$version"
-    check_ui_tools "$ui_missing"
-    check_agent_tools "$agent_missing"
+    report_required_dependencies "$formula_missing" "$cask_missing"
     print_path_guidance
     return 0
   fi
 
+  dependency_status=0
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/devloop-download.XXXXXX")"
   archive="$tmp/$(asset_name "$version")"
   checksum="$archive.sha256"
@@ -376,10 +432,10 @@ main() {
 
   installed_root="$INSTALL_ROOT/$version"
   install_skills "$installed_root"
-  check_ui_tools "$ui_missing"
-  check_agent_tools "$agent_missing"
+  install_required_dependencies "$formula_missing" "$cask_missing" || dependency_status=$?
   print_path_guidance
   print_banner "$version"
+  return "$dependency_status"
 }
 
 main "$@"
