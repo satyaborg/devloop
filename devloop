@@ -4402,9 +4402,12 @@ Spec directory: $target_dir
 $target_line
 $overwrite_line
 
-If the source context is missing or too thin, follow the skill's cold-start
-interview path before drafting. Ask one question at a time until the spec can be
-written without invented requirements.
+If the source context is missing, too thin, ambiguous, spans multiple possible
+implementation slices, or has open questions that could change the work, follow
+the skill's interview path before drafting. Do not turn a conversation,
+artifact bundle, or notes into a spec until scope and acceptance criteria are
+clear. Ask one question at a time until the spec can be written without invented
+requirements.
 
 When ready, write exactly one devloop-ready markdown spec to the requested path.
 After writing the spec, tell the user the path and offer to continue with:

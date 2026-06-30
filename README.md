@@ -57,7 +57,7 @@ Strict mode is on by default: specs need `## Acceptance criteria`, and reviews m
 
 Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents/skills`:
 
-- [`devloop-spec`](skills/devloop-spec/SKILL.md) — turns a rough idea, notes, a URL, or an interview into one concrete, devloop-ready spec.
+- [`devloop-spec`](skills/devloop-spec/SKILL.md) — interviews when scope is unclear, then writes one concrete, devloop-ready spec.
 - [`devloop-review`](skills/devloop-review/SKILL.md) — judges each pass against the spec and engineering quality gates, returning ACCEPT, REJECT, or UNCLEAR with fix instructions.
 
 ## Runtime
