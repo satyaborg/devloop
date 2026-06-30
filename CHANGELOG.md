@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0](https://github.com/satyaborg/devloop/releases/tag/v0.8.0) - 2026-06-30
+
+### Fixed
+
+- tighten devloop spec skill handoff ([f7c3e25](https://github.com/satyaborg/devloop/commit/f7c3e250e2f62a3cedb5921abaed757bee91031f))
+
 ## [0.7.0](https://github.com/satyaborg/devloop/releases/tag/v0.7.0) - 2026-06-29
 
 ### Added
