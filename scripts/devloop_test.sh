@@ -201,7 +201,7 @@ bootstrap_output="$(
   PATH="$bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   bash "$REPO_ROOT/site/public/install" --dry-run
 )"
-contains "$bootstrap_output" "installer args: <--version> <9.8.7> <--dry-run>" "site install bootstrap"
+contains "$bootstrap_output" "installer args: <--yes> <--version> <9.8.7> <--dry-run>" "site install bootstrap"
 contains "$(cat "$bootstrap_log")" "https://version.example/devloop" "site install bootstrap version"
 contains "$(cat "$bootstrap_log")" "https://raw.example/devloop/v9.8.7/scripts/install.remote.sh" "site install bootstrap installer"
 : > "$bootstrap_log"
@@ -212,7 +212,7 @@ bootstrap_pinned_output="$(
   PATH="$bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   bash "$REPO_ROOT/site/public/install" --version=1.2.3 --dry-run
 )"
-contains "$bootstrap_pinned_output" "installer args: <--version> <1.2.3> <--dry-run>" "site install bootstrap pinned"
+contains "$bootstrap_pinned_output" "installer args: <--yes> <--version> <1.2.3> <--dry-run>" "site install bootstrap pinned"
 not_contains "$(cat "$bootstrap_log")" "https://version.example/devloop" "site install bootstrap pinned"
 contains "$(cat "$bootstrap_log")" "https://raw.example/devloop/v1.2.3/scripts/install.remote.sh" "site install bootstrap pinned"
 : > "$bootstrap_log"
@@ -1022,10 +1022,10 @@ contains "$remote_dry_output" "verify: $remote_release_base/v$remote_version/dev
 contains "$remote_dry_output" "install: $remote_custom_root/$remote_version" "remote dry run install dir"
 contains "$remote_dry_output" "link: $remote_custom_bin/devloop -> $remote_custom_root/$remote_version/devloop" "remote dry run bin dir"
 contains "$remote_dry_output" "skills: $work/remote-dry-home/.agents/skills, $work/remote-dry-home/.claude/skills" "remote dry run skills"
-contains "$remote_dry_output" "missing UI tools: glow gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "missing required dependencies: glow gum fzf" "remote missing UI guidance"
 contains "$remote_dry_output" "install with: brew install glow gum fzf" "remote missing UI guidance"
-contains "$remote_dry_output" "missing agent CLIs: codex claude" "remote missing agent guidance"
-contains "$remote_dry_output" "Devloop does not install codex or claude automatically." "remote missing agent guidance"
+contains "$remote_dry_output" "missing required cask dependencies: codex claude-code" "remote missing agent guidance"
+contains "$remote_dry_output" "install with: brew install --cask codex claude-code" "remote missing agent guidance"
 [[ ! -e "$remote_custom_root" ]] || fail "remote dry run created install root"
 [[ ! -e "$remote_custom_bin" ]] || fail "remote dry run created bin dir"
 ok "remote installer dry run"
@@ -1071,6 +1071,56 @@ contains "$tampered_output" "checksum mismatch" "remote checksum mismatch"
 [[ ! -e "$tampered_home/.local/share/devloop/$tampered_version" ]] || fail "checksum mismatch created install dir"
 [[ ! -e "$tampered_home/.local/bin/devloop" ]] || fail "checksum mismatch created devloop symlink"
 ok "remote installer rejects checksum mismatch"
+
+remote_no_brew_home="$work/remote-no-brew-home"
+if remote_no_brew_output="$(
+  HOME="$remote_no_brew_home" PATH="$remote_no_tools_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"; then
+  printf '%s\n' "$remote_no_brew_output" >&2
+  fail "remote installer accepted missing dependencies without Homebrew"
+fi
+contains "$remote_no_brew_output" "install Homebrew, then rerun the installer." "remote installer missing Homebrew"
+ok "remote installer fails when Homebrew is unavailable"
+
+remote_needs_yes_bin="$work/remote-needs-yes-bin"
+mkdir -p "$remote_needs_yes_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_needs_yes_bin/brew"
+chmod +x "$remote_needs_yes_bin/brew"
+remote_needs_yes_path="$remote_needs_yes_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if remote_needs_yes_output="$(
+  HOME="$work/remote-needs-yes-home" PATH="$remote_needs_yes_path" bash "$REMOTE_INSTALLER" \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"; then
+  printf '%s\n' "$remote_needs_yes_output" >&2
+  fail "remote installer installed dependencies without --yes in a non-TTY"
+fi
+contains "$remote_needs_yes_output" "pass --yes to install missing dependencies without a prompt." "remote installer non-TTY --yes guard"
+not_contains "$remote_needs_yes_output" "installing required dependencies" "remote installer non-TTY --yes guard"
+ok "remote installer requires --yes for non-TTY dependency installs"
+
+remote_noop_brew_bin="$work/remote-noop-brew-bin"
+mkdir -p "$remote_noop_brew_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_noop_brew_bin/brew"
+chmod +x "$remote_noop_brew_bin/brew"
+remote_noop_brew_path="$remote_noop_brew_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if remote_noop_brew_output="$(
+  HOME="$work/remote-noop-brew-home" PATH="$remote_noop_brew_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"; then
+  printf '%s\n' "$remote_noop_brew_output" >&2
+  fail "remote installer accepted dependency install that left commands missing"
+fi
+contains "$remote_noop_brew_output" "still missing required dependencies:" "remote installer verifies dependency installs"
+ok "remote installer fails when dependencies remain missing"
 
 remote_tool_bin="$work/remote-tool-bin"
 mkdir -p "$remote_tool_bin"
@@ -1221,6 +1271,52 @@ contains "$prompt_failure_output" "menu after failed check" "automatic update pr
 not_contains "$prompt_failure_output" "unexpected prompt" "automatic update prompt resolver skip"
 ok "automatic update prompt skip paths"
 
+remote_bootstrap_bin="$work/remote-bootstrap-bin"
+mkdir -p "$remote_bootstrap_bin"
+cat > "$remote_bootstrap_bin/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" != "install" ]; then exit 1; fi
+shift
+if [ "${1:-}" = "--cask" ]; then shift; fi
+tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+for formula in "$@"; do
+  case "$formula" in
+    git|glow|gum|fzf|codex)
+      command_name="$formula"
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$command_name"
+      chmod +x "$tool_dir/$command_name"
+      ;;
+    claude-code)
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/claude"
+      chmod +x "$tool_dir/claude"
+      ;;
+    *) exit 1 ;;
+  esac
+done
+BREW
+chmod +x "$remote_bootstrap_bin/brew"
+remote_bootstrap_home="$work/remote-bootstrap-home"
+remote_bootstrap_path="$remote_bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if ! remote_bootstrap_output="$(
+  HOME="$remote_bootstrap_home" PATH="$remote_bootstrap_path" bash "$REMOTE_INSTALLER" \
+    --yes \
+    --version "$remote_version" \
+    --release-base-url "$remote_release_base" \
+    2>&1
+)"; then
+  printf '%s\n' "$remote_bootstrap_output" >&2
+  fail "remote installer dependency bootstrap failed"
+fi
+contains "$remote_bootstrap_output" "installing required dependencies: glow gum fzf" "remote installer installs UI dependencies"
+contains "$remote_bootstrap_output" "installing required cask dependencies: codex claude-code" "remote installer installs agent dependencies"
+PATH="$remote_bootstrap_path" command -v glow >/dev/null 2>&1 || fail "remote installer did not make glow available"
+PATH="$remote_bootstrap_path" command -v gum >/dev/null 2>&1 || fail "remote installer did not make gum available"
+PATH="$remote_bootstrap_path" command -v fzf >/dev/null 2>&1 || fail "remote installer did not make fzf available"
+PATH="$remote_bootstrap_path" command -v codex >/dev/null 2>&1 || fail "remote installer did not make codex available"
+PATH="$remote_bootstrap_path" command -v claude >/dev/null 2>&1 || fail "remote installer did not make claude available"
+ok "remote installer bootstraps missing dependencies"
+
 remote_home="$work/remote-home"
 remote_install_output="$(
   HOME="$remote_home" PATH="$remote_path" bash "$REMOTE_INSTALLER" \
@@ -1317,6 +1413,18 @@ contains "$uninstall_again_output" "devloop uninstalled" "uninstall idempotent"
 not_contains "$uninstall_again_output" "removed symlink" "uninstall idempotent no-op"
 ok "uninstall script removes installed footprint"
 
+install_missing_brew_home="$work/install-missing-brew-home"
+install_missing_brew_bin="$work/install-missing-brew-bin"
+if install_missing_brew_output="$(
+  DEVLOOP_BIN_DIR="$install_missing_brew_bin" HOME="$install_missing_brew_home" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$SCRIPTS_DIR/install.sh" 2>&1
+)"; then
+  printf '%s\n' "$install_missing_brew_output" >&2
+  fail "installer accepted missing dependencies without Homebrew"
+fi
+contains "$install_missing_brew_output" "install Homebrew, then rerun ./scripts/install.sh" "installer missing Homebrew"
+not_contains "$install_missing_brew_output" "missing required dependencies:  " "installer missing dependency spacing"
+ok "installer fails when Homebrew is unavailable"
+
 bin_dir="$work/bin"
 install_home="$work/install-home"
 tool_bin="$work/tool-bin"
@@ -1326,12 +1434,18 @@ cat > "$tool_bin/brew" <<'BREW'
 set -euo pipefail
 if [ "${1:-}" != "install" ]; then exit 1; fi
 shift
+if [ "${1:-}" = "--cask" ]; then shift; fi
 tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 for formula in "$@"; do
   case "$formula" in
-    glow|gum|fzf)
-      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$formula"
-      chmod +x "$tool_dir/$formula"
+    git|glow|gum|fzf|codex)
+      command_name="$formula"
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$command_name"
+      chmod +x "$tool_dir/$command_name"
+      ;;
+    claude-code)
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/claude"
+      chmod +x "$tool_dir/claude"
       ;;
     *) exit 1 ;;
   esac
@@ -1346,6 +1460,8 @@ contains "$(cat /tmp/devloop-install-test.out)" "gh auth login" "installer optio
 PATH="$install_path" command -v glow >/dev/null 2>&1 || fail "installer did not make glow available"
 PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
+PATH="$install_path" command -v codex >/dev/null 2>&1 || fail "installer did not make codex available"
+PATH="$install_path" command -v claude >/dev/null 2>&1 || fail "installer did not make claude available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
 [[ ! -e "$install_home/.agents/skills/devloop-spec/scripts/render.sh" ]] || fail "installer installed removed Codex spec renderer"

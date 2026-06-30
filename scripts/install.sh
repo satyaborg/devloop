@@ -46,33 +46,55 @@ EOF
   printf '  %stry:%s %s%sdevloop%s\n\n' "$C_DIM" "$C_RESET" "$C_BOLD" "$C_ACCENT" "$C_RESET"
 }
 
-install_required_ui_tools() {
-  local missing=()
+install_required_dependencies() {
+  local missing_formulas=()
+  local missing_casks=()
+  local missing_text
   local tool
 
-  for tool in glow gum fzf; do
+  for tool in git glow gum fzf; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      missing+=("$tool")
+      missing_formulas+=("$tool")
     fi
   done
+  if ! command -v codex >/dev/null 2>&1; then
+    missing_casks+=(codex)
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    missing_casks+=(claude-code)
+  fi
 
-  if [ "${#missing[@]}" -eq 0 ]; then
-    echo "required UI tools ready"
+  if [ "${#missing_formulas[@]}" -eq 0 ] && [ "${#missing_casks[@]}" -eq 0 ]; then
+    echo "required dependencies ready"
     return 0
   fi
 
   if ! command -v brew >/dev/null 2>&1; then
-    echo "missing required UI tools: ${missing[*]}" >&2
+    missing_text="${missing_formulas[*]}"
+    if [ "${#missing_casks[@]}" -gt 0 ]; then
+      if [ -n "$missing_text" ]; then
+        missing_text="$missing_text ${missing_casks[*]}"
+      else
+        missing_text="${missing_casks[*]}"
+      fi
+    fi
+    echo "missing required dependencies: $missing_text" >&2
     echo "install Homebrew, then rerun ./scripts/install.sh" >&2
     return 1
   fi
 
-  echo "installing required UI tools: ${missing[*]}"
-  brew install "${missing[@]}"
+  if [ "${#missing_formulas[@]}" -gt 0 ]; then
+    echo "installing required dependencies: ${missing_formulas[*]}"
+    brew install "${missing_formulas[@]}"
+  fi
+  if [ "${#missing_casks[@]}" -gt 0 ]; then
+    echo "installing required cask dependencies: ${missing_casks[*]}"
+    brew install --cask "${missing_casks[@]}"
+  fi
 
-  for tool in "${missing[@]}"; do
+  for tool in git glow gum fzf codex claude; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      echo "failed to install required UI tool: $tool" >&2
+      echo "failed to install required dependency: $tool" >&2
       return 1
     fi
   done
@@ -88,7 +110,7 @@ chmod +x "$SOURCE"
 ln -sfn "$SOURCE" "$TARGET"
 
 echo "installed devloop -> $SOURCE"
-install_required_ui_tools || TOOL_STATUS=$?
+install_required_dependencies || TOOL_STATUS=$?
 devloop_install_skills "$ROOT" || SKILL_STATUS=$?
 echo "optional for PR-backed loops: install GitHub CLI and run gh auth login"
 

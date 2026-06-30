@@ -28,6 +28,7 @@ cd devloop
 ```
 
 > Requires Bash, git, `codex`, `claude`, `glow`, `gum`, and `fzf`. Run `devloop doctor` to check.
+> The installers use Homebrew to install missing git/UI tools and the Codex/Claude Code casks when `brew` is available.
 
 Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 

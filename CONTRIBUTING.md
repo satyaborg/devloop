@@ -7,11 +7,11 @@ Thanks for your interest in improving devloop. This is a single-file Bash CLI wi
 ```sh
 git clone https://github.com/satyaborg/devloop.git
 cd devloop
-./scripts/install.sh   # symlinks the checkout, installs gum/fzf and bundled skills
+./scripts/install.sh   # symlinks the checkout, installs missing dependencies and bundled skills
 devloop doctor         # verify required dependencies
 ```
 
-Required to run a loop: Bash, git, `gum`, `fzf`, and the `codex` and `claude` CLIs. The test suite itself needs only Bash, git, and coreutils, so you can develop and test without the agent CLIs installed.
+Required to run a loop: Bash, git, `glow`, `gum`, `fzf`, and the `codex` and `claude` CLIs. The install scripts use Homebrew to install missing git/UI tools and the Codex/Claude Code casks when `brew` is available. The test suite itself needs only Bash, git, and coreutils, so you can develop and test without the agent CLIs installed.
 
 ## Development loop
 
