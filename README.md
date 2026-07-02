@@ -45,12 +45,12 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 | `devloop status` | Show run status |
 | `devloop clean` | Remove run artifacts |
 
-Each run writes a Markdown report, spec, and reviews under `.devloop/`.
+Each run writes an HTML report, spec, and reviews under `.devloop/`.
 When you pick a spec from the interactive menu, devloop uses your configured run defaults and only prompts for PR mode. The interactive **Settings** menu sets the default coder and reviewer agents (Codex or Claude Code), spec path, and run timeout, saved to `~/.devloop/config`. Use CLI flags such as `--coder`, `--reviewer`, `--in-place`, or `--timeout-minutes` to override those defaults per run.
 
 ## Specs
 
-A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md).
+A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md). The bundled `devloop-spec` skill can also render a sibling HTML companion with [`skills/devloop-spec/scripts/render.sh`](skills/devloop-spec/scripts/render.sh).
 
 Strict mode is on by default: specs need `## Acceptance criteria`, and reviews must pass both the spec gate and engineering quality gate.
 
@@ -58,7 +58,7 @@ Strict mode is on by default: specs need `## Acceptance criteria`, and reviews m
 
 Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents/skills`:
 
-- [`devloop-spec`](skills/devloop-spec/SKILL.md) — interviews when scope is unclear, then writes one concrete, devloop-ready spec.
+- [`devloop-spec`](skills/devloop-spec/SKILL.md) — interviews when scope is unclear, then writes one concrete, devloop-ready spec with optional HTML rendering.
 - [`devloop-review`](skills/devloop-review/SKILL.md) — judges each pass against the spec and engineering quality gates, returning ACCEPT, REJECT, or UNCLEAR with fix instructions.
 
 ## Runtime
