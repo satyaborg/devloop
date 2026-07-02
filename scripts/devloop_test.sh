@@ -36,7 +36,22 @@ equals() {
   [[ "$actual" == "$expected" ]] || fail "$label expected [$expected], got [$actual]"
 }
 
-bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER" "$REPO_ROOT/site/public/install"
+count_occurrences() {
+  local file="$1"
+  local needle="$2"
+  awk -v needle="$needle" '
+    {
+      line = $0
+      while ((idx = index(line, needle)) > 0) {
+        count++
+        line = substr(line, idx + length(needle))
+      }
+    }
+    END { print count + 0 }
+  ' "$file"
+}
+
+bash -n "$REPO_ROOT/devloop" "$SCRIPTS_DIR/install.sh" "$SCRIPTS_DIR/uninstall.sh" "$SCRIPTS_DIR/skill_helpers.sh" "$SCRIPTS_DIR/release.sh" "$REMOTE_INSTALLER" "$REPO_ROOT/site/public/install" "$REPO_ROOT/skills/devloop-spec/scripts/render.sh"
 ok "bash syntax"
 
 DEVLOOP_LIB=1
@@ -65,8 +80,8 @@ contains "$help" "--no-shell" "help"
 contains "$help" "--enter-worktree" "help"
 contains "$help" "--version" "help"
 contains "$help" "--timeout-minutes" "help"
-not_contains "$help" "--report-format" "help"
-not_contains "$help" "--html" "help"
+contains "$help" "--report-format html|markdown" "help"
+contains "$help" "choose report format" "help"
 ok "help output"
 
 remote_help="$("$REMOTE_INSTALLER" --help)"
@@ -87,9 +102,9 @@ contains "$readme_text" "./scripts/install.sh" "README source install"
 contains "$readme_text" "\`devloop update\`" "README command table"
 not_contains "$readme_text" "\`devloop $obsolete_update_command\`" "README command table"
 not_contains "$readme_text" "render.py" "README Python spec renderer"
-not_contains "$readme_text" "render.sh" "README spec renderer"
-not_contains "$readme_text" "sibling HTML companion" "README spec renderer"
-not_contains "$readme_text" "HTML report" "README report docs"
+contains "$readme_text" "render.sh" "README spec renderer"
+contains "$readme_text" "sibling HTML companion" "README spec renderer"
+contains "$readme_text" "HTML report" "README report docs"
 ok "README install docs"
 
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
@@ -99,23 +114,18 @@ ok "spec skill path"
 
 spec_skill_text="$(cat "$REPO_ROOT/skills/devloop-spec/SKILL.md")"
 spec_template_text="$(cat "$REPO_ROOT/skills/devloop-spec/references/spec-template.md")"
-contains "$spec_skill_text" "ASCII" "spec skill ASCII diagrams"
-contains "$spec_skill_text" "plain code fence" "spec skill plain diagram fence"
-not_contains "$spec_skill_text" "mermaid" "spec skill Mermaid guidance"
-not_contains "$spec_skill_text" "Mermaid" "spec skill Mermaid guidance"
+contains "$spec_skill_text" "Mermaid" "spec skill Mermaid guidance"
+contains "$spec_skill_text" "scripts/render.sh" "spec skill renderer"
+contains "$spec_skill_text" "HTML Companion" "spec skill renderer"
 not_contains "$spec_skill_text" "render.py" "spec skill Python renderer"
 not_contains "$spec_skill_text" "python3" "spec skill Python renderer"
-not_contains "$spec_skill_text" "render.sh" "spec skill renderer"
-not_contains "$spec_skill_text" "HTML companion" "spec skill renderer"
 contains "$spec_skill_text" "Do not convert a conversation, artifact bundle, or notes directly into a spec" "spec skill interview gate"
 contains "$spec_skill_text" "If interactive and gaps remain, do not draft yet" "spec skill gap interview"
 not_contains "$spec_skill_text" "offer to interview for only those gaps after producing the first draft" "spec skill gap interview"
 contains "$spec_skill_text" "<repo>/.devloop/specs/YYYY-MM-DD-<slug>.md" "spec skill repo output"
-contains "$spec_template_text" $'\n```\n  current' "spec template plain ASCII fence"
-contains "$spec_template_text" "Current behavior -> Implementation change -> Expected outcome" "spec template ASCII schematic"
-not_contains "$spec_template_text" '```mermaid' "spec template Mermaid fence"
-not_contains "$spec_template_text" "flowchart LR" "spec template Mermaid syntax"
-ok "spec ASCII diagram guidance"
+contains "$spec_template_text" '```mermaid' "spec template Mermaid fence"
+contains "$spec_template_text" "flowchart LR" "spec template Mermaid syntax"
+ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
 contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR (requires \`gh\`)" "README PR mode"
@@ -159,6 +169,113 @@ ok "skill metadata"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/devloop-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+renderer_script="$REPO_ROOT/skills/devloop-spec/scripts/render.sh"
+[[ -x "$renderer_script" ]] || fail "missing executable bash spec renderer"
+
+regular_renderer_fixture="$work/spec-render-fixture.md"
+cat > "$regular_renderer_fixture" <<'SPEC'
+---
+status: draft
+type: feat
+created: 2026-06-16
+pr: null
+---
+
+# Renderer Fixture
+Render the spec with light styling and robust escaping.
+
+## Problem
+Renderer regressions are hard to spot from markdown alone.
+
+```markdown
+## This is inside a code fence
+- not a real section
+</pre><script>alert("x")</script>&
+```
+
+The paragraph after the fenced heading still belongs to Problem.
+
+## Outcome
+The HTML companion renders the spec sections.
+
+## Scope
+- In: renderer fixture
+- Out: browser automation
+
+## Behavior
+### Happy path
+1. Run the bundled renderer.
+2. HTML is written next to the markdown.
+
+### Edge cases
+- HTML-sensitive fenced content is escaped.
+
+## Acceptance criteria
+1. The generated HTML uses the light theme.
+
+## Test plan
+- Red: Not applicable for fixture.
+- Green: `skills/devloop-spec/scripts/render.sh <fixture>`
+- Full: `bash scripts/devloop_test.sh`
+- Coverage: Not applicable for Bash fixture.
+
+## Constraints
+- Must: keep markdown canonical.
+- Avoid: editing generated HTML by hand.
+- Existing convention: derived files sit beside the source markdown.
+
+## Notes
+No gaps.
+SPEC
+if "$renderer_script" >/tmp/devloop-renderer-usage.out 2>&1; then
+  fail "spec renderer accepted missing argument"
+fi
+if "$renderer_script" "$regular_renderer_fixture" "$regular_renderer_fixture" >/tmp/devloop-renderer-usage.out 2>&1; then
+  fail "spec renderer accepted extra argument"
+fi
+renderer_output="$("$renderer_script" "$regular_renderer_fixture")"
+[[ -f "$renderer_output" ]] || fail "spec renderer did not create HTML"
+contains "$(cat "$renderer_output")" "--bg: #ffffff" "spec renderer light theme"
+not_contains "$(cat "$renderer_output")" '<summary><span class="chev">▶</span>This is inside a code fence</summary>' "spec renderer fenced heading"
+contains "$(cat "$renderer_output")" '&lt;/pre&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;' "spec renderer escaped fenced HTML"
+contains "$(cat "$renderer_output")" "The paragraph after the fenced heading still belongs to Problem." "spec renderer fenced content"
+contains "$(cat "$renderer_output")" $'<details class="section open" open>\n  <summary><span class="chev">▶</span>Acceptance criteria</summary>' "spec renderer acceptance open"
+not_contains "$(cat "$renderer_output")" "mermaid.esm.min.mjs" "spec renderer without Mermaid"
+expected_renderer_output="$(cd -P "$(dirname "$regular_renderer_fixture")" >/dev/null 2>&1 && pwd)/$(basename "${regular_renderer_fixture%.md}.html")"
+equals "$renderer_output" "$expected_renderer_output" "spec renderer output path"
+
+mermaid_renderer_fixture="$work/spec-render-mermaid-fixture.md"
+cat > "$mermaid_renderer_fixture" <<'SPEC'
+---
+status: draft
+type: feat
+created: 2026-06-16
+pr: null
+---
+
+# Mermaid Renderer Fixture
+Render Mermaid fences without requiring local dependencies.
+
+```mermaid
+flowchart LR
+  Modes["Gmail/Outlook | IMAP"] --> Result["Rendered HTML"]
+  Danger["</pre>"] --> Result
+```
+
+## Problem
+Mermaid should render in the browser when diagrams are present.
+
+## Acceptance criteria
+1. The generated HTML imports Mermaid exactly once.
+SPEC
+mermaid_renderer_output="$("$renderer_script" "$mermaid_renderer_fixture")"
+[[ -f "$mermaid_renderer_output" ]] || fail "Mermaid spec renderer did not create HTML"
+contains "$(cat "$mermaid_renderer_output")" '<pre class="mermaid">' "spec renderer Mermaid pre"
+contains "$(cat "$mermaid_renderer_output")" 'Modes[&quot;Gmail/Outlook | IMAP&quot;]' "spec renderer Mermaid pass-through"
+contains "$(cat "$mermaid_renderer_output")" 'Danger[&quot;&lt;/pre&gt;&quot;]' "spec renderer Mermaid escaping"
+equals "$(count_occurrences "$mermaid_renderer_output" "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")" "1" "spec renderer Mermaid import count"
+ok "spec renderer"
 
 equals "$(sed -n '1p' "$REPO_ROOT/site/public/VERSION")" "$version" "site VERSION matches root VERSION"
 ok "site version file"
@@ -725,7 +842,7 @@ if ! run_setup_output="$(
   maybe_enter_worktree() { :; }
   interactive_run_setup "spec.md"
 )"; then fail "run setup defaults failed"; fi
-equals "$run_setup_output" "spec.md 5 true true codex claude false 60" "run setup launches with defaults"
+equals "$run_setup_output" "spec.md 5 html true true codex claude false 60" "run setup launches with defaults"
 configured_agents_home="$work/agents-home"
 configured_agents_repo="$work/agents-repo"
 mkdir -p "$configured_agents_home" "$configured_agents_repo/.devloop/specs"
@@ -1464,12 +1581,12 @@ PATH="$install_path" command -v codex >/dev/null 2>&1 || fail "installer did not
 PATH="$install_path" command -v claude >/dev/null 2>&1 || fail "installer did not make claude available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
 [[ -f "$install_home/.agents/skills/devloop-spec/references/spec-template.md" ]] || fail "installer did not install Codex spec template reference"
-[[ ! -e "$install_home/.agents/skills/devloop-spec/scripts/render.sh" ]] || fail "installer installed removed Codex spec renderer"
+[[ -x "$install_home/.agents/skills/devloop-spec/scripts/render.sh" ]] || fail "installer did not install Codex spec renderer"
 [[ ! -e "$install_home/.agents/skills/devloop-spec/scripts/render.py" ]] || fail "installer installed removed Codex Python spec renderer"
 [[ -f "$install_home/.agents/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Codex review skill"
 [[ -f "$install_home/.agents/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Codex checksum"
 [[ -f "$install_home/.claude/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Claude spec skill"
-[[ ! -e "$install_home/.claude/skills/devloop-spec/scripts/render.sh" ]] || fail "installer installed removed Claude spec renderer"
+[[ -x "$install_home/.claude/skills/devloop-spec/scripts/render.sh" ]] || fail "installer did not install Claude spec renderer"
 [[ ! -e "$install_home/.claude/skills/devloop-spec/scripts/render.py" ]] || fail "installer installed removed Claude Python spec renderer"
 [[ -f "$install_home/.claude/skills/devloop-review/SKILL.md" ]] || fail "installer did not install Claude review skill"
 [[ -f "$install_home/.claude/skills/devloop-review/.devloop-checksum" ]] || fail "installer did not write Claude checksum"
@@ -2123,15 +2240,15 @@ contains "$accept_output" "accepted" "accept loop"
 accept_worktree="$(printf '%s\n' "$accept_output" | sed -nE 's/^[[:space:]]*Worktree[[:space:]]+//p')"
 [[ -f "$accept_worktree/result.txt" ]] || fail "accept loop did not write result"
 contains "$accept_output" "Open Next" "accept loop"
-if ! printf '%s\n' "$accept_output" | grep -F "Report" | grep -F "$accept_worktree/.devloop/reports/e2e-accept.md" >/dev/null; then
+if ! printf '%s\n' "$accept_output" | grep -F "Report" | grep -F "$accept_worktree/.devloop/reports/e2e-accept.html" >/dev/null; then
   fail "accept loop missing worktree-qualified report path"
 fi
-[[ -f "$accept_worktree/.devloop/reports/e2e-accept.md" ]] || fail "accept loop did not write markdown report"
-[[ ! -e "$accept_worktree/.devloop/reports/e2e-accept.html" ]] || fail "accept loop wrote html report"
+[[ -f "$accept_worktree/.devloop/reports/e2e-accept.html" ]] || fail "accept loop did not write html report"
+[[ ! -e "$accept_worktree/.devloop/reports/e2e-accept.md" ]] || fail "accept loop wrote markdown report by default"
 if ! printf '%s\n' "$accept_output" | grep -F "Track" | grep -F "$accept_worktree/.devloop/tracks/e2e-accept.md" >/dev/null; then
   fail "accept loop missing worktree-qualified track path"
 fi
-not_contains "$(cat "$accept_worktree/.devloop/tracks/e2e-accept.md")" "report-format" "accept loop track metadata"
+contains "$(cat "$accept_worktree/.devloop/tracks/e2e-accept.md")" "report-format: html" "accept loop track metadata"
 contains "$(cat "$accept_worktree/.devloop/logs/e2e-accept-r1-verify.log")" "verify pass" "verify hook"
 contains "$(run_repo_main "$loop_repo" status)" "e2e-accept" "status command"
 contains "$(run_repo_main "$loop_repo" clean --dry-run)" "skip:" "clean skips accepted"
@@ -2145,6 +2262,21 @@ contains "$(run_repo_main "$loop_repo" continue)" ".devloop/tracks/e2e-accept.md
 if grep -Eq '^gh pr (create|comment|list|view)' "$no_pr_gh_log" 2>/dev/null; then fail "local-only loop touched PR commands"; fi
 unset DEVLOOP_GH_LOG
 ok "e2e accept and verify"
+
+loop_repo="$work/loop-markdown"
+make_loop_repo "$loop_repo" "e2e-markdown" "E2E Markdown"
+if ! markdown_output="$(run_loop "$loop_repo" "e2e-markdown" accept 1 "--markdown" 2>&1)"; then
+  printf '%s\n' "$markdown_output" >&2
+  fail "markdown report loop failed"
+fi
+markdown_worktree="$(printf '%s\n' "$markdown_output" | sed -nE 's/^[[:space:]]*Worktree[[:space:]]+//p')"
+if ! printf '%s\n' "$markdown_output" | grep -F "Report" | grep -F "$markdown_worktree/.devloop/reports/e2e-markdown.md" >/dev/null; then
+  fail "markdown loop missing worktree-qualified report path"
+fi
+[[ -f "$markdown_worktree/.devloop/reports/e2e-markdown.md" ]] || fail "markdown loop did not write markdown report"
+[[ ! -e "$markdown_worktree/.devloop/reports/e2e-markdown.html" ]] || fail "markdown loop wrote html report"
+contains "$(cat "$markdown_worktree/.devloop/tracks/e2e-markdown.md")" "report-format: markdown" "markdown loop track metadata"
+ok "e2e markdown report"
 
 loop_repo="$work/loop-retry"
 make_loop_repo "$loop_repo" "e2e-retry" "E2E Retry"

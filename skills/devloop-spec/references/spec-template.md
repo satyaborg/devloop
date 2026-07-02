@@ -8,10 +8,10 @@ pr: null
 # <Concise title>
 <One-sentence subtitle that names the implementation slice and why it matters.>
 
-```
-  current             change                 result
-  -------             ------                 ------
-  Current behavior -> Implementation change -> Expected outcome
+```mermaid
+flowchart LR
+  Current["Current behavior"] --> Change["Implementation change"]
+  Change --> Result["Expected outcome"]
 ```
 
 ## Problem
