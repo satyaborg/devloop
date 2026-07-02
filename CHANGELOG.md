@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0](https://github.com/satyaborg/devloop/releases/tag/v0.9.0) - 2026-07-02
+
+### Added
+
+- install missing dependencies by default ([f9fa7b0](https://github.com/satyaborg/devloop/commit/f9fa7b00bd359e56ef67fd3c74828998808c3cce))
+- restore html reports and mermaid specs ([a8d6f5f](https://github.com/satyaborg/devloop/commit/a8d6f5f783bc06427ab4233407642ec4dce374d4))
+
 ## [0.8.0](https://github.com/satyaborg/devloop/releases/tag/v0.8.0) - 2026-06-30
 
 ### Fixed
