@@ -9,6 +9,8 @@ DEFAULT_TIMEOUT_MINUTES=30
 DEFAULT_SPEC_DIR=".devloop/specs"
 DEFAULT_CODER="codex"
 DEFAULT_REVIEWER="claude"
+DEFAULT_NIGHTSHIFT_COUNT=3
+DEFAULT_NIGHTSHIFT_MAX_PASSES=5
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -102,6 +104,12 @@ main() {
     return $?
   fi
 
+  if [ "${1:-}" = "nightshift" ]; then
+    shift
+    nightshift_command "$@"
+    return $?
+  fi
+
   if [ "${1:-}" = "menu" ]; then
     shift
     if [ "$#" -eq 0 ]; then maybe_prompt_update; fi
@@ -190,6 +198,8 @@ Common commands:
   devloop continue
   devloop menu
   devloop spec "add retry behavior to the chat sender"
+  devloop nightshift
+  devloop nightshift --install-schedule 02:00
   devloop .devloop/specs/change.md
   devloop --tui .devloop/specs/change.md
   devloop --plain .devloop/specs/change.md
@@ -229,6 +239,8 @@ welcome_tui() {
   printf '  %-42s %s\n' "devloop continue" "resume a tracked run"
   printf '  %-42s %s\n' "devloop menu" "open the guided UI"
   printf '  %-42s %s\n' 'devloop spec "add retry behavior"' "launch a spec agent"
+  printf '  %-42s %s\n' "devloop nightshift" "survey and run overnight specs"
+  printf '  %-42s %s\n' "devloop nightshift --install-schedule 02:00" "install the overnight LaunchAgent"
   printf '  %-42s %s\n' "devloop .devloop/specs/change.md" "run a spec"
   printf '  %-42s %s\n' "devloop --create-pr .devloop/specs/change.md" "open and maintain a draft PR during the loop"
   printf '\n'
@@ -547,8 +559,29 @@ write_config_value() {
   local value="$3"
   local file tmp
   case "$key" in
-    spec_dir|timeout_minutes|coder|reviewer) ;;
+    spec_dir|timeout_minutes|coder|reviewer|nightshift_repos|nightshift_count|nightshift_coder|nightshift_reviewer|nightshift_survey_agent|nightshift_max_passes|nightshift_schedule) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
+  esac
+  case "$key" in
+    coder|reviewer|nightshift_coder|nightshift_reviewer|nightshift_survey_agent)
+      value="$(normalize_agent "$value")"
+      if [ -z "$value" ]; then
+        printf '%s must be Codex or Claude Code\n' "$key" >&2
+        return 2
+      fi
+      ;;
+    nightshift_count)
+      value="$(normalize_nightshift_count "$value")" || {
+        printf '%s\n' "nightshift_count must be an integer between 1 and 5" >&2
+        return 2
+      }
+      ;;
+    nightshift_max_passes)
+      value="$(normalize_nightshift_max_passes "$value")" || {
+        printf '%s\n' "nightshift_max_passes must be an integer between 1 and 10" >&2
+        return 2
+      }
+      ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
   mkdir -p "$(dirname "$file")" || return 1
@@ -565,7 +598,7 @@ remove_config_value() {
   local key="$2"
   local file tmp
   case "$key" in
-    spec_dir|timeout_minutes|coder|reviewer) ;;
+    spec_dir|timeout_minutes|coder|reviewer|nightshift_repos|nightshift_count|nightshift_coder|nightshift_reviewer|nightshift_survey_agent|nightshift_max_passes|nightshift_schedule) ;;
     *) printf 'unknown config key: %s\n' "$key" >&2; return 2 ;;
   esac
   file="$(devloop_config_file_for_scope "$scope")" || return $?
@@ -856,6 +889,66 @@ devloop_coder() {
 
 devloop_reviewer() {
   devloop_agent_setting reviewer "$DEFAULT_REVIEWER"
+}
+
+normalize_nightshift_count() {
+  local value="$1"
+  value="$(trim_string "$value")"
+  if ! printf '%s\n' "$value" | grep -Eq '^[0-9]+$'; then return 1; fi
+  value=$((10#$value))
+  if [ "$value" -lt 1 ]; then value=1; fi
+  if [ "$value" -gt 5 ]; then value=5; fi
+  printf '%s\n' "$value"
+}
+
+normalize_nightshift_max_passes() {
+  local value="$1"
+  value="$(trim_string "$value")"
+  if ! printf '%s\n' "$value" | grep -Eq '^[0-9]+$'; then return 1; fi
+  value=$((10#$value))
+  if [ "$value" -lt 1 ]; then value=1; fi
+  if [ "$value" -gt 10 ]; then value=10; fi
+  printf '%s\n' "$value"
+}
+
+devloop_nightshift_repos() {
+  devloop_config_value nightshift_repos
+}
+
+devloop_nightshift_count() {
+  local value normalized
+  value="$(devloop_config_value nightshift_count 2>/dev/null || true)"
+  if [ -n "$value" ] && normalized="$(normalize_nightshift_count "$value")"; then
+    printf '%s\n' "$normalized"
+    return
+  fi
+  printf '%s\n' "$DEFAULT_NIGHTSHIFT_COUNT"
+}
+
+devloop_nightshift_coder() {
+  devloop_agent_setting nightshift_coder "$(devloop_coder)"
+}
+
+devloop_nightshift_reviewer() {
+  devloop_agent_setting nightshift_reviewer "$(devloop_reviewer)"
+}
+
+devloop_nightshift_survey_agent() {
+  devloop_agent_setting nightshift_survey_agent "$(devloop_nightshift_reviewer)"
+}
+
+devloop_nightshift_max_passes() {
+  local value normalized
+  value="$(devloop_config_value nightshift_max_passes 2>/dev/null || true)"
+  if [ -n "$value" ] && normalized="$(normalize_nightshift_max_passes "$value")"; then
+    printf '%s\n' "$normalized"
+    return
+  fi
+  printf '%s\n' "$DEFAULT_NIGHTSHIFT_MAX_PASSES"
+}
+
+devloop_nightshift_schedule() {
+  devloop_config_value nightshift_schedule
 }
 
 write_config_coder() {
@@ -1916,6 +2009,592 @@ print_track_status() {
     next="$(absolute_existing_file "$track" 2>/dev/null || printf '%s' "$track")"
     printf '  next: devloop continue %s\n' "$next"
   fi
+}
+
+nightshift_usage() {
+  cat <<'EOF'
+usage: devloop nightshift [--repo <path>] [--count N] [--coder codex|claude] [--reviewer codex|claude] [--survey-agent codex|claude] [--max-passes N] [--timeout-minutes N] [--dry-run]
+       devloop nightshift --status [--repo <path>]
+       devloop nightshift --install-schedule HH:MM [--repo <path>]
+       devloop nightshift --uninstall-schedule
+EOF
+}
+
+nightshift_force_headless() {
+  USE_TUI=false
+  ENTER_WORKTREE=false
+  DEVLOOP_UPDATE_PROMPTED=true
+}
+
+nightshift_date() {
+  if [ -n "${DEVLOOP_NIGHTSHIFT_DATE:-}" ]; then
+    printf '%s\n' "$DEVLOOP_NIGHTSHIFT_DATE"
+  else
+    date +%F
+  fi
+}
+
+nightshift_survey_prompt() {
+  local count="$1"
+  local today="$2"
+  local specs_dir="$3"
+  local survey_file="$4"
+  local skill="$5"
+  cat <<EOF
+Skill: use the installed devloop-spec skill.
+
+You are the devloop nightshift survey agent. Survey this repository and select
+the highest-leverage independent improvements that can each fit in one
+devloop worktree-sized PR.
+
+Requested spec count: $count
+Current date: $today
+Write specs only to: $specs_dir
+Write survey rationale to: $survey_file
+
+Constraints:
+- write specs only, do not implement
+- write exactly one devloop-ready markdown spec per selected improvement
+- use filenames like 01-short-slug.md, 02-short-slug.md, sorted by priority
+- include concrete acceptance criteria in every spec
+- do not edit files outside the nightshift write directory
+
+Bundled skill path, for fallback only: $skill
+EOF
+}
+
+nightshift_resolve_repos() {
+  local raw_items=("$@")
+  local configured item root seen="" found=false
+  if [ "${#raw_items[@]}" -eq 0 ]; then
+    configured="$(devloop_nightshift_repos 2>/dev/null || true)"
+    if [ -n "$configured" ]; then
+      configured="${configured//,/ }"
+      # shellcheck disable=SC2206
+      raw_items=($configured)
+    fi
+  fi
+  if [ "${#raw_items[@]}" -eq 0 ]; then
+    printf '%s\n' "error: nightshift_repos or --repo is required" >&2
+    return 2
+  fi
+  for item in "${raw_items[@]}"; do
+    item="$(trim_string "$item")"
+    [ -n "$item" ] || continue
+    if ! root="$(git -C "$item" rev-parse --show-toplevel 2>/dev/null)"; then
+      printf 'error: nightshift repo is not resolvable: %s\n' "$item" >&2
+      return 2
+    fi
+    root="$(cd "$root" >/dev/null 2>&1 && pwd -P)" || {
+      printf 'error: nightshift repo is not resolvable: %s\n' "$item" >&2
+      return 2
+    }
+    case "$seen" in
+      *"|$root|"*) continue ;;
+    esac
+    seen="$seen|$root|"
+    found=true
+    printf '%s\n' "$root"
+  done
+  if [ "$found" = false ]; then
+    printf '%s\n' "error: nightshift_repos or --repo is required" >&2
+    return 2
+  fi
+}
+
+nightshift_run_dir() {
+  local repo="$1"
+  local today="$2"
+  printf '%s/.devloop/nightshift/%s\n' "${repo%/}" "$today"
+}
+
+nightshift_run_survey() {
+  local repo="$1"
+  local run_dir="$2"
+  local today="$3"
+  local count="$4"
+  local agent="$5"
+  local specs_dir survey_file skill prompt log
+  specs_dir="$run_dir/specs"
+  survey_file="$run_dir/survey.md"
+  skill="$ROOT_DIR/skills/devloop-spec/SKILL.md"
+  prompt="$(nightshift_survey_prompt "$count" "$today" "$specs_dir" "$survey_file" "$skill")"
+  log="$run_dir/survey.log"
+  case "$agent" in
+    codex)
+      run_with_prompt "$repo" "$log" "nightshift-survey" "$prompt" codex exec "${CODEX_MODEL_ARGS[@]}" "${CODEX_REASONING_ARGS[@]}" --dangerously-bypass-approvals-and-sandbox -C "$repo" -
+      ;;
+    claude)
+      run_with_prompt "$repo" "$log" "nightshift-survey" "$prompt" claude -p "${CLAUDE_MODEL_ARGS[@]}" "${CLAUDE_EFFORT_ARGS[@]}" --dangerously-skip-permissions --add-dir "$repo" --add-dir "$specs_dir"
+      ;;
+  esac
+  [ "$RUN_CODE" -eq 0 ]
+}
+
+nightshift_result_field() {
+  local label="$1"
+  local file="$2"
+  awk -v label="$label" '
+    $1 == label {
+      $1 = ""
+      sub(/^[[:space:]]+/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+nightshift_result_status() {
+  local file="$1"
+  local code="$2"
+  local status
+  status="$(sed -nE 's/^devloop[[:space:]]+([^[:space:]]+).*/\1/p' "$file" | tail -n 1)"
+  if [ -n "$status" ]; then
+    printf '%s\n' "$status"
+  elif [ "$code" -eq 124 ]; then
+    printf '%s\n' "timeout"
+  else
+    printf '%s\n' "run-error"
+  fi
+}
+
+nightshift_markdown_cell() {
+  printf '%s' "${1:-}" | sed 's/|/\\|/g'
+}
+
+nightshift_append_digest_row() {
+  local file="$1"
+  local title="$2"
+  local status="$3"
+  local branch="$4"
+  local pr="$5"
+  local report="$6"
+  printf '| %s | %s | %s | %s | %s |\n' \
+    "$(nightshift_markdown_cell "$title")" \
+    "$(nightshift_markdown_cell "$status")" \
+    "$(nightshift_markdown_cell "$branch")" \
+    "$(nightshift_markdown_cell "$pr")" \
+    "$(nightshift_markdown_cell "$report")" >> "$file"
+}
+
+nightshift_run_spec() {
+  local repo="$1"
+  local run_dir="$2"
+  local spec="$3"
+  local title="$4"
+  local coder="$5"
+  local reviewer="$6"
+  local max_passes="$7"
+  local timeout_minutes="$8"
+  local runner output code status branch pr report
+  runner="${DEVLOOP_RUN_CMD:-$ROOT_DIR/devloop}"
+  output="$run_dir/logs/$(basename "${spec%.md}").out"
+  mkdir -p "$(dirname "$output")"
+  (
+    cd "$repo" >/dev/null 2>&1 &&
+      "$runner" --plain --no-shell --create-pr --coder "$coder" --reviewer "$reviewer" --timeout-minutes "$timeout_minutes" "$spec" "$max_passes"
+  ) > "$output" 2>&1
+  code=$?
+  status="$(nightshift_result_status "$output" "$code")"
+  branch="$(nightshift_result_field Branch "$output")"
+  pr="$(nightshift_result_field PR "$output")"
+  report="$(nightshift_result_field Report "$output")"
+  [ -n "$branch" ] || branch="unknown"
+  [ -n "$pr" ] || pr="no PR"
+  [ -n "$report" ] || report="no report"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$title" "$status" "$branch" "$pr" "$report"
+}
+
+nightshift_write_digest() {
+  local digest="$1"
+  local today="$2"
+  local rows="$3"
+  local survey="$4"
+  {
+    printf '# Devloop Nightshift Digest - %s\n\n' "$today"
+    printf '| Spec | Status | Branch | PR | Report |\n'
+    printf '| --- | --- | --- | --- | --- |\n'
+    cat "$rows"
+    printf '\n## Survey rationale\n\n'
+    if [ -s "$survey" ]; then
+      cat "$survey"
+      printf '\n'
+    else
+      printf '%s\n' "No survey rationale was written."
+    fi
+  } > "$digest"
+}
+
+nightshift_update_latest() {
+  local repo="$1"
+  local today="$2"
+  local link="$repo/.devloop/nightshift/latest"
+  rm -rf "$link"
+  ln -s "$today" "$link"
+}
+
+nightshift_valid_spec_title() {
+  local spec="$1"
+  local spec_text criteria_file criteria_count title
+  spec_text="$(cat "$spec")"
+  criteria_file="$(mktemp "${TMPDIR:-/tmp}/devloop-nightshift-criteria.XXXXXX")"
+  parse_criteria "$spec" > "$criteria_file"
+  criteria_count="$(line_count "$criteria_file")"
+  if ! lint_spec_file "$spec" "$spec_text" "$criteria_count" true; then
+    rm -f "$criteria_file"
+    return 1
+  fi
+  rm -f "$criteria_file"
+  title="$(spec_title "$spec")"
+  [ -n "$title" ] || return 1
+  printf '%s\n' "$title"
+}
+
+nightshift_run_repo() {
+  local repo="$1"
+  local count="$2"
+  local coder="$3"
+  local reviewer="$4"
+  local survey_agent="$5"
+  local max_passes="$6"
+  local timeout_minutes="$7"
+  local dry_run="$8"
+  local today run_dir specs_dir rows digest survey spec title valid_count survey_ok
+  today="$(nightshift_date)"
+  run_dir="$(nightshift_run_dir "$repo" "$today")"
+  specs_dir="$run_dir/specs"
+  rows="$(mktemp "${TMPDIR:-/tmp}/devloop-nightshift-rows.XXXXXX")"
+  mkdir -p "$specs_dir" "$run_dir/logs"
+  : > "$rows"
+  survey_ok=true
+  if ! nightshift_run_survey "$repo" "$run_dir" "$today" "$count" "$survey_agent"; then
+    survey_ok=false
+    if [ ! -s "$run_dir/survey.md" ]; then printf '%s\n' "${RUN_OUTPUT:-survey agent failed}" > "$run_dir/survey.md"; fi
+    nightshift_append_digest_row "$rows" "Survey" "survey-error" "no branch" "no PR" "no report"
+  fi
+  valid_count=0
+  if [ "$survey_ok" = true ]; then
+    while IFS= read -r spec; do
+      [ -n "$spec" ] || continue
+      if title="$(nightshift_valid_spec_title "$spec")"; then
+        valid_count=$((valid_count + 1))
+        if [ "$dry_run" = true ]; then
+          nightshift_append_digest_row "$rows" "$title" "dry-run" "no branch" "no PR" "not run"
+        else
+          IFS=$'\t' read -r title status branch pr report <<EOF
+$(nightshift_run_spec "$repo" "$run_dir" "$spec" "$title" "$coder" "$reviewer" "$max_passes" "$timeout_minutes")
+EOF
+          nightshift_append_digest_row "$rows" "$title" "$status" "$branch" "$pr" "$report"
+        fi
+      else
+        title="$(basename "$spec")"
+        nightshift_append_digest_row "$rows" "$title" "spec-error" "no branch" "no PR" "no report"
+      fi
+    done <<EOF
+$(find "$specs_dir" -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+EOF
+  fi
+  if [ "$valid_count" -eq 0 ] && ! grep -q '| Survey | survey-error |' "$rows"; then
+    nightshift_append_digest_row "$rows" "Survey" "survey-failure" "no branch" "no PR" "no report"
+  fi
+  digest="$run_dir/digest.md"
+  survey="$run_dir/survey.md"
+  nightshift_write_digest "$digest" "$today" "$rows" "$survey"
+  nightshift_update_latest "$repo" "$today"
+  rm -f "$rows"
+  printf '%s\n' "$digest"
+}
+
+nightshift_latest_digest() {
+  local repo="$1"
+  local base="$repo/.devloop/nightshift"
+  local latest="$base/latest"
+  local target digest
+  if [ -L "$latest" ]; then
+    target="$(readlink "$latest")"
+    case "$target" in
+      /*) digest="$target/digest.md" ;;
+      *) digest="$base/$target/digest.md" ;;
+    esac
+  else
+    digest="$latest/digest.md"
+  fi
+  if [ -f "$digest" ]; then
+    printf '%s/%s\n' "$(cd "$(dirname "$digest")" >/dev/null 2>&1 && pwd -P)" "$(basename "$digest")"
+    return 0
+  fi
+  return 1
+}
+
+nightshift_status_command() {
+  local repo_args=("$@")
+  local repos=()
+  local resolved repo digest found=false root
+  if [ "${#repo_args[@]}" -gt 0 ] || devloop_nightshift_repos >/dev/null 2>&1; then
+    resolved="$(nightshift_resolve_repos ${repo_args[@]+"${repo_args[@]}"})" || return $?
+    while IFS= read -r repo; do
+      [ -n "$repo" ] && repos+=("$repo")
+    done <<EOF
+$resolved
+EOF
+  else
+    if root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+      repos+=("$(cd "$root" >/dev/null 2>&1 && pwd -P)")
+    else
+      repos+=("$(pwd -P)")
+    fi
+  fi
+  for repo in "${repos[@]}"; do
+    if digest="$(nightshift_latest_digest "$repo")"; then
+      printf '%s\n' "$digest"
+      found=true
+    fi
+  done
+  if [ "$found" = false ]; then
+    printf '%s\n' "no nightshift digest found" >&2
+    return 1
+  fi
+}
+
+nightshift_parse_time() {
+  local time="$1"
+  local hour minute
+  if ! [[ "$time" =~ ^([0-9]{2}):([0-9]{2})$ ]]; then return 1; fi
+  hour="${BASH_REMATCH[1]}"
+  minute="${BASH_REMATCH[2]}"
+  hour=$((10#$hour))
+  minute=$((10#$minute))
+  if [ "$hour" -gt 23 ] || [ "$minute" -gt 59 ]; then return 1; fi
+  printf '%s %s\n' "$hour" "$minute"
+}
+
+nightshift_plist_path() {
+  local dir="${DEVLOOP_LAUNCH_AGENTS_DIR:-${HOME%/}/Library/LaunchAgents}"
+  printf '%s/sh.devloop.nightshift.plist\n' "$dir"
+}
+
+plist_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+nightshift_write_plist() {
+  local plist="$1"
+  local time="$2"
+  shift 2
+  local repos=("$@")
+  local parsed hour minute devloop_path path_value log_dir repo
+  parsed="$(nightshift_parse_time "$time")" || return 1
+  read -r hour minute <<EOF
+$parsed
+EOF
+  devloop_path="$ROOT_DIR/devloop"
+  path_value="${PATH:-/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+  if [ -n "${HOME:-}" ]; then
+    log_dir="${HOME%/}/Library/Logs"
+  else
+    log_dir="/tmp"
+  fi
+  mkdir -p "$(dirname "$plist")" "$log_dir"
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+    printf '%s\n' '<plist version="1.0">'
+    printf '%s\n' '<dict>'
+    printf '%s\n' '  <key>Label</key>'
+    printf '%s\n' '  <string>sh.devloop.nightshift</string>'
+    printf '%s\n' '  <key>ProgramArguments</key>'
+    printf '%s\n' '  <array>'
+    printf '    <string>%s</string>\n' "$(plist_escape "$devloop_path")"
+    printf '%s\n' '    <string>nightshift</string>'
+    for repo in "${repos[@]}"; do
+      printf '%s\n' '    <string>--repo</string>'
+      printf '    <string>%s</string>\n' "$(plist_escape "$repo")"
+    done
+    printf '%s\n' '  </array>'
+    printf '%s\n' '  <key>StartCalendarInterval</key>'
+    printf '%s\n' '  <dict>'
+    printf '%s\n' '    <key>Hour</key>'
+    printf '    <integer>%s</integer>\n' "$hour"
+    printf '%s\n' '    <key>Minute</key>'
+    printf '    <integer>%s</integer>\n' "$minute"
+    printf '%s\n' '  </dict>'
+    printf '%s\n' '  <key>EnvironmentVariables</key>'
+    printf '%s\n' '  <dict>'
+    printf '%s\n' '    <key>PATH</key>'
+    printf '    <string>%s</string>\n' "$(plist_escape "$path_value")"
+    printf '%s\n' '  </dict>'
+    printf '%s\n' '  <key>StandardOutPath</key>'
+    printf '  <string>%s</string>\n' "$(plist_escape "$log_dir/devloop-nightshift.out.log")"
+    printf '%s\n' '  <key>StandardErrorPath</key>'
+    printf '  <string>%s</string>\n' "$(plist_escape "$log_dir/devloop-nightshift.err.log")"
+    printf '%s\n' '</dict>'
+    printf '%s\n' '</plist>'
+  } > "$plist"
+}
+
+nightshift_load_schedule() {
+  local plist="$1"
+  local launchctl="${DEVLOOP_LAUNCHCTL:-launchctl}"
+  local domain
+  domain="gui/$(id -u)"
+  "$launchctl" bootout "$domain" "$plist" >/dev/null 2>&1 || true
+  if "$launchctl" bootstrap "$domain" "$plist"; then return 0; fi
+  "$launchctl" load -w "$plist"
+}
+
+nightshift_unload_schedule() {
+  local plist="$1"
+  local launchctl="${DEVLOOP_LAUNCHCTL:-launchctl}"
+  local domain
+  domain="gui/$(id -u)"
+  "$launchctl" bootout "$domain" "$plist" >/dev/null 2>&1 || "$launchctl" unload "$plist" >/dev/null 2>&1 || true
+}
+
+nightshift_install_schedule() {
+  local time="$1"
+  shift
+  local parsed resolved repos=() repo plist
+  parsed="$(nightshift_parse_time "$time")" || {
+    printf 'invalid nightshift schedule time: %s\n' "$time" >&2
+    return 2
+  }
+  resolved="$(nightshift_resolve_repos "$@")" || return $?
+  while IFS= read -r repo; do
+    [ -n "$repo" ] && repos+=("$repo")
+  done <<EOF
+$resolved
+EOF
+  plist="$(nightshift_plist_path)"
+  nightshift_write_plist "$plist" "$time" "${repos[@]}" || return $?
+  nightshift_load_schedule "$plist" || return $?
+  write_config_value global nightshift_schedule "$time" || return $?
+  printf 'wrote plist: %s\n' "$plist"
+  printf 'wake command: sudo pmset repeat wake MTWRFSU %s\n' "$time"
+}
+
+nightshift_uninstall_schedule() {
+  local plist
+  plist="$(nightshift_plist_path)"
+  if [ -e "$plist" ] || [ -L "$plist" ]; then
+    nightshift_unload_schedule "$plist"
+    rm -f "$plist"
+    printf 'removed nightshift schedule: %s\n' "$plist"
+  else
+    printf 'no nightshift schedule installed at %s\n' "$plist"
+  fi
+  remove_config_value global nightshift_schedule >/dev/null 2>&1 || true
+  remove_config_value local nightshift_schedule >/dev/null 2>&1 || true
+}
+
+nightshift_command() {
+  local repo_args=()
+  local count coder reviewer survey_agent max_passes timeout_minutes
+  local dry_run=false
+  local status=false
+  local install_schedule=""
+  local uninstall_schedule=false
+  local arg value normalized resolved repos=() repo code=0
+  nightshift_force_headless
+  count="$(devloop_nightshift_count)"
+  coder="$(devloop_nightshift_coder)"
+  reviewer="$(devloop_nightshift_reviewer)"
+  survey_agent="$(devloop_nightshift_survey_agent)"
+  max_passes="$(devloop_nightshift_max_passes)"
+  timeout_minutes="$(devloop_timeout_minutes)"
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --repo)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--repo requires a value" >&2; nightshift_usage >&2; return 2; fi
+        repo_args+=("$1")
+        shift
+        ;;
+      --count)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--count requires a value" >&2; nightshift_usage >&2; return 2; fi
+        count="$(normalize_nightshift_count "$1")" || {
+          printf '%s\n' "nightshift count must be an integer between 1 and 5" >&2
+          return 2
+        }
+        shift
+        ;;
+      --coder)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--coder requires a value" >&2; nightshift_usage >&2; return 2; fi
+        normalized="$(normalize_agent "$1")"
+        [ -n "$normalized" ] || { printf '%s\n' "coder must be Codex or Claude Code" >&2; return 2; }
+        coder="$normalized"
+        shift
+        ;;
+      --reviewer)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--reviewer requires a value" >&2; nightshift_usage >&2; return 2; fi
+        normalized="$(normalize_agent "$1")"
+        [ -n "$normalized" ] || { printf '%s\n' "reviewer must be Codex or Claude Code" >&2; return 2; }
+        reviewer="$normalized"
+        shift
+        ;;
+      --survey-agent)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--survey-agent requires a value" >&2; nightshift_usage >&2; return 2; fi
+        normalized="$(normalize_agent "$1")"
+        [ -n "$normalized" ] || { printf '%s\n' "survey agent must be Codex or Claude Code" >&2; return 2; }
+        survey_agent="$normalized"
+        shift
+        ;;
+      --max-passes)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--max-passes requires a value" >&2; nightshift_usage >&2; return 2; fi
+        max_passes="$(normalize_nightshift_max_passes "$1")" || {
+          printf '%s\n' "nightshift max passes must be an integer between 1 and 10" >&2
+          return 2
+        }
+        shift
+        ;;
+      --timeout-minutes)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--timeout-minutes requires a value" >&2; nightshift_usage >&2; return 2; fi
+        timeout_minutes="$(normalize_timeout_minutes "$1")" || {
+          printf '%s\n' "timeout must be an integer between 1 and 1440 minutes" >&2
+          return 2
+        }
+        shift
+        ;;
+      --dry-run) dry_run=true ;;
+      --status) status=true ;;
+      --install-schedule)
+        if [ "$#" -eq 0 ]; then printf '%s\n' "--install-schedule requires HH:MM" >&2; nightshift_usage >&2; return 2; fi
+        install_schedule="$1"
+        shift
+        ;;
+      --uninstall-schedule) uninstall_schedule=true ;;
+      -h|--help) nightshift_usage; return 0 ;;
+      *)
+        printf 'unknown option: %s\n' "$arg" >&2
+        nightshift_usage >&2
+        return 2
+        ;;
+    esac
+  done
+  if [ "$uninstall_schedule" = true ]; then
+    nightshift_uninstall_schedule
+    return $?
+  fi
+  if [ -n "$install_schedule" ]; then
+    nightshift_install_schedule "$install_schedule" ${repo_args[@]+"${repo_args[@]}"}
+    return $?
+  fi
+  if [ "$status" = true ]; then
+    nightshift_status_command ${repo_args[@]+"${repo_args[@]}"}
+    return $?
+  fi
+  resolved="$(nightshift_resolve_repos ${repo_args[@]+"${repo_args[@]}"})" || return $?
+  while IFS= read -r repo; do
+    [ -n "$repo" ] && repos+=("$repo")
+  done <<EOF
+$resolved
+EOF
+  for repo in "${repos[@]}"; do
+    if ! nightshift_run_repo "$repo" "$count" "$coder" "$reviewer" "$survey_agent" "$max_passes" "$timeout_minutes" "$dry_run"; then
+      code=1
+    fi
+  done
+  return "$code"
 }
 
 clean_candidate_status() {
