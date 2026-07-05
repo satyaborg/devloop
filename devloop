@@ -2259,7 +2259,7 @@ nightshift_run_repo() {
   local max_passes="$6"
   local timeout_minutes="$7"
   local dry_run="$8"
-  local today run_dir specs_dir rows digest survey spec title valid_count survey_ok
+  local today run_dir specs_dir rows digest survey spec title status branch pr report valid_count survey_ok
   today="$(nightshift_date)"
   run_dir="$(nightshift_run_dir "$repo" "$today")"
   specs_dir="$run_dir/specs"

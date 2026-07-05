@@ -813,6 +813,7 @@ git -C "$night_repo" add README.md
 git -C "$night_repo" -c user.email=devloop-test@example.com -c user.name="devloop test" commit -q -m init
 night_runner="$work/night-runner"
 night_run_log="$work/night-run.log"
+night_leak_capture="$work/night-leak.txt"
 cat > "$night_runner" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -832,6 +833,14 @@ case "$base" in
   02-second.md)
     status="stalled"
     code=1
+    ;;
+  04-timeout.md)
+    printf 'end %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+    exit 124
+    ;;
+  05-crash.md)
+    printf 'end %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+    exit 2
     ;;
 esac
 printf '\n'
@@ -889,14 +898,36 @@ type: feat
 ## Acceptance criteria
 1. Second thing
 SPEC
+    cat > "$specs_dir/04-timeout.md" <<'SPEC'
+---
+type: feat
+---
+# Timeout
+
+## Acceptance criteria
+1. Timeout thing
+SPEC
+    cat > "$specs_dir/05-crash.md" <<'SPEC'
+---
+type: feat
+---
+# Crash
+
+## Acceptance criteria
+1. Crash thing
+SPEC
     printf '%s\n' "Survey rationale: first, second, third." > "$run_dir/survey.md"
     RUN_CODE=0
     RUN_OUTPUT="survey complete"
     RUN_STDOUT=""
     RUN_STDERR=""
   }
+  branch="global-branch"
+  pr="global-pr"
+  report="global-report"
   DEVLOOP_NIGHTSHIFT_DATE=2026-07-05 DEVLOOP_RUN_CMD="$night_runner" DEVLOOP_RUN_LOG="$night_run_log" \
-    nightshift_command --repo "$night_repo" --count 3 --coder claude --reviewer codex --survey-agent claude --max-passes 4 --timeout-minutes 12 >/tmp/devloop-nightshift.out
+    nightshift_command --repo "$night_repo" --count 5 --coder claude --reviewer codex --survey-agent claude --max-passes 4 --timeout-minutes 12 >/tmp/devloop-nightshift.out
+  printf '%s|%s|%s\n' "$branch" "$pr" "$report" > "$night_leak_capture"
 ); then
   fail "nightshift orchestration failed"
 fi
@@ -904,13 +935,16 @@ night_digest="$night_repo_real/.devloop/nightshift/2026-07-05/digest.md"
 [[ -f "$night_digest" ]] || fail "nightshift digest was not created"
 contains "$(cat "$night_prompt_capture")" "write specs only, do not implement" "nightshift survey prompt capture"
 contains "$(cat "$night_survey_args_capture")" "$night_repo_real|nightshift-survey|claude -p" "nightshift survey uses run_with_prompt"
-equals "$(grep -c '^args ' "$night_run_log" | tr -d ' ')" "3" "nightshift runner invocation count"
+equals "$(grep -c '^args ' "$night_run_log" | tr -d ' ')" "5" "nightshift runner invocation count"
 contains "$(cat "$night_run_log")" "--plain --no-shell --create-pr --coder claude --reviewer codex --timeout-minutes 12" "nightshift runner headless flags"
 contains "$(cat "$night_run_log")" "$night_repo_real/.devloop/nightshift/2026-07-05/specs/01-first.md 4" "nightshift runner max passes"
-equals "$(grep -E '^(start|end) ' "$night_run_log")" $'start 01-first.md\nend 01-first.md\nstart 02-second.md\nend 02-second.md\nstart 03-third.md\nend 03-third.md' "nightshift runner sequential order"
+equals "$(grep -E '^(start|end) ' "$night_run_log")" $'start 01-first.md\nend 01-first.md\nstart 02-second.md\nend 02-second.md\nstart 03-third.md\nend 03-third.md\nstart 04-timeout.md\nend 04-timeout.md\nstart 05-crash.md\nend 05-crash.md' "nightshift runner sequential order"
+equals "$(cat "$night_leak_capture")" "global-branch|global-pr|global-report" "nightshift run repo local scoping"
 contains "$(cat "$night_digest")" "| First | accepted | feat/01-first | https://example.test/01-first | .devloop/reports/01-first.html |" "nightshift digest accepted row"
 contains "$(cat "$night_digest")" "| Second | stalled | feat/02-second | no PR | .devloop/reports/02-second.html |" "nightshift digest failed row"
 contains "$(cat "$night_digest")" "| Third | accepted | feat/03-third | https://example.test/03-third | .devloop/reports/03-third.html |" "nightshift digest subsequent row"
+contains "$(cat "$night_digest")" "| Timeout | timeout | unknown | no PR | no report |" "nightshift digest timeout fallback row"
+contains "$(cat "$night_digest")" "| Crash | run-error | unknown | no PR | no report |" "nightshift digest run-error fallback row"
 contains "$(cat "$night_digest")" "Survey rationale: first, second, third." "nightshift digest survey rationale"
 [[ -L "$night_repo/.devloop/nightshift/latest" ]] || fail "nightshift latest was not a symlink"
 equals "$(readlink "$night_repo/.devloop/nightshift/latest")" "2026-07-05" "nightshift latest target"
