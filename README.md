@@ -38,6 +38,7 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 |---|---|
 | `devloop` | Interactive menu: create, run, or continue a spec |
 | `devloop spec "..."` | Have an agent interview you and write a spec |
+| `devloop nightshift` | Survey configured repos, run selected specs headlessly, and write a morning digest |
 | `devloop <spec.md>` | Run a spec |
 | `devloop --create-pr <spec.md>` | Run a spec and maintain a draft PR (requires `gh`) |
 | `devloop update` | Install the latest released Devloop |
