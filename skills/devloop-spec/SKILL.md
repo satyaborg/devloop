@@ -38,6 +38,18 @@ Do not convert a conversation, artifact bundle, or notes directly into a spec ju
 
 When interactive, ask one question at a time until the gate passes. When the environment cannot ask questions, write a marked draft only if the caller explicitly needs best-effort non-interactive output; otherwise stop with the questions that must be answered.
 
+## Planning Discipline
+
+During spec discovery and interview, do not implement the requested product or code change.
+
+- Discovery before interview: Discover repo facts before user questions. Before asking, inspect repository facts, available commands, relevant paths, existing tests, and local conventions whenever a repo is available.
+- Facts vs decisions: Facts are discovered from the repo; decisions are asked of the user. Do not ask the user to restate facts that are cheap to verify locally.
+- User decisions: Ask one user decision at a time and include your recommended answer.
+- Dependency order: Walk dependency decisions in order: parent decisions before downstream details.
+- Settled context: If supplied context is already settled, synthesize it directly without re-interviewing.
+- Follow-up threshold: Only ask follow-up questions that would change scope, behavior, acceptance criteria, test seams, or implementation slice.
+- Test seam checkpoint: Before final drafting, identify the highest stable existing test seam; prefer one seam when practical and include the chosen seam in the Test plan. If no stable existing seam covers the change, say that explicitly and choose the smallest appropriate new or updated test seam.
+
 ## Source Resolution
 
 Resolve the source material before drafting:
