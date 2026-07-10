@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-CODEX_MODEL_ARGS=(-m gpt-5.5)
+CODEX_MODEL_ARGS=(-m gpt-5.6-sol)
 CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
 CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
-CLAUDE_EFFORT_ARGS=(--effort max)
+CLAUDE_EFFORT_ARGS=(--effort xhigh)
 DEFAULT_TIMEOUT_MINUTES=30
 DEFAULT_SPEC_DIR=".devloop/specs"
 DEFAULT_CODER="codex"

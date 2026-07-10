@@ -57,8 +57,10 @@ ok "bash syntax"
 DEVLOOP_LIB=1
 source "$REPO_ROOT/devloop"
 unset DEVLOOP_LIB
-equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.5" "codex model args"
+equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.6-sol" "codex model args"
+equals "${CODEX_REASONING_ARGS[*]}" '-c model_reasoning_effort="xhigh"' "codex reasoning args"
 equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
+equals "${CLAUDE_EFFORT_ARGS[*]}" "--effort xhigh" "claude effort args"
 
 version="$(sed -n '1p' "$REPO_ROOT/VERSION")"
 equals "$("$REPO_ROOT/devloop" --version)" "devloop $version" "version output"
