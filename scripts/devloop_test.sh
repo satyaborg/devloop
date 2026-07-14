@@ -150,7 +150,7 @@ not_contains "$spec_skill_text" "**I1" "spec skill plain invariant labels"
 not_contains "$spec_template_text" "**F1" "spec template plain failure labels"
 not_contains "$spec_template_text" "**I1" "spec template plain invariant labels"
 contains "$review_skill_text" "Check every spec obligation independently" "review skill obligations"
-contains "$review_skill_text" 'Every acceptance criterion, invariant, and failure mode is `PASS`.' "review skill obligations"
+contains "$review_skill_text" "Every acceptance criterion, invariant, and failure mode is \`PASS\`." "review skill obligations"
 contains "$review_skill_text" "Do not flag work required solely by an invariant or failure mode as scope drift." "review skill scope drift"
 ok "spec Mermaid diagram guidance"
 
