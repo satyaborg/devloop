@@ -51,7 +51,7 @@ When you pick a spec from the interactive menu, devloop uses your configured run
 
 ## Specs
 
-A good spec is short, concrete, and verifiable. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md). The bundled `devloop-spec` skill can also render a sibling HTML companion with [`skills/devloop-spec/scripts/render.sh`](skills/devloop-spec/scripts/render.sh).
+A good spec is short, concrete, and verifiable. It includes a repository-grounded implementation map, invariants, credible failure modes, and a proof map linking every obligation to test evidence. Start from [`skills/devloop-spec/references/spec-template.md`](skills/devloop-spec/references/spec-template.md). The bundled `devloop-spec` skill can also render a sibling HTML companion with [`skills/devloop-spec/scripts/render.sh`](skills/devloop-spec/scripts/render.sh).
 
 Strict mode is on by default: specs need `## Acceptance criteria`, and reviews must pass both the spec gate and engineering quality gate.
 
