@@ -2,7 +2,7 @@
 status: draft
 type: feat
 created: 2026-07-05
-pr: null
+pr: https://github.com/satyaborg/devloop/pull/83
 ---
 
 # Devloop Nightshift Mode
