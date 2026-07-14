@@ -17,8 +17,8 @@ Review against two gates:
 2. Engineering gate: the implementation is correct, maintainable, and fits the
    codebase without avoidable structural debt.
 
-Do not approve merely because the acceptance criteria pass. A change can pass
-the spec gate and still fail review because it makes the codebase worse.
+Do not approve merely because the spec obligations pass. A change can pass the
+spec gate and still fail review because it makes the codebase worse.
 
 ## Gather Context
 
@@ -46,9 +46,10 @@ unrelated follow-up territory out of the devloop pass.
 
 ## Spec Gate
 
-Check every acceptance criterion independently:
+Check every spec obligation independently:
 
-- Does the implementation satisfy this exact criterion?
+- Does the implementation satisfy this exact acceptance criterion, invariant,
+  or failure mode?
 - Is there concrete code or behavior evidence?
 - Is there concrete test or command evidence?
 - Did the change drift beyond the spec?
@@ -57,8 +58,12 @@ Check every acceptance criterion independently:
 - If this pass fixes a prior review finding, was verification rerun after the
   fix instead of reused from before the code changed?
 
-Reject when a criterion fails, evidence is vague, scope drift is meaningful, or
-missing tests leave changed behavior underverified.
+Reject when an obligation fails, evidence is vague, scope drift is meaningful,
+or missing tests leave changed behavior underverified.
+
+Do not flag work required solely by an invariant or failure mode as scope drift.
+Scope drift is work outside the spec's declared scope or not needed to satisfy
+any listed obligation.
 
 ## Engineering Gate
 
@@ -101,7 +106,7 @@ Treat these as reject-level findings unless clearly justified:
 
 Use `ACCEPT` only when both gates pass:
 
-- Every acceptance criterion is `PASS`.
+- Every acceptance criterion, invariant, and failure mode is `PASS`.
 - Every engineering quality row is `PASS` or `N/A`.
 - Findings and fix instructions are `None`.
 - Any tradeoff, risk, or default choice is recorded in the track or is genuinely

@@ -118,6 +118,7 @@ ok "spec skill path"
 
 spec_skill_text="$(cat "$REPO_ROOT/skills/devloop-spec/SKILL.md")"
 spec_template_text="$(cat "$REPO_ROOT/skills/devloop-spec/references/spec-template.md")"
+review_skill_text="$(cat "$REPO_ROOT/skills/devloop-review/SKILL.md")"
 contains "$spec_skill_text" "Mermaid" "spec skill Mermaid guidance"
 contains "$spec_skill_text" "scripts/render.sh" "spec skill renderer"
 contains "$spec_skill_text" "HTML Companion" "spec skill renderer"
@@ -127,8 +128,30 @@ contains "$spec_skill_text" "Do not convert a conversation, artifact bundle, or 
 contains "$spec_skill_text" "If interactive and gaps remain, do not draft yet" "spec skill gap interview"
 not_contains "$spec_skill_text" "offer to interview for only those gaps after producing the first draft" "spec skill gap interview"
 contains "$spec_skill_text" "<repo>/.devloop/specs/YYYY-MM-DD-<slug>.md" "spec skill repo output"
+contains "$spec_skill_text" "Discover repository facts before user questions." "spec skill discovery discipline"
+contains "$spec_skill_text" "Facts are discovered from evidence; decisions are asked of the user." "spec skill discovery discipline"
+contains "$spec_skill_text" "Build a change map" "spec skill defect model"
+contains "$spec_skill_text" "State the invariants" "spec skill defect model"
+contains "$spec_skill_text" "Enumerate relevant failure modes at every changed boundary and state transition." "spec skill defect model"
+contains "$spec_skill_text" "Map every acceptance criterion, invariant, and failure mode to specific test or observable evidence." "spec skill verification matrix"
+contains "$spec_skill_text" "Name the highest-risk review focus areas" "spec skill review focus"
+contains "$spec_skill_text" "Record every behavior-affecting default, decision, and assumption" "spec skill decision record"
 contains "$spec_template_text" '```mermaid' "spec template Mermaid fence"
 contains "$spec_template_text" "flowchart LR" "spec template Mermaid syntax"
+contains "$spec_template_text" "## Implementation map" "spec template implementation map"
+contains "$spec_template_text" "## Invariants" "spec template invariants"
+contains "$spec_template_text" "### Failure and edge cases" "spec template failure modes"
+contains "$spec_template_text" "### Proof obligations" "spec template verification map"
+contains "$spec_template_text" "## Review focus" "spec template review focus"
+not_contains "$spec_skill_text" "1. **AC1:**" "spec skill positional acceptance numbering"
+not_contains "$spec_template_text" "1. **AC1:**" "spec template positional acceptance numbering"
+not_contains "$spec_skill_text" "**F1" "spec skill plain failure labels"
+not_contains "$spec_skill_text" "**I1" "spec skill plain invariant labels"
+not_contains "$spec_template_text" "**F1" "spec template plain failure labels"
+not_contains "$spec_template_text" "**I1" "spec template plain invariant labels"
+contains "$review_skill_text" "Check every spec obligation independently" "review skill obligations"
+contains "$review_skill_text" 'Every acceptance criterion, invariant, and failure mode is `PASS`.' "review skill obligations"
+contains "$review_skill_text" "Do not flag work required solely by an invariant or failure mode as scope drift." "review skill scope drift"
 ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
@@ -248,6 +271,12 @@ contains "$(cat "$renderer_output")" $'<details class="section open" open>\n  <s
 not_contains "$(cat "$renderer_output")" "mermaid.esm.min.mjs" "spec renderer without Mermaid"
 expected_renderer_output="$(cd -P "$(dirname "$regular_renderer_fixture")" >/dev/null 2>&1 && pwd)/$(basename "${regular_renderer_fixture%.md}.html")"
 equals "$renderer_output" "$expected_renderer_output" "spec renderer output path"
+
+template_renderer_fixture="$work/spec-template.md"
+cp "$REPO_ROOT/skills/devloop-spec/references/spec-template.md" "$template_renderer_fixture"
+template_renderer_output="$("$renderer_script" "$template_renderer_fixture")"
+not_contains "$(cat "$template_renderer_output")" "**F1" "spec template rendered failure labels"
+not_contains "$(cat "$template_renderer_output")" "**I1" "spec template rendered invariant labels"
 
 mermaid_renderer_fixture="$work/spec-render-mermaid-fixture.md"
 cat > "$mermaid_renderer_fixture" <<'SPEC'
@@ -428,6 +457,13 @@ criteria_file="$work/criteria.md"
 cat > "$criteria_file" <<'MARKDOWN'
 # Spec
 
+## Behavior
+### Failure and edge cases
+- F1 (Empty input): The command reports the error without changing state.
+
+## Invariants
+- I1: State changes only after validation succeeds.
+
 ## Acceptance criteria
 1. First thing
 - Second thing
@@ -436,6 +472,46 @@ cat > "$criteria_file" <<'MARKDOWN'
 Ignore me
 MARKDOWN
 equals "$(parse_criteria "$criteria_file")" $'First thing\nSecond thing' "parse_criteria"
+equals "$(spec_obligations "$criteria_file")" $'AC1: First thing\nAC2: Second thing\nF1: (Empty input): The command reports the error without changing state.\nI1: State changes only after validation succeeds.' "spec_obligations"
+obligations_file="$work/obligations.md"
+spec_obligations "$criteria_file" > "$obligations_file"
+
+duplicate_failure_spec="$work/duplicate-failure.md"
+cat > "$duplicate_failure_spec" <<'MARKDOWN'
+# Duplicate Failure
+
+## Behavior
+### Failure and edge cases
+- F1 (Empty input): Reject the input.
+- F1 (Invalid input): Reject the input without changing state.
+
+## Acceptance criteria
+1. The command validates input.
+MARKDOWN
+if lint_spec_file "$duplicate_failure_spec" "$(cat "$duplicate_failure_spec")" 1 true; then
+  fail "lint_spec_file accepted duplicate failure identifier"
+fi
+equals "$SPEC_LINT_ERROR" "duplicate spec obligation identifier: F1" "duplicate failure identifier"
+
+duplicate_invariant_spec="$work/duplicate-invariant.md"
+cat > "$duplicate_invariant_spec" <<'MARKDOWN'
+# Duplicate Invariant
+
+## Invariants
+- I1: State changes only after validation.
+- I1: Failed writes leave existing state intact.
+
+## Acceptance criteria
+1. The command updates valid state.
+MARKDOWN
+if lint_spec_file "$duplicate_invariant_spec" "$(cat "$duplicate_invariant_spec")" 1 true; then
+  fail "lint_spec_file accepted duplicate invariant identifier"
+fi
+equals "$SPEC_LINT_ERROR" "duplicate spec obligation identifier: I1" "duplicate invariant identifier"
+
+template_criteria_file="$work/spec-template-criteria.md"
+parse_criteria "$REPO_ROOT/skills/devloop-spec/references/spec-template.md" > "$template_criteria_file"
+equals "$(criteria_block "$template_criteria_file")" $'AC1: <Singular, verifiable requirement with observable evidence.>\nAC2: <Singular, verifiable requirement with observable evidence.>' "spec template criteria numbering"
 
 review_file="$work/review.md"
 cat > "$review_file" <<'MARKDOWN'
@@ -449,6 +525,8 @@ Verdict: ACCEPT
 | --- | --- | --- | --- |
 | AC1 | PASS | code path | test |
 | AC2 | PASS | behavior | test |
+| F1 | PASS | guarded failure path | failure test |
+| I1 | PASS | validation boundary | state test |
 
 ## Engineering quality matrix
 
@@ -463,17 +541,33 @@ Verdict: ACCEPT
 | Operational safety | PASS | no partial update |
 MARKDOWN
 equals "$(parse_verdict "$review_file")" "ACCEPT" "parse_verdict"
-has_passing_matrix "$review_file" 2 || fail "has_passing_matrix rejected passing matrix"
+has_passing_matrix "$review_file" "$obligations_file" || fail "has_passing_matrix rejected passing matrix"
 has_passing_quality_matrix "$review_file" || fail "has_passing_quality_matrix rejected passing matrix"
 sed 's/| AC2 | PASS |/| AC2 | FAIL |/' "$review_file" > "$work/review-fail.md"
-if has_passing_matrix "$work/review-fail.md" 2; then fail "has_passing_matrix accepted failing matrix"; fi
+if has_passing_matrix "$work/review-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing criterion"; fi
+sed 's/| F1 | PASS |/| F1 | FAIL |/' "$review_file" > "$work/review-failure-fail.md"
+if has_passing_matrix "$work/review-failure-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing failure mode"; fi
+sed 's/| I1 | PASS |/| I1 | FAIL |/' "$review_file" > "$work/review-invariant-fail.md"
+if has_passing_matrix "$work/review-invariant-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing invariant"; fi
 sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > "$work/review-quality-fail.md"
 if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
 
-review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$criteria_file" true)"
+coder_prompt_text="$(coder_prompt "$criteria_file" ".devloop/tracks/test.md" 1 true "" "$obligations_file")"
+contains "$coder_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "coder prompt obligations"
+contains "$coder_prompt_text" "F1: (Empty input): The command reports the error without changing state." "coder prompt failure mode"
+contains "$coder_prompt_text" "I1: State changes only after validation succeeds." "coder prompt invariant"
+contains "$coder_prompt_text" "satisfying every spec obligation" "coder prompt contract"
+
+review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" true)"
 contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
 contains "$review_prompt_text" "Bundled skill path, for fallback only: $REPO_ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
+contains "$review_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "review prompt obligations"
+contains "$review_prompt_text" "F1: (Empty input): The command reports the error without changing state." "review prompt failure mode"
+contains "$review_prompt_text" "I1: State changes only after validation succeeds." "review prompt invariant"
+contains "$review_prompt_text" "ACCEPT requires every acceptance criterion, invariant, and failure mode PASS" "review prompt contract"
+contains "$review_prompt_text" "outside the spec's declared scope or is not needed to satisfy any listed obligation" "review prompt scope drift"
+not_contains "$review_prompt_text" "outside the acceptance criteria" "review prompt scope drift"
 
 findings_a="$work/findings-a.md"
 findings_b="$work/findings-b.md"

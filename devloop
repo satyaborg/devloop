@@ -2881,22 +2881,24 @@ run_devloop() {
   local spec_text
   spec_text="$(cat "$spec")"
 
-  local criteria_file
+  local criteria_file obligations_file
   criteria_file="$(mktemp "${TMPDIR:-/tmp}/devloop-criteria.XXXXXX")"
   parse_criteria "$spec" > "$criteria_file"
+  obligations_file="$(mktemp "${TMPDIR:-/tmp}/devloop-obligations.XXXXXX")"
+  spec_obligations "$spec" > "$obligations_file"
   local criteria_count
   criteria_count="$(line_count "$criteria_file")"
   if ! lint_spec_file "$spec" "$spec_text" "$criteria_count" "$strict"; then
     STATUS="spec-error"
     printf '%s\n' "$SPEC_LINT_ERROR" >&2
-    rm -f "$criteria_file"
+    rm -f "$criteria_file" "$obligations_file"
     return 2
   fi
   event_gate "acceptance criteria" "$criteria_count" "$criteria_count found"
 
   SOURCE_REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || {
     printf '%s\n' "not inside a git repository" >&2
-    rm -f "$criteria_file"
+    rm -f "$criteria_file" "$obligations_file"
     return 2
   }
   local source_branch
@@ -2911,7 +2913,7 @@ run_devloop() {
     STATUS="preflight-error"
     event_done "preflight" false "$PREFLIGHT_ERROR"
     printf 'preflight failed: %s\n' "$PREFLIGHT_ERROR" >&2
-    rm -f "$criteria_file"
+    rm -f "$criteria_file" "$obligations_file"
     return 2
   fi
 
@@ -2925,7 +2927,7 @@ run_devloop() {
     else
       printf 'naming failed: %s\n' "$naming_error" >&2
     fi
-    rm -f "$criteria_file"
+    rm -f "$criteria_file" "$obligations_file"
     return 2
   fi
   local slug="$WORK_SLUG"
@@ -2935,7 +2937,7 @@ run_devloop() {
   if [ "$use_worktree" = true ]; then
     event_step "worktree" "creating worktree"
     repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || {
-      rm -f "$criteria_file"
+      rm -f "$criteria_file" "$obligations_file"
       return 2
     }
     event_done "worktree" true "$repo"
@@ -3014,7 +3016,7 @@ run_devloop() {
     local coder_log=".devloop/logs/$slug-r$pass-coder.log"
     local coder_id="coder-$pass"
     event_step "$coder_id" "pass $pass/$max: $(agent_label "$coder") implementing"
-    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".devloop/reviews/$slug-r$((pass - 1)).md" "$criteria_file" "$pr_review_context")" "$coder_id"; then
+    if run_agent "$coder" "$repo" "$repo/$coder_session" "$repo/$coder_log" "$(coder_prompt "$run_spec" "$TRACK" "$pass" "$strict" ".devloop/reviews/$slug-r$((pass - 1)).md" "$obligations_file" "$pr_review_context")" "$coder_id"; then
       event_done "$coder_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="coder-error"; fi
@@ -3087,7 +3089,7 @@ run_devloop() {
     local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
     event_step "$reviewer_id" "pass $pass/$max: $(agent_label "$reviewer") reviewing"
-    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$criteria_file" "$strict")" "$reviewer_id"; then
+    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict")" "$reviewer_id"; then
       event_done "$reviewer_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
@@ -3116,7 +3118,7 @@ run_devloop() {
     verdict="$(parse_verdict "$repo/$review")"
     if [ "$verdict" = "ACCEPT" ]; then
       event_gate "pass $pass review verdict" 1 "$verdict"
-      if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$criteria_count"; then
+      if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
         STATUS="unclear"
       elif [ "$strict" = true ] && ! has_passing_quality_matrix "$repo/$review"; then
         STATUS="unclear"
@@ -3161,7 +3163,7 @@ run_devloop() {
   fi
 
   print_result
-  rm -f "$criteria_file" "$initial_dirty"
+  rm -f "$criteria_file" "$obligations_file" "$initial_dirty"
   return 0
 }
 
@@ -3237,7 +3239,7 @@ lint_spec_file() {
   local spec_text="$2"
   local criteria_count="$3"
   local strict="$4"
-  local title type
+  local title type duplicate_obligation
   SPEC_LINT_ERROR=""
   title="$(printf '%s\n' "$spec_text" | sed -nE 's/^#[[:space:]]+(.+)/\1/p' | head -n 1)"
   if [ -z "$(clean_report_text "$title")" ]; then
@@ -3253,6 +3255,11 @@ lint_spec_file() {
         return 1
         ;;
     esac
+  fi
+  duplicate_obligation="$(duplicate_spec_obligation_identifier "$spec")"
+  if [ -n "$duplicate_obligation" ]; then
+    SPEC_LINT_ERROR="duplicate spec obligation identifier: $duplicate_obligation"
+    return 1
   fi
   if [ "$strict" = true ] && [ "$criteria_count" -eq 0 ]; then
     SPEC_LINT_ERROR="strict mode requires ## Acceptance criteria"
@@ -3493,6 +3500,52 @@ criteria_block() {
     printf 'AC%s: %s\n' "$count" "$line"
   done < "$criteria_file"
   if [ "$count" -eq 0 ]; then printf '%s\n' "No parsed acceptance criteria."; fi
+}
+
+parse_labeled_obligations() {
+  local file="$1"
+  awk '
+    BEGIN { inside = 0 }
+    /^[[:space:]]*###[[:space:]]+Failure and edge cases[[:space:]]*$/ { inside = 1; next }
+    /^[[:space:]]*##[[:space:]]+Invariants[[:space:]]*$/ { inside = 1; next }
+    /^[[:space:]]*#+[[:space:]]+/ { inside = 0; next }
+    inside {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      sub(/^[-*][[:space:]]+/, "", line)
+      gsub(/\*\*/, "", line)
+      if (line ~ /^F[0-9]+[[:space:]]*(\(|:)/ || line ~ /^I[0-9]+[[:space:]]*:/) {
+        match(line, /^(F|I)[0-9]+/)
+        identifier = substr(line, RSTART, RLENGTH)
+        detail = substr(line, RLENGTH + 1)
+        sub(/^[[:space:]]*:[[:space:]]*/, "", detail)
+        sub(/^[[:space:]]+/, "", detail)
+        printf "%s: %s\n", identifier, detail
+      }
+    }
+  ' "$file"
+}
+
+spec_obligations() {
+  local spec="$1"
+  local count=0
+  local criterion
+  while IFS= read -r criterion; do
+    count=$((count + 1))
+    printf 'AC%s: %s\n' "$count" "$criterion"
+  done < <(parse_criteria "$spec")
+  parse_labeled_obligations "$spec"
+}
+
+duplicate_spec_obligation_identifier() {
+  local spec="$1"
+  spec_obligations "$spec" | awk -F ':' '
+    {
+      identifier = $1
+      if (duplicate == "" && seen[identifier]++) duplicate = identifier
+    }
+    END { if (duplicate != "") print duplicate }
+  '
 }
 
 base_branch() {
@@ -4125,10 +4178,10 @@ coder_prompt() {
   local pass="$3"
   local strict="$4"
   local previous="$5"
-  local criteria_file="$6"
+  local obligations_file="$6"
   local pr_review_context="${7:-}"
-  local criteria
-  criteria="$(criteria_block "$criteria_file")"
+  local obligations
+  obligations="$(cat "$obligations_file")"
   local strict_block=""
   if [ "$strict" = true ]; then
     strict_block="
@@ -4146,11 +4199,11 @@ You are implementing against an approved spec.
 Spec: $spec
 Track: $track
 Pass: $pass
-Acceptance criteria:
-$criteria$strict_block
+Spec obligations (acceptance criteria, invariants, and failure modes):
+$obligations$strict_block
 Tasks:
 1. Read the spec.
-2. Implement the smallest working change satisfying the acceptance criteria.
+2. Implement the smallest working change satisfying every spec obligation.
 3. Append "## Pass $pass - implement" to $track with changed files, design tradeoffs, verification, and residual risk.
 
 Constraints:
@@ -4173,13 +4226,14 @@ Spec: $spec
 Track: $track
 $review_context
 Pass: $pass
-Acceptance criteria:
-$criteria$strict_block
+Spec obligations (acceptance criteria, invariants, and failure modes):
+$obligations$strict_block
 Tasks:
 1. Read the review context.
 2. Fix each finding or explain why it is wrong in the track.
-3. Re-run relevant tests.
-4. Append "## Pass $pass - fix" to $track with per-finding outcomes.
+3. Confirm every spec obligation remains satisfied.
+4. Re-run relevant tests.
+5. Append "## Pass $pass - fix" to $track with per-finding outcomes.
 EOF
   fi
 }
@@ -4193,10 +4247,10 @@ review_prompt() {
   local output="$6"
   local slug="$7"
   local max="$8"
-  local criteria_file="$9"
+  local obligations_file="$9"
   local strict="${10}"
-  local criteria priors review_skill strict_rule
-  criteria="$(criteria_block "$criteria_file")"
+  local obligations priors review_skill strict_rule
+  obligations="$(cat "$obligations_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
   review_skill="$ROOT_DIR/skills/devloop-review/SKILL.md"
   strict_rule=""
@@ -4213,8 +4267,8 @@ Base: $base
 Pass: $pass
 Prior reviews:
 $priors
-Acceptance criteria:
-$criteria
+Spec obligations (acceptance criteria, invariants, and failure modes):
+$obligations
 Output path: $output
 Skill: use the installed devloop-review skill.
 Bundled skill path, for fallback only: $review_skill
@@ -4231,9 +4285,11 @@ Verdict: <ACCEPT | REJECT | UNCLEAR>
 
 ## Acceptance matrix
 
-| Criterion | Status | Implementation evidence | Test evidence |
+| Obligation | Status | Implementation evidence | Test evidence |
 | --- | --- | --- | --- |
 | AC1 | <PASS, FAIL, or UNCLEAR> | <code or behavior evidence> | <test, check, or explicit gap> |
+| F1 | <PASS, FAIL, or UNCLEAR> | <failure handling evidence> | <failure test, check, or explicit gap> |
+| I1 | <PASS, FAIL, or UNCLEAR> | <preserved property evidence> | <invariant test, check, or explicit gap> |
 
 ## Engineering quality matrix
 
@@ -4271,10 +4327,11 @@ Verdict: <ACCEPT | REJECT | UNCLEAR>
 
 Rules:
 - The verdict line must appear verbatim.
-- ACCEPT requires every acceptance criterion PASS with concrete implementation evidence and concrete test evidence.$strict_rule
+- Include exactly one row for every listed spec obligation. Omit sample identifiers that are not present in the spec.
+- ACCEPT requires every acceptance criterion, invariant, and failure mode PASS with concrete implementation evidence and concrete test evidence.$strict_rule
 - ACCEPT requires a complete Engineering quality matrix. Reject if any engineering quality row is FAIL.
 - Flag a silent decision when the diff makes a tradeoff, default choice, migration choice, or risk acceptance that is not recorded in the spec or track.
-- Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the acceptance criteria, or includes a broad refactor not needed for the spec.
+- Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the spec's declared scope or is not needed to satisfy any listed obligation, or includes a broad refactor not needed for the spec.
 - Flag a missing test when behavior changed without targeted test evidence, even if the full suite passed.
 - Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes.
 - For ACCEPT: Findings and Fix instructions bodies are "None".
@@ -4411,15 +4468,21 @@ parse_verdict() {
 
 has_passing_matrix() {
   local file="$1"
-  local count="$2"
-  local i=1
+  local obligations_file="$2"
+  local obligation identifier found
+  found=false
   grep -Eq '^##[[:space:]]+Acceptance matrix[[:space:]]*$' "$file" || return 1
-  while [ "$i" -le "$count" ]; do
-    if ! grep -Eiq "^\|[[:space:]]*AC${i}[[:space:]]*\|[[:space:]]*PASS[[:space:]]*\|" "$file"; then
+  while IFS= read -r obligation; do
+    identifier="${obligation%%:*}"
+    if ! printf '%s\n' "$identifier" | grep -Eq '^(AC|F|I)[0-9]+$'; then
       return 1
     fi
-    i=$((i + 1))
-  done
+    found=true
+    if ! grep -Eiq "^\|[[:space:]]*${identifier}[[:space:]]*\|[[:space:]]*PASS[[:space:]]*\|" "$file"; then
+      return 1
+    fi
+  done < "$obligations_file"
+  [ "$found" = true ]
 }
 
 has_passing_quality_matrix() {

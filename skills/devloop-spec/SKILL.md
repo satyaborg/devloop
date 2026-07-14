@@ -38,6 +38,30 @@ Do not convert a conversation, artifact bundle, or notes directly into a spec ju
 
 When interactive, ask one question at a time until the gate passes. When the environment cannot ask questions, write a marked draft only if the caller explicitly needs best-effort non-interactive output; otherwise stop with the questions that must be answered.
 
+## Planning Discipline
+
+During spec discovery and interview, do not implement the requested product or code change.
+
+- Discovery before interview: Discover repository facts before user questions. Inspect relevant commands, paths, symbols, ownership boundaries, tests, and local conventions whenever a repository is available.
+- Facts vs decisions: Facts are discovered from evidence; decisions are asked of the user. Do not ask the user to restate facts that are cheap to verify.
+- User decisions: Ask one user decision at a time and include your recommended answer with the concrete tradeoff.
+- Dependency order: Walk parent decisions before downstream details.
+- Settled context: If supplied context is already settled, synthesize it directly without re-interviewing.
+- Follow-up threshold: Only ask a follow-up when the answer could change scope, behavior, acceptance criteria, failure handling, test seams, or the implementation slice.
+
+## Defect Model
+
+Treat the spec as the shared defect-prevention contract for the implementer and reviewer. Before drafting:
+
+1. Trace the affected behavior from its input or trigger through state changes and external interactions to the observable result.
+2. Build a change map naming the repository paths, symbols, ownership boundaries, and existing contracts expected to change or be reused. Separate verified repository facts from proposed design.
+3. State the invariants that must remain true across success, failure, retry, and interruption.
+4. Enumerate relevant failure modes at every changed boundary and state transition. Check invalid, empty, and boundary inputs; partial failure and interruption; dependency errors and timeouts; retries, duplicates, and idempotency; ordering and concurrency; permissions, security, and privacy; migrations and compatibility; cleanup, rollback, and recovery. Include only credible risks for this change.
+5. Identify the highest stable existing test seam. Prefer one seam when practical; if none covers the change, name the smallest appropriate new seam.
+6. Map every acceptance criterion, invariant, and failure mode to specific test or observable evidence. Group identifiers when one test proves the same behavior, but leave no obligation without evidence or an explicit reason that verification is manual or unavailable.
+7. Name the highest-risk review focus areas and the adjacent ownership boundary the reviewer should inspect for sibling instances of the same bug class.
+8. Record every behavior-affecting default, decision, and assumption in Notes. Do not leave the implementer or reviewer to infer a silent choice.
+
 ## Source Resolution
 
 Resolve the source material before drafting:
@@ -115,22 +139,36 @@ flowchart LR
 - In: <paths, commands, APIs, UI surfaces, or behavior>
 - Out: <explicit exclusions>
 
+## Implementation map
+1. `<path>` / `<symbol or ownership boundary>`: <intended change, reused contract, and why it belongs here>
+
 ## Behavior
 ### Happy path
 1. <User/system action>
 2. <Expected observable result>
 
-### Edge cases
-- <Condition>: <expected result>
+### Failure and edge cases
+- F1 (<condition or failed boundary>): <observable result, recovery behavior, and what must not happen>
+
+## Invariants
+- I1: <property that remains true across success, failure, retry, and interruption>
 
 ## Acceptance criteria
 1. <Singular, verifiable requirement with observable evidence.>
 
 ## Test plan
+### Proof obligations
+- AC1, I1: <test path/name or observable proof>
+- F1: <failure injection, regression test, or observable proof>
+
+### Commands
 - Red: <regression test to add/update first, or why not applicable>
 - Green: <targeted command(s)>
 - Full: <full test/typecheck/lint command(s)>
 - Coverage: <100% coverage command, or why unavailable>
+
+## Review focus
+- <Highest-risk boundary or bug class, why it is risky, and adjacent code to inspect>
 
 ## Constraints
 - Must: <hard requirement>
@@ -138,7 +176,7 @@ flowchart LR
 - Existing convention: <repo pattern to preserve>
 
 ## Notes
-<Only material implementation hints, risks, dependencies, migrations, or open questions.>
+<Only material defaults, decisions, assumptions, implementation hints, risks, dependencies, migrations, or open questions.>
 ````
 
 - `created` is today's date.
@@ -147,8 +185,13 @@ flowchart LR
 - The subtitle is a plain one-sentence line directly under the H1.
 - The Mermaid schematic is optional but preferred when it clarifies architecture, data flow, ownership, or before/after behavior. Omit it if it would be decorative or speculative.
 - In Mermaid flowchart node labels, quote labels containing `|`. Use `Node["A | B"]`, not `Node[A | B]`.
-- Under `## Behavior`, use `### Happy path` and `### Edge cases` H3 headings, not plain `Happy path:` labels.
-- Acceptance criteria must be singular, verifiable, and observable.
+- The implementation map names expected ownership boundaries and existing contracts, not incidental line-by-line edits. Every entry must be grounded in repository evidence or clearly labeled as proposed design.
+- Under `## Behavior`, use `### Happy path` and `### Failure and edge cases` H3 headings, not plain labels.
+- Number failure modes with plain labels such as `F1` and invariants with plain labels such as `I1`. Acceptance criteria are numbered positionally by their list order; refer to them as `AC1`, `AC2`, and so on in the proof map, but do not write an `AC` label inside criterion text.
+- Acceptance criteria must be singular, verifiable, and observable. Do not restate implementation steps as acceptance criteria.
+- The test-plan proof map must cover every `AC`, `I`, and `F` identifier exactly once or explain why its evidence is manual or unavailable. Combine identifiers when one proof covers them without merely restating the requirements.
+- Keep Review focus to the one to three highest-risk boundaries or bug classes. It guides adversarial review but does not limit the reviewer's engineering-quality pass.
+- Record material defaults, decisions, assumptions, dependencies, and risks in Notes. Omit empty categories.
 - Include concrete paths, commands, APIs, and behaviors when the context provides them.
 
 ## Gaps
