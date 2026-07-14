@@ -57,8 +57,10 @@ ok "bash syntax"
 DEVLOOP_LIB=1
 source "$REPO_ROOT/devloop"
 unset DEVLOOP_LIB
-equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.5" "codex model args"
+equals "${CODEX_MODEL_ARGS[*]}" "-m gpt-5.6-sol" "codex model args"
+equals "${CODEX_REASONING_ARGS[*]}" '-c model_reasoning_effort="xhigh"' "codex reasoning args"
 equals "${CLAUDE_MODEL_ARGS[*]}" "--model claude-opus-4-8" "claude model args"
+equals "${CLAUDE_EFFORT_ARGS[*]}" "--effort xhigh" "claude effort args"
 
 version="$(sed -n '1p' "$REPO_ROOT/VERSION")"
 equals "$("$REPO_ROOT/devloop" --version)" "devloop $version" "version output"
@@ -71,6 +73,7 @@ contains "$help" "devloop doctor" "help"
 contains "$help" "devloop reports" "help"
 contains "$help" "devloop status" "help"
 contains "$help" "devloop clean" "help"
+contains "$help" "devloop nightshift" "help"
 contains "$help" "devloop update" "help"
 obsolete_update_command="up""grade"
 not_contains "$help" "devloop $obsolete_update_command" "help"
@@ -100,6 +103,7 @@ contains "$readme_text" "git clone https://github.com/satyaborg/devloop.git" "RE
 contains "$readme_text" "cd devloop" "README source install"
 contains "$readme_text" "./scripts/install.sh" "README source install"
 contains "$readme_text" "\`devloop update\`" "README command table"
+contains "$readme_text" "\`devloop nightshift\`" "README command table"
 not_contains "$readme_text" "\`devloop $obsolete_update_command\`" "README command table"
 not_contains "$readme_text" "render.py" "README Python spec renderer"
 contains "$readme_text" "render.sh" "README spec renderer"
@@ -114,6 +118,7 @@ ok "spec skill path"
 
 spec_skill_text="$(cat "$REPO_ROOT/skills/devloop-spec/SKILL.md")"
 spec_template_text="$(cat "$REPO_ROOT/skills/devloop-spec/references/spec-template.md")"
+review_skill_text="$(cat "$REPO_ROOT/skills/devloop-review/SKILL.md")"
 contains "$spec_skill_text" "Mermaid" "spec skill Mermaid guidance"
 contains "$spec_skill_text" "scripts/render.sh" "spec skill renderer"
 contains "$spec_skill_text" "HTML Companion" "spec skill renderer"
@@ -123,8 +128,30 @@ contains "$spec_skill_text" "Do not convert a conversation, artifact bundle, or 
 contains "$spec_skill_text" "If interactive and gaps remain, do not draft yet" "spec skill gap interview"
 not_contains "$spec_skill_text" "offer to interview for only those gaps after producing the first draft" "spec skill gap interview"
 contains "$spec_skill_text" "<repo>/.devloop/specs/YYYY-MM-DD-<slug>.md" "spec skill repo output"
+contains "$spec_skill_text" "Discover repository facts before user questions." "spec skill discovery discipline"
+contains "$spec_skill_text" "Facts are discovered from evidence; decisions are asked of the user." "spec skill discovery discipline"
+contains "$spec_skill_text" "Build a change map" "spec skill defect model"
+contains "$spec_skill_text" "State the invariants" "spec skill defect model"
+contains "$spec_skill_text" "Enumerate relevant failure modes at every changed boundary and state transition." "spec skill defect model"
+contains "$spec_skill_text" "Map every acceptance criterion, invariant, and failure mode to specific test or observable evidence." "spec skill verification matrix"
+contains "$spec_skill_text" "Name the highest-risk review focus areas" "spec skill review focus"
+contains "$spec_skill_text" "Record every behavior-affecting default, decision, and assumption" "spec skill decision record"
 contains "$spec_template_text" '```mermaid' "spec template Mermaid fence"
 contains "$spec_template_text" "flowchart LR" "spec template Mermaid syntax"
+contains "$spec_template_text" "## Implementation map" "spec template implementation map"
+contains "$spec_template_text" "## Invariants" "spec template invariants"
+contains "$spec_template_text" "### Failure and edge cases" "spec template failure modes"
+contains "$spec_template_text" "### Proof obligations" "spec template verification map"
+contains "$spec_template_text" "## Review focus" "spec template review focus"
+not_contains "$spec_skill_text" "1. **AC1:**" "spec skill positional acceptance numbering"
+not_contains "$spec_template_text" "1. **AC1:**" "spec template positional acceptance numbering"
+not_contains "$spec_skill_text" "**F1" "spec skill plain failure labels"
+not_contains "$spec_skill_text" "**I1" "spec skill plain invariant labels"
+not_contains "$spec_template_text" "**F1" "spec template plain failure labels"
+not_contains "$spec_template_text" "**I1" "spec template plain invariant labels"
+contains "$review_skill_text" "Check every spec obligation independently" "review skill obligations"
+contains "$review_skill_text" "Every acceptance criterion, invariant, and failure mode is \`PASS\`." "review skill obligations"
+contains "$review_skill_text" "Do not flag work required solely by an invariant or failure mode as scope drift." "review skill scope drift"
 ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
@@ -244,6 +271,12 @@ contains "$(cat "$renderer_output")" $'<details class="section open" open>\n  <s
 not_contains "$(cat "$renderer_output")" "mermaid.esm.min.mjs" "spec renderer without Mermaid"
 expected_renderer_output="$(cd -P "$(dirname "$regular_renderer_fixture")" >/dev/null 2>&1 && pwd)/$(basename "${regular_renderer_fixture%.md}.html")"
 equals "$renderer_output" "$expected_renderer_output" "spec renderer output path"
+
+template_renderer_fixture="$work/spec-template.md"
+cp "$REPO_ROOT/skills/devloop-spec/references/spec-template.md" "$template_renderer_fixture"
+template_renderer_output="$("$renderer_script" "$template_renderer_fixture")"
+not_contains "$(cat "$template_renderer_output")" "**F1" "spec template rendered failure labels"
+not_contains "$(cat "$template_renderer_output")" "**I1" "spec template rendered invariant labels"
 
 mermaid_renderer_fixture="$work/spec-render-mermaid-fixture.md"
 cat > "$mermaid_renderer_fixture" <<'SPEC'
@@ -415,6 +448,7 @@ old_use_tui="$USE_TUI"
 USE_TUI=true
 tui_help="$(welcome_tui)"
 contains "$tui_help" "devloop update" "TUI help"
+contains "$tui_help" "devloop nightshift" "TUI help"
 not_contains "$tui_help" "devloop $obsolete_update_command" "TUI help"
 USE_TUI="$old_use_tui"
 unset -f gum
@@ -422,6 +456,13 @@ unset -f gum
 criteria_file="$work/criteria.md"
 cat > "$criteria_file" <<'MARKDOWN'
 # Spec
+
+## Behavior
+### Failure and edge cases
+- F1 (Empty input): The command reports the error without changing state.
+
+## Invariants
+- I1: State changes only after validation succeeds.
 
 ## Acceptance criteria
 1. First thing
@@ -431,6 +472,46 @@ cat > "$criteria_file" <<'MARKDOWN'
 Ignore me
 MARKDOWN
 equals "$(parse_criteria "$criteria_file")" $'First thing\nSecond thing' "parse_criteria"
+equals "$(spec_obligations "$criteria_file")" $'AC1: First thing\nAC2: Second thing\nF1: (Empty input): The command reports the error without changing state.\nI1: State changes only after validation succeeds.' "spec_obligations"
+obligations_file="$work/obligations.md"
+spec_obligations "$criteria_file" > "$obligations_file"
+
+duplicate_failure_spec="$work/duplicate-failure.md"
+cat > "$duplicate_failure_spec" <<'MARKDOWN'
+# Duplicate Failure
+
+## Behavior
+### Failure and edge cases
+- F1 (Empty input): Reject the input.
+- F1 (Invalid input): Reject the input without changing state.
+
+## Acceptance criteria
+1. The command validates input.
+MARKDOWN
+if lint_spec_file "$duplicate_failure_spec" "$(cat "$duplicate_failure_spec")" 1 true; then
+  fail "lint_spec_file accepted duplicate failure identifier"
+fi
+equals "$SPEC_LINT_ERROR" "duplicate spec obligation identifier: F1" "duplicate failure identifier"
+
+duplicate_invariant_spec="$work/duplicate-invariant.md"
+cat > "$duplicate_invariant_spec" <<'MARKDOWN'
+# Duplicate Invariant
+
+## Invariants
+- I1: State changes only after validation.
+- I1: Failed writes leave existing state intact.
+
+## Acceptance criteria
+1. The command updates valid state.
+MARKDOWN
+if lint_spec_file "$duplicate_invariant_spec" "$(cat "$duplicate_invariant_spec")" 1 true; then
+  fail "lint_spec_file accepted duplicate invariant identifier"
+fi
+equals "$SPEC_LINT_ERROR" "duplicate spec obligation identifier: I1" "duplicate invariant identifier"
+
+template_criteria_file="$work/spec-template-criteria.md"
+parse_criteria "$REPO_ROOT/skills/devloop-spec/references/spec-template.md" > "$template_criteria_file"
+equals "$(criteria_block "$template_criteria_file")" $'AC1: <Singular, verifiable requirement with observable evidence.>\nAC2: <Singular, verifiable requirement with observable evidence.>' "spec template criteria numbering"
 
 review_file="$work/review.md"
 cat > "$review_file" <<'MARKDOWN'
@@ -444,6 +525,8 @@ Verdict: ACCEPT
 | --- | --- | --- | --- |
 | AC1 | PASS | code path | test |
 | AC2 | PASS | behavior | test |
+| F1 | PASS | guarded failure path | failure test |
+| I1 | PASS | validation boundary | state test |
 
 ## Engineering quality matrix
 
@@ -458,17 +541,33 @@ Verdict: ACCEPT
 | Operational safety | PASS | no partial update |
 MARKDOWN
 equals "$(parse_verdict "$review_file")" "ACCEPT" "parse_verdict"
-has_passing_matrix "$review_file" 2 || fail "has_passing_matrix rejected passing matrix"
+has_passing_matrix "$review_file" "$obligations_file" || fail "has_passing_matrix rejected passing matrix"
 has_passing_quality_matrix "$review_file" || fail "has_passing_quality_matrix rejected passing matrix"
 sed 's/| AC2 | PASS |/| AC2 | FAIL |/' "$review_file" > "$work/review-fail.md"
-if has_passing_matrix "$work/review-fail.md" 2; then fail "has_passing_matrix accepted failing matrix"; fi
+if has_passing_matrix "$work/review-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing criterion"; fi
+sed 's/| F1 | PASS |/| F1 | FAIL |/' "$review_file" > "$work/review-failure-fail.md"
+if has_passing_matrix "$work/review-failure-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing failure mode"; fi
+sed 's/| I1 | PASS |/| I1 | FAIL |/' "$review_file" > "$work/review-invariant-fail.md"
+if has_passing_matrix "$work/review-invariant-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing invariant"; fi
 sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > "$work/review-quality-fail.md"
 if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
 
-review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$criteria_file" true)"
+coder_prompt_text="$(coder_prompt "$criteria_file" ".devloop/tracks/test.md" 1 true "" "$obligations_file")"
+contains "$coder_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "coder prompt obligations"
+contains "$coder_prompt_text" "F1: (Empty input): The command reports the error without changing state." "coder prompt failure mode"
+contains "$coder_prompt_text" "I1: State changes only after validation succeeds." "coder prompt invariant"
+contains "$coder_prompt_text" "satisfying every spec obligation" "coder prompt contract"
+
+review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" true)"
 contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
 contains "$review_prompt_text" "Bundled skill path, for fallback only: $REPO_ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
+contains "$review_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "review prompt obligations"
+contains "$review_prompt_text" "F1: (Empty input): The command reports the error without changing state." "review prompt failure mode"
+contains "$review_prompt_text" "I1: State changes only after validation succeeds." "review prompt invariant"
+contains "$review_prompt_text" "ACCEPT requires every acceptance criterion, invariant, and failure mode PASS" "review prompt contract"
+contains "$review_prompt_text" "outside the spec's declared scope or is not needed to satisfy any listed obligation" "review prompt scope drift"
+not_contains "$review_prompt_text" "outside the acceptance criteria" "review prompt scope drift"
 
 findings_a="$work/findings-a.md"
 findings_b="$work/findings-b.md"
@@ -732,6 +831,366 @@ if (cd "$config_repo" && HOME="$config_home" write_config_value global bogus x) 
 (cd "$config_repo" && HOME="$config_home" remove_config_value global reviewer)
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_coder)" "codex" "removed coder falls back"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_reviewer)" "claude" "removed reviewer falls back"
+
+night_config_home="$work/night-config-home"
+night_config_repo="$work/night-config-repo"
+night_global_repo="$work/night-global-repo"
+night_local_repo="$work/night-local-repo"
+mkdir -p "$night_config_home" "$night_config_repo" "$night_global_repo" "$night_local_repo"
+HOME="$night_config_home" write_config_value global nightshift_repos "$night_global_repo"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_repos)" "$night_global_repo" "nightshift repos global config"
+mkdir -p "$night_config_repo/.devloop"
+(cd "$night_config_repo" && HOME="$night_config_home" write_config_value local nightshift_repos "$night_local_repo")
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_repos)" "$night_local_repo" "nightshift repos local override"
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value local nightshift_repos)
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_repos)" "$night_global_repo" "nightshift repos local removal falls back"
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value global nightshift_repos)
+if (cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_repos) >/dev/null 2>&1; then fail "removed nightshift repos still resolved"; fi
+
+HOME="$night_config_home" write_config_value global nightshift_count 9
+equals "$(HOME="$night_config_home" devloop_config_value nightshift_count)" "5" "nightshift count write clamps high"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_count)" "5" "nightshift count read clamps high"
+(cd "$night_config_repo" && HOME="$night_config_home" write_config_value local nightshift_count 0)
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_count)" "1" "nightshift count read clamps low"
+if HOME="$night_config_home" write_config_value global nightshift_count nope >/dev/null 2>&1; then fail "nightshift count accepted non-numeric"; fi
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value local nightshift_count)
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value global nightshift_count)
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_count)" "3" "removed nightshift count defaults"
+
+HOME="$night_config_home" write_config_value global nightshift_coder "Claude Code"
+HOME="$night_config_home" write_config_value global nightshift_reviewer Codex
+HOME="$night_config_home" write_config_value global nightshift_survey_agent "Claude_Code"
+equals "$(HOME="$night_config_home" devloop_config_value nightshift_coder)" "claude" "nightshift coder write normalizes"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_coder)" "claude" "nightshift coder read"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_reviewer)" "codex" "nightshift reviewer read"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_survey_agent)" "claude" "nightshift survey agent read"
+if HOME="$night_config_home" write_config_value global nightshift_coder nope >/dev/null 2>&1; then fail "nightshift coder accepted invalid agent"; fi
+HOME="$night_config_home" remove_config_value global nightshift_coder
+HOME="$night_config_home" remove_config_value global nightshift_reviewer
+HOME="$night_config_home" remove_config_value global nightshift_survey_agent
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_coder)" "codex" "removed nightshift coder falls back"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_reviewer)" "claude" "removed nightshift reviewer falls back"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_survey_agent)" "claude" "removed nightshift survey agent falls back"
+
+HOME="$night_config_home" write_config_value global nightshift_max_passes 11
+equals "$(HOME="$night_config_home" devloop_config_value nightshift_max_passes)" "10" "nightshift max passes write clamps high"
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_max_passes)" "10" "nightshift max passes read"
+(cd "$night_config_repo" && HOME="$night_config_home" write_config_value local nightshift_max_passes 0)
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_max_passes)" "1" "nightshift max passes local clamps low"
+if HOME="$night_config_home" write_config_value global nightshift_max_passes nope >/dev/null 2>&1; then fail "nightshift max passes accepted non-numeric"; fi
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value local nightshift_max_passes)
+(cd "$night_config_repo" && HOME="$night_config_home" remove_config_value global nightshift_max_passes)
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_max_passes)" "5" "removed nightshift max passes defaults"
+
+HOME="$night_config_home" write_config_value global nightshift_schedule 02:30
+equals "$(cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_schedule)" "02:30" "nightshift schedule read"
+HOME="$night_config_home" remove_config_value global nightshift_schedule
+if (cd "$night_config_repo" && HOME="$night_config_home" devloop_nightshift_schedule) >/dev/null 2>&1; then fail "removed nightshift schedule still resolved"; fi
+if HOME="$night_config_home" write_config_value global nightshift_unknown x >/dev/null 2>&1; then fail "nightshift config whitelist accepted unknown key"; fi
+ok "nightshift config"
+
+night_prompt_specs="$work/night-prompt/specs"
+night_prompt_survey="$work/night-prompt/survey.md"
+contains "$(nightshift_usage)" "usage: devloop nightshift" "nightshift usage"
+night_prompt="$(nightshift_survey_prompt 3 2026-07-05 "$night_prompt_specs" "$night_prompt_survey" "$REPO_ROOT/skills/devloop-spec/SKILL.md")"
+contains "$night_prompt" "Skill: use the installed devloop-spec skill." "nightshift survey prompt"
+contains "$night_prompt" "Requested spec count: 3" "nightshift survey prompt count"
+contains "$night_prompt" "Current date: 2026-07-05" "nightshift survey prompt date"
+contains "$night_prompt" "Write specs only to: $night_prompt_specs" "nightshift survey prompt write dir"
+contains "$night_prompt" "write specs only, do not implement" "nightshift survey prompt no implementation"
+contains "$night_prompt" "$REPO_ROOT/skills/devloop-spec/SKILL.md" "nightshift survey prompt skill path"
+ok "nightshift survey prompt"
+
+night_repo="$work/night-repo"
+git init -q "$night_repo"
+night_repo_real="$(cd "$night_repo" && pwd -P)"
+printf '%s\n' "# Night Repo" > "$night_repo/README.md"
+git -C "$night_repo" add README.md
+git -C "$night_repo" -c user.email=devloop-test@example.com -c user.name="devloop test" commit -q -m init
+night_runner="$work/night-runner"
+night_run_log="$work/night-run.log"
+night_leak_capture="$work/night-leak.txt"
+cat > "$night_runner" <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+spec=""
+for arg in "$@"; do
+  case "$arg" in
+    *.md) spec="$arg" ;;
+  esac
+done
+base="$(basename "$spec")"
+slug="${base%.md}"
+printf 'args %s\n' "$*" >> "$DEVLOOP_RUN_LOG"
+printf 'start %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+status="accepted"
+code=0
+case "$base" in
+  02-second.md)
+    status="stalled"
+    code=1
+    ;;
+  04-timeout.md)
+    printf 'end %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+    exit 124
+    ;;
+  05-crash.md)
+    printf 'end %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+    exit 2
+    ;;
+esac
+printf '\n'
+printf 'devloop %s\n\n' "$status"
+printf '  Branch     feat/%s\n' "$slug"
+printf '\nOpen Next\n'
+if [ "$status" = "accepted" ]; then
+  printf '  PR         https://example.test/%s\n' "$slug"
+fi
+printf '  Report     .devloop/reports/%s.html\n' "$slug"
+printf '  Track      .devloop/tracks/%s.md\n' "$slug"
+printf 'end %s\n' "$base" >> "$DEVLOOP_RUN_LOG"
+exit "$code"
+RUNNER
+chmod +x "$night_runner"
+night_prompt_capture="$work/night-survey-prompt.txt"
+night_survey_args_capture="$work/night-survey-args.txt"
+if ! (
+  run_with_prompt() {
+    local cwd="$1"
+    local log="$2"
+    local id="$3"
+    local prompt="$4"
+    shift 4
+    local run_dir specs_dir
+    run_dir="$(dirname "$log")"
+    specs_dir="$run_dir/specs"
+    mkdir -p "$specs_dir"
+    printf '%s' "$prompt" > "$night_prompt_capture"
+    printf '%s\n' "$cwd|$id|$*" > "$night_survey_args_capture"
+    cat > "$specs_dir/03-third.md" <<'SPEC'
+---
+type: feat
+---
+# Third
+
+## Acceptance criteria
+1. Third thing
+SPEC
+    cat > "$specs_dir/01-first.md" <<'SPEC'
+---
+type: feat
+---
+# First
+
+## Acceptance criteria
+1. First thing
+SPEC
+    cat > "$specs_dir/02-second.md" <<'SPEC'
+---
+type: feat
+---
+# Second
+
+## Acceptance criteria
+1. Second thing
+SPEC
+    cat > "$specs_dir/04-timeout.md" <<'SPEC'
+---
+type: feat
+---
+# Timeout
+
+## Acceptance criteria
+1. Timeout thing
+SPEC
+    cat > "$specs_dir/05-crash.md" <<'SPEC'
+---
+type: feat
+---
+# Crash
+
+## Acceptance criteria
+1. Crash thing
+SPEC
+    printf '%s\n' "Survey rationale: first, second, third." > "$run_dir/survey.md"
+    RUN_CODE=0
+    RUN_OUTPUT="survey complete"
+    RUN_STDOUT=""
+    RUN_STDERR=""
+  }
+  branch="global-branch"
+  pr="global-pr"
+  report="global-report"
+  DEVLOOP_NIGHTSHIFT_DATE=2026-07-05 DEVLOOP_RUN_CMD="$night_runner" DEVLOOP_RUN_LOG="$night_run_log" \
+    nightshift_command --repo "$night_repo" --count 5 --coder claude --reviewer codex --survey-agent claude --max-passes 4 --timeout-minutes 12 >/tmp/devloop-nightshift.out
+  printf '%s|%s|%s\n' "$branch" "$pr" "$report" > "$night_leak_capture"
+); then
+  fail "nightshift orchestration failed"
+fi
+night_digest="$night_repo_real/.devloop/nightshift/2026-07-05/digest.md"
+[[ -f "$night_digest" ]] || fail "nightshift digest was not created"
+contains "$(cat "$night_prompt_capture")" "write specs only, do not implement" "nightshift survey prompt capture"
+contains "$(cat "$night_survey_args_capture")" "$night_repo_real|nightshift-survey|claude -p" "nightshift survey uses run_with_prompt"
+equals "$(grep -c '^args ' "$night_run_log" | tr -d ' ')" "5" "nightshift runner invocation count"
+contains "$(cat "$night_run_log")" "--plain --no-shell --create-pr --coder claude --reviewer codex --timeout-minutes 12" "nightshift runner headless flags"
+contains "$(cat "$night_run_log")" "$night_repo_real/.devloop/nightshift/2026-07-05/specs/01-first.md 4" "nightshift runner max passes"
+equals "$(grep -E '^(start|end) ' "$night_run_log")" $'start 01-first.md\nend 01-first.md\nstart 02-second.md\nend 02-second.md\nstart 03-third.md\nend 03-third.md\nstart 04-timeout.md\nend 04-timeout.md\nstart 05-crash.md\nend 05-crash.md' "nightshift runner sequential order"
+equals "$(cat "$night_leak_capture")" "global-branch|global-pr|global-report" "nightshift run repo local scoping"
+contains "$(cat "$night_digest")" "| First | accepted | feat/01-first | https://example.test/01-first | .devloop/reports/01-first.html |" "nightshift digest accepted row"
+contains "$(cat "$night_digest")" "| Second | stalled | feat/02-second | no PR | .devloop/reports/02-second.html |" "nightshift digest failed row"
+contains "$(cat "$night_digest")" "| Third | accepted | feat/03-third | https://example.test/03-third | .devloop/reports/03-third.html |" "nightshift digest subsequent row"
+contains "$(cat "$night_digest")" "| Timeout | timeout | unknown | no PR | no report |" "nightshift digest timeout fallback row"
+contains "$(cat "$night_digest")" "| Crash | run-error | unknown | no PR | no report |" "nightshift digest run-error fallback row"
+contains "$(cat "$night_digest")" "Survey rationale: first, second, third." "nightshift digest survey rationale"
+[[ -L "$night_repo/.devloop/nightshift/latest" ]] || fail "nightshift latest was not a symlink"
+equals "$(readlink "$night_repo/.devloop/nightshift/latest")" "2026-07-05" "nightshift latest target"
+equals "$(cd "$night_repo" && nightshift_command --status)" "$night_digest" "nightshift status latest digest"
+
+headless_output="$(
+  maybe_prompt_update() { printf '%s\n' "unexpected update prompt"; }
+  nightshift_run_repo() { printf '%s %s %s\n' "$USE_TUI" "$ENTER_WORKTREE" "$DEVLOOP_UPDATE_PROMPTED"; }
+  USE_TUI=true
+  ENTER_WORKTREE=true
+  DEVLOOP_UPDATE_PROMPTED=false
+  main nightshift --repo "$night_repo" --dry-run
+)"
+equals "$headless_output" "false false true" "nightshift dispatch forces headless mode"
+
+dry_repo="$work/night-dry-repo"
+git init -q "$dry_repo"
+dry_repo_real="$(cd "$dry_repo" && pwd -P)"
+dry_log="$work/night-dry-run.log"
+if ! (
+  run_with_prompt() {
+    local log="$2"
+    local run_dir specs_dir
+    run_dir="$(dirname "$log")"
+    specs_dir="$run_dir/specs"
+    mkdir -p "$specs_dir"
+    cat > "$specs_dir/01-first.md" <<'SPEC'
+---
+type: feat
+---
+# First
+
+## Acceptance criteria
+1. First thing
+SPEC
+    cat > "$specs_dir/02-second.md" <<'SPEC'
+---
+type: feat
+---
+# Second
+
+## Acceptance criteria
+1. Second thing
+SPEC
+    printf '%s\n' "Dry-run rationale." > "$run_dir/survey.md"
+    RUN_CODE=0
+    RUN_OUTPUT="survey complete"
+    RUN_STDOUT=""
+    RUN_STDERR=""
+  }
+  DEVLOOP_NIGHTSHIFT_DATE=2026-07-06 DEVLOOP_RUN_CMD="$night_runner" DEVLOOP_RUN_LOG="$dry_log" \
+    nightshift_command --repo "$dry_repo" --dry-run --count 2 >/tmp/devloop-nightshift-dry.out
+); then
+  fail "nightshift dry run failed"
+fi
+dry_digest="$dry_repo_real/.devloop/nightshift/2026-07-06/digest.md"
+[[ -f "$dry_digest" ]] || fail "nightshift dry-run digest was not created"
+[[ ! -s "$dry_log" ]] || fail "nightshift dry run invoked per-spec runner"
+contains "$(cat "$dry_digest")" "| First | dry-run | no branch | no PR | not run |" "nightshift dry-run digest"
+contains "$(cat "$dry_digest")" "Dry-run rationale." "nightshift dry-run rationale"
+
+status_empty_repo="$work/night-status-empty"
+mkdir -p "$status_empty_repo"
+if status_empty_output="$(cd "$status_empty_repo" && nightshift_command --status 2>&1)"; then
+  printf '%s\n' "$status_empty_output" >&2
+  fail "nightshift status accepted missing digest"
+fi
+contains "$status_empty_output" "no nightshift digest found" "nightshift status missing digest"
+ok "nightshift orchestration"
+
+schedule_home="$work/night-schedule-home"
+schedule_agents="$work/night-launch-agents"
+schedule_log="$work/night-launchctl.log"
+schedule_launchctl="$work/night-launchctl"
+mkdir -p "$schedule_home" "$schedule_agents"
+cat > "$schedule_launchctl" <<'LAUNCHCTL'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$DEVLOOP_LAUNCHCTL_LOG"
+LAUNCHCTL
+chmod +x "$schedule_launchctl"
+schedule_output="$(
+  HOME="$schedule_home" DEVLOOP_LAUNCH_AGENTS_DIR="$schedule_agents" DEVLOOP_LAUNCHCTL="$schedule_launchctl" DEVLOOP_LAUNCHCTL_LOG="$schedule_log" \
+    nightshift_command --repo "$night_repo" --install-schedule 02:30
+)"
+schedule_plist="$schedule_agents/sh.devloop.nightshift.plist"
+[[ -f "$schedule_plist" ]] || fail "nightshift schedule plist was not written"
+contains "$schedule_output" "$schedule_plist" "nightshift schedule output plist"
+contains "$schedule_output" "sudo pmset repeat wake MTWRFSU 02:30" "nightshift schedule wake command"
+contains "$(cat "$schedule_plist")" "<key>StartCalendarInterval</key>" "nightshift plist schedule"
+contains "$(cat "$schedule_plist")" "<key>Hour</key>" "nightshift plist hour"
+contains "$(cat "$schedule_plist")" "<integer>2</integer>" "nightshift plist hour value"
+contains "$(cat "$schedule_plist")" "<key>Minute</key>" "nightshift plist minute"
+contains "$(cat "$schedule_plist")" "<integer>30</integer>" "nightshift plist minute value"
+contains "$(cat "$schedule_plist")" "<key>ProgramArguments</key>" "nightshift plist program arguments"
+contains "$(cat "$schedule_plist")" "<string>$REPO_ROOT/devloop</string>" "nightshift plist devloop path"
+contains "$(cat "$schedule_plist")" "<string>nightshift</string>" "nightshift plist command"
+contains "$(cat "$schedule_plist")" "<string>--repo</string>" "nightshift plist repo flag"
+contains "$(cat "$schedule_plist")" "<string>$night_repo_real</string>" "nightshift plist repo path"
+contains "$(cat "$schedule_plist")" "<key>EnvironmentVariables</key>" "nightshift plist env"
+contains "$(cat "$schedule_plist")" "<key>PATH</key>" "nightshift plist PATH"
+contains "$(cat "$schedule_plist")" "<key>StandardOutPath</key>" "nightshift plist stdout"
+contains "$(cat "$schedule_plist")" "<key>StandardErrorPath</key>" "nightshift plist stderr"
+contains "$(cat "$schedule_log")" "bootstrap gui/" "nightshift schedule launchctl load"
+equals "$(HOME="$schedule_home" devloop_nightshift_schedule)" "02:30" "nightshift schedule persisted"
+uninstall_output="$(
+  HOME="$schedule_home" DEVLOOP_LAUNCH_AGENTS_DIR="$schedule_agents" DEVLOOP_LAUNCHCTL="$schedule_launchctl" DEVLOOP_LAUNCHCTL_LOG="$schedule_log" \
+    nightshift_command --uninstall-schedule
+)"
+contains "$uninstall_output" "removed nightshift schedule" "nightshift uninstall output"
+[[ ! -e "$schedule_plist" ]] || fail "nightshift schedule plist was not removed"
+contains "$(cat "$schedule_log")" "bootout gui/" "nightshift schedule launchctl unload"
+if HOME="$schedule_home" devloop_nightshift_schedule >/dev/null 2>&1; then fail "nightshift uninstall left schedule config"; fi
+HOME="$schedule_home" DEVLOOP_LAUNCH_AGENTS_DIR="$schedule_agents" DEVLOOP_LAUNCHCTL="$schedule_launchctl" DEVLOOP_LAUNCHCTL_LOG="$schedule_log" \
+  nightshift_command --uninstall-schedule >/tmp/devloop-nightshift-uninstall-empty.out
+contains "$(cat /tmp/devloop-nightshift-uninstall-empty.out)" "no nightshift schedule installed" "nightshift uninstall missing"
+
+bad_schedule_agents="$work/night-bad-launch-agents"
+mkdir -p "$bad_schedule_agents"
+if bad_schedule_output="$(
+  HOME="$schedule_home" DEVLOOP_LAUNCH_AGENTS_DIR="$bad_schedule_agents" DEVLOOP_LAUNCHCTL="$schedule_launchctl" DEVLOOP_LAUNCHCTL_LOG="$schedule_log" \
+    nightshift_command --repo "$night_repo" --install-schedule 9pm 2>&1
+)"; then
+  printf '%s\n' "$bad_schedule_output" >&2
+  fail "nightshift install accepted invalid time"
+fi
+contains "$bad_schedule_output" "invalid nightshift schedule time: 9pm" "nightshift invalid schedule time"
+[[ ! -e "$bad_schedule_agents/sh.devloop.nightshift.plist" ]] || fail "nightshift invalid time wrote plist"
+bad_repo_agents="$work/night-bad-repo-agents"
+mkdir -p "$bad_repo_agents"
+if bad_repo_output="$(
+  HOME="$schedule_home" DEVLOOP_LAUNCH_AGENTS_DIR="$bad_repo_agents" DEVLOOP_LAUNCHCTL="$schedule_launchctl" DEVLOOP_LAUNCHCTL_LOG="$schedule_log" \
+    nightshift_command --repo "$work/does-not-exist" --install-schedule 02:00 2>&1
+)"; then
+  printf '%s\n' "$bad_repo_output" >&2
+  fail "nightshift install accepted unresolvable repo"
+fi
+contains "$bad_repo_output" "nightshift repo is not resolvable" "nightshift unresolvable repo"
+[[ ! -e "$bad_repo_agents/sh.devloop.nightshift.plist" ]] || fail "nightshift bad repo wrote plist"
+if missing_repo_output="$(nightshift_command --repo "$work/does-not-exist" 2>&1)"; then
+  printf '%s\n' "$missing_repo_output" >&2
+  fail "nightshift accepted unresolvable run repo"
+fi
+contains "$missing_repo_output" "nightshift repo is not resolvable" "nightshift run unresolvable repo"
+if no_repo_output="$(HOME="$work/night-no-repo-home" nightshift_command 2>&1)"; then
+  printf '%s\n' "$no_repo_output" >&2
+  fail "nightshift accepted missing repos"
+fi
+contains "$no_repo_output" "nightshift_repos or --repo is required" "nightshift missing repos"
+ok "nightshift scheduling"
 
 lint_spec_text=$'---\ntype: feat\n---\n# Title\n\n## Acceptance criteria\n1. Thing'
 lint_spec_file "$criteria_file" "$lint_spec_text" 1 true || fail "lint_spec_file rejected valid spec"
