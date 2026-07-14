@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0](https://github.com/satyaborg/devloop/releases/tag/v0.10.0) - 2026-07-14
+
+### Added
+
+- nightshift ([0798df9](https://github.com/satyaborg/devloop/commit/0798df9881efed4478436e8532cedf4383be0bfe))
+- add nightshift mode spec ([8efd822](https://github.com/satyaborg/devloop/commit/8efd822db49163eac0fd9694a7138af233832b47))
+- enforce spec proof obligations ([db9beba](https://github.com/satyaborg/devloop/commit/db9beba20060c71e97b58d0817c9ff002eb9adc1))
+
+
+### Fixed
+
+- nightshift ([e4ae581](https://github.com/satyaborg/devloop/commit/e4ae58111c0d93e5799cbf8fd816f554991258da))
+- escape review skill assertion ([64f0189](https://github.com/satyaborg/devloop/commit/64f01898deb5009df4379530e430705324d47a5e))
+
 ## [0.9.0](https://github.com/satyaborg/devloop/releases/tag/v0.9.0) - 2026-07-02
 
 ### Added
