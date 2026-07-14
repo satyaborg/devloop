@@ -52,7 +52,7 @@ install_required_dependencies() {
   local missing_text
   local tool
 
-  for tool in git glow gum fzf; do
+  for tool in git glow gum fzf tmux; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       missing_formulas+=("$tool")
     fi
@@ -92,7 +92,7 @@ install_required_dependencies() {
     brew install --cask "${missing_casks[@]}"
   fi
 
-  for tool in git glow gum fzf codex claude; do
+  for tool in git glow gum fzf tmux codex claude; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       echo "failed to install required dependency: $tool" >&2
       return 1

@@ -210,6 +210,7 @@ Common commands:
 Options:
   --tui                         force terminal UI output
   --plain                       force plain output
+  --no-tmux                     run in the foreground without tmux
   --coder codex|claude          choose Codex or Claude Code for implementation (default from Settings)
   --reviewer codex|claude       choose Codex or Claude Code for review (default from Settings)
   --report-format html|markdown choose report format
@@ -221,6 +222,9 @@ Options:
   --shell, --enter-worktree     open a shell in the run worktree after completion
   -V, --version                 show version
   -h, --help                    show this screen
+
+Interactive run and continue commands start in a named tmux session.
+Detach with Ctrl-b d; reattach with tmux attach -t <session>.
 EOF
 }
 
@@ -247,6 +251,7 @@ welcome_tui() {
   gum style --foreground "$UI_ACCENT_COLOR" --bold "Options"
   printf '  %-30s %s\n' "--tui" "force terminal UI output"
   printf '  %-30s %s\n' "--plain" "force plain output"
+  printf '  %-30s %s\n' "--no-tmux" "run in the foreground without tmux"
   printf '  %-30s %s\n' "--coder codex|claude" "choose implementation agent (default from Settings)"
   printf '  %-30s %s\n' "--reviewer codex|claude" "choose review agent (default from Settings)"
   printf '  %-30s %s\n' "--report-format html|markdown" "choose report format"
@@ -258,10 +263,12 @@ welcome_tui() {
   printf '  %-30s %s\n' "--shell, --enter-worktree" "open a shell after completion"
   printf '  %-30s %s\n' "-V, --version" "show version"
   printf '  %-30s %s\n' "-h, --help" "show this screen"
+  printf '\n%s\n' "Interactive run and continue commands start in a named tmux session."
+  printf '%s\n' "Detach with Ctrl-b d; reattach with tmux attach -t <session>."
 }
 
 usage() {
-  printf '%s\n' "usage: devloop [--version] [--plain|--tui] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] [--timeout-minutes N] <spec.md> [max=5]"
+  printf '%s\n' "usage: devloop [--version] [--plain|--tui] [--no-tmux] [--in-place] [--no-strict] [--create-pr|--pr] [--no-shell|--stay|--shell|--enter-worktree] [--coder codex|claude] [--reviewer codex|claude] [--report-format html|markdown] [--timeout-minutes N] <spec.md> [max=5]"
   printf '%s\n' "agents: Codex or Claude Code"
 }
 
@@ -286,6 +293,92 @@ has_arg() {
     if [ "$item" = "$needle" ]; then return 0; fi
   done
   return 1
+}
+
+devloop_tmux_interactive() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+tmux_normalize_component() {
+  local value="$1"
+  local fallback="$2"
+  value="$(printf '%s\n' "$value" |
+    LC_ALL=C tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  if [ -z "$value" ]; then value="$fallback"; fi
+  printf '%s\n' "$value"
+}
+
+tmux_session_base_name() {
+  local repo="$1"
+  local source="$2"
+  local repo_name source_name
+  repo_name="$(tmux_normalize_component "$(basename "$repo")" repo)"
+  source_name="$(tmux_normalize_component "$(basename "$source" .md)" run)"
+  printf 'devloop-%s-%s\n' "$repo_name" "$source_name"
+}
+
+tmux_command_available() {
+  command -v tmux >/dev/null 2>&1
+}
+
+tmux_allocate_session_name() {
+  local base="$1"
+  local sessions candidate suffix
+  sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)"
+  candidate="$base"
+  suffix=2
+  while printf '%s\n' "$sessions" | grep -Fxq "$candidate"; do
+    candidate="$base-$suffix"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+tmux_launch_session() {
+  local repo="$1"
+  local source="$2"
+  local workflow="$3"
+  shift 3
+  local base session env_command
+  local child=("$SCRIPT_PATH")
+
+  if ! tmux_command_available; then
+    printf '%s\n' "tmux is required for interactive runs; rerun the installer or install tmux with Homebrew." >&2
+    return 1
+  fi
+
+  case "$workflow" in
+    run) child+=(--no-tmux "$@") ;;
+    continue) child+=(continue --no-tmux "$@") ;;
+    *) printf 'unknown tmux workflow: %s\n' "$workflow" >&2; return 2 ;;
+  esac
+
+  base="$(tmux_session_base_name "$repo" "$source")"
+  session="$(tmux_allocate_session_name "$base")"
+  env_command="$(command -v env)" || {
+    printf '%s\n' "unable to resolve env for tmux child launch" >&2
+    return 1
+  }
+
+  if [ -n "${TMUX:-}" ]; then
+    if ! tmux new-session -d -s "$session" -c "$PWD" -- "$env_command" "PATH=$PATH" "${child[@]}"; then
+      printf 'failed to create tmux session: %s\n' "$session" >&2
+      return 1
+    fi
+    if ! tmux switch-client -t "$session"; then
+      printf 'tmux session is still running: %s\n' "$session" >&2
+      printf 'switch with: tmux switch-client -t %s\n' "$session" >&2
+      printf 'attach with: tmux attach -t %s\n' "$session" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! tmux new-session -s "$session" -c "$PWD" -- "$env_command" "PATH=$PATH" "${child[@]}"; then
+    printf 'failed to create tmux session: %s\n' "$session" >&2
+    return 1
+  fi
 }
 
 version_args_only() {
@@ -1637,6 +1730,8 @@ interactive_run_setup() {
   local max="5"
   local timeout_minutes
   local code
+  local validated_spec repo
+  local tmux_args=()
   coder="$(devloop_coder)"
   reviewer="$(devloop_reviewer)"
   timeout_minutes="$(devloop_timeout_minutes)"
@@ -1649,6 +1744,22 @@ interactive_run_setup() {
   if [ "$code" -ne 0 ]; then
     ui_go_back
     return 0
+  fi
+  if devloop_tmux_interactive; then
+    validated_spec="$(validate_spec_for_tmux "$spec" "$strict")" || return $?
+    repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || {
+      printf '%s\n' "not inside a git repository" >&2
+      return 2
+    }
+    if [ "$USE_TUI" = true ]; then tmux_args+=(--tui); else tmux_args+=(--plain); fi
+    tmux_args+=(--report-format "$report_format")
+    if [ "$strict" = true ]; then tmux_args+=(--strict); else tmux_args+=(--no-strict); fi
+    if [ "$use_worktree" != true ]; then tmux_args+=(--in-place); fi
+    if [ "$create_pr" = true ]; then tmux_args+=(--create-pr); fi
+    if [ "$ENTER_WORKTREE" = true ]; then tmux_args+=(--shell); else tmux_args+=(--no-shell); fi
+    tmux_args+=(--coder "$coder" --reviewer "$reviewer" --timeout-minutes "$timeout_minutes" "$spec" "$max")
+    tmux_launch_session "$repo" "$validated_spec" run "${tmux_args[@]}"
+    return $?
   fi
   run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
@@ -1693,7 +1804,7 @@ interactive_open_report() {
 }
 
 interactive_continue_run() {
-  local list selected code
+  local list selected code track repo
   list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
   list_artifact_files ".devloop/tracks" > "$list"
   if [ ! -s "$list" ]; then
@@ -1709,7 +1820,15 @@ interactive_continue_run() {
     ui_go_back
     return 0
   fi
-  run_from_track "$selected"
+  track="$(validate_track_for_run "$selected")" || return $?
+  if devloop_tmux_interactive; then
+    repo="$(track_value "source-repo" "$track")"
+    if [ -z "$repo" ]; then repo="$(track_value "worktree" "$track")"; fi
+    if [ -z "$repo" ]; then repo="$PWD"; fi
+    tmux_launch_session "$repo" "$track" continue "$track"
+    return $?
+  fi
+  run_from_track "$track"
 }
 
 reports_command() {
@@ -1832,13 +1951,25 @@ clean_command() {
 }
 
 continue_command() {
-  if [ "$#" -gt 1 ]; then
-    printf '%s\n' "usage: devloop continue [track.md]" >&2
+  local original_args=("$@")
+  local no_tmux=false
+  local positional=()
+  local arg track list selected repo
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --no-tmux) no_tmux=true ;;
+      --*) printf '%s\n' "usage: devloop continue [--no-tmux] [track.md]" >&2; return 2 ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  if [ "${#positional[@]}" -gt 1 ]; then
+    printf '%s\n' "usage: devloop continue [--no-tmux] [track.md]" >&2
     return 2
   fi
-  local track list selected
-  if [ "$#" -eq 1 ]; then
-    track="$1"
+  if [ "${#positional[@]}" -eq 1 ]; then
+    track="${positional[0]}"
   else
     list="$(mktemp "${TMPDIR:-/tmp}/devloop-tracks.XXXXXX")"
     list_artifact_files ".devloop/tracks" > "$list"
@@ -1857,6 +1988,18 @@ continue_command() {
     rm -f "$list"
     if [ "$code" -ne 0 ] || [ -z "$selected" ]; then return 130; fi
     track="$selected"
+  fi
+  track="$(validate_track_for_run "$track")" || return $?
+  if [ "$no_tmux" = false ] && devloop_tmux_interactive; then
+    repo="$(track_value "source-repo" "$track")"
+    if [ -z "$repo" ]; then repo="$(track_value "worktree" "$track")"; fi
+    if [ -z "$repo" ]; then repo="$PWD"; fi
+    if [ "${#original_args[@]}" -eq 0 ]; then
+      tmux_launch_session "$repo" "$track" continue "$track"
+    else
+      tmux_launch_session "$repo" "$track" continue "${original_args[@]}"
+    fi
+    return $?
   fi
   run_from_track "$track"
 }
@@ -2192,7 +2335,7 @@ nightshift_run_spec() {
   mkdir -p "$(dirname "$output")"
   (
     cd "$repo" >/dev/null 2>&1 &&
-      "$runner" --plain --no-shell --create-pr --coder "$coder" --reviewer "$reviewer" --timeout-minutes "$timeout_minutes" "$spec" "$max_passes"
+      "$runner" --plain --no-tmux --no-shell --create-pr --coder "$coder" --reviewer "$reviewer" --timeout-minutes "$timeout_minutes" "$spec" "$max_passes"
   ) > "$output" 2>&1
   code=$?
   status="$(nightshift_result_status "$output" "$code")"
@@ -2654,13 +2797,53 @@ remove_devloop_worktree() {
   fi
 }
 
+validate_track_for_run() {
+  local input="$1"
+  local track worktree spec
+  track="$(absolute_existing_file "$input")" || {
+    printf 'track not found: %s\n' "$input" >&2
+    return 2
+  }
+  worktree="$(track_value "worktree" "$track")"
+  spec="$(track_value "spec" "$track")"
+  if [ -z "$worktree" ]; then worktree="$(cd "$(dirname "$track")/../.." >/dev/null 2>&1 && pwd -P)"; fi
+  if [ -z "$spec" ]; then spec="$(track_value "source-spec" "$track")"; fi
+  if [ ! -d "$worktree" ]; then
+    printf 'worktree not found: %s\n' "$worktree" >&2
+    return 2
+  fi
+  if [ ! -f "$spec" ]; then
+    printf 'spec not found: %s\n' "$spec" >&2
+    return 2
+  fi
+  printf '%s\n' "$track"
+}
+
+validate_spec_for_tmux() {
+  local input="$1"
+  local strict="$2"
+  local spec spec_text criteria_file criteria_count
+  spec="$(absolute_existing_file "$input")" || {
+    usage >&2
+    return 2
+  }
+  spec_text="$(cat "$spec")"
+  criteria_file="$(mktemp "${TMPDIR:-/tmp}/devloop-criteria.XXXXXX")"
+  parse_criteria "$spec" > "$criteria_file"
+  criteria_count="$(line_count "$criteria_file")"
+  if ! lint_spec_file "$spec" "$spec_text" "$criteria_count" "$strict"; then
+    printf '%s\n' "$SPEC_LINT_ERROR" >&2
+    rm -f "$criteria_file"
+    return 2
+  fi
+  rm -f "$criteria_file"
+  printf '%s\n' "$spec"
+}
+
 run_from_track() {
   local track="$1"
   local worktree spec max report_format strict coder reviewer create_pr timeout_minutes old_pwd code next_pass
-  track="$(absolute_existing_file "$track")" || {
-    printf 'track not found: %s\n' "$track" >&2
-    return 2
-  }
+  track="$(validate_track_for_run "$track")" || return $?
   worktree="$(track_value "worktree" "$track")"
   spec="$(track_value "spec" "$track")"
   max="$(track_value "max" "$track")"
@@ -2682,15 +2865,6 @@ run_from_track() {
   if ! timeout_minutes="$(normalize_timeout_minutes "$timeout_minutes")"; then timeout_minutes="$(devloop_timeout_minutes)"; fi
   next_pass="$(next_pass_from_track "$track")"
   if [ "$next_pass" -gt "$max" ]; then max="$next_pass"; fi
-
-  if [ ! -d "$worktree" ]; then
-    printf 'worktree not found: %s\n' "$worktree" >&2
-    return 2
-  fi
-  if [ ! -f "$spec" ]; then
-    printf 'spec not found: %s\n' "$spec" >&2
-    return 2
-  fi
 
   old_pwd="$PWD"
   cd "$worktree" || return 2
@@ -2745,6 +2919,7 @@ will_enter_worktree_shell() {
 }
 
 run_command() {
+  local original_args=("$@")
   local report_format="html"
   local strict=true
   local use_worktree=true
@@ -2755,6 +2930,7 @@ run_command() {
   local spec=""
   local max_raw="5"
   local max_set=false
+  local no_tmux=false
   local arg value
   coder="$(devloop_coder)"
   reviewer="$(devloop_reviewer)"
@@ -2798,6 +2974,7 @@ run_command() {
         ;;
       --html) report_format="html" ;;
       --markdown|--md) report_format="markdown" ;;
+      --no-tmux) no_tmux=true ;;
       --no-strict) strict=false ;;
       --strict) strict=true ;;
       --in-place) use_worktree=false ;;
@@ -2835,6 +3012,17 @@ run_command() {
   local max="$max_raw"
   if [ "$max" -lt 1 ]; then max=1; fi
   if [ "$max" -gt 10 ]; then max=10; fi
+
+  if [ "$no_tmux" = false ] && devloop_tmux_interactive; then
+    local validated_spec repo
+    validated_spec="$(validate_spec_for_tmux "$spec" "$strict")" || return $?
+    repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || {
+      printf '%s\n' "not inside a git repository" >&2
+      return 2
+    }
+    tmux_launch_session "$repo" "$validated_spec" run "${original_args[@]}"
+    return $?
+  fi
 
   run_header "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
   run_devloop "$spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"

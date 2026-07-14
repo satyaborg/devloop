@@ -27,7 +27,7 @@ cd devloop
 ./scripts/install.sh
 ```
 
-> Requires Bash, git, `codex`, `claude`, `glow`, `gum`, and `fzf`. Run `devloop doctor` to check.
+> Requires Bash, git, `codex`, `claude`, `glow`, `gum`, `fzf`, and `tmux`. Run `devloop doctor` to check.
 > The installers use Homebrew to install missing git/UI tools and the Codex/Claude Code casks when `brew` is available.
 
 Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
@@ -40,6 +40,7 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 | `devloop spec "..."` | Have an agent interview you and write a spec |
 | `devloop nightshift` | Survey configured repos, run selected specs headlessly, and write a morning digest |
 | `devloop <spec.md>` | Run a spec |
+| `devloop --no-tmux <spec.md>` | Run a spec in the current foreground terminal |
 | `devloop --create-pr <spec.md>` | Run a spec and maintain a draft PR (requires `gh`) |
 | `devloop update` | Install the latest released Devloop |
 | `devloop continue` | Resume a tracked run |
@@ -48,6 +49,8 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 
 Each run writes an HTML report, spec, and reviews under `.devloop/`.
 When you pick a spec from the interactive menu, devloop uses your configured run defaults and only prompts for PR mode. The interactive **Settings** menu sets the default coder and reviewer agents (Codex or Claude Code), spec path, and run timeout, saved to `~/.devloop/config`. Use CLI flags such as `--coder`, `--reviewer`, `--in-place`, or `--timeout-minutes` to override those defaults per run.
+
+Interactive run and continue workflows start in a new named tmux session by default. Detach without stopping devloop with `Ctrl-b d`, list sessions with `tmux list-sessions`, and reconnect with `tmux attach -t <session>`. Pass `--no-tmux` to an explicit run or continue command to keep the existing foreground behavior. Redirected, piped, and scheduled runs stay in the foreground automatically.
 
 ## Specs
 
