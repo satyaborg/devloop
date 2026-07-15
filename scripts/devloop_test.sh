@@ -2575,12 +2575,15 @@ ok "doctor"
 
 no_gh_bin="$work/no-gh-bin"
 mkdir -p "$no_gh_bin"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/glow"
-chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude" "$no_gh_bin/glow"
+for tool in codex claude glow gum fzf tmux; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/$tool"
+  chmod +x "$no_gh_bin/$tool"
+done
 sys_clean="$remote_no_tools"
-doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
+if ! doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)"; then
+  printf '%s\n' "$doctor_no_gh_output" >&2
+  fail "doctor failed when gh was unavailable"
+fi
 contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
 contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
 contains "$doctor_no_gh_output" "PR-backed loop readiness unavailable" "doctor no gh"
@@ -2784,7 +2787,7 @@ contains "$(HOME="$helper_home" devloop_skills_dirs)" "$helper_home/.agents/skil
 devloop_can_replace_skill "$helper_home/.agents/skills/devloop-spec" || fail "installed skill should be replaceable"
 devloop_valid_skill_name "devloop-spec" || fail "valid skill name rejected"
 equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md")" "devloop-spec" "skill name"
-helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$tool_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
+helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$no_gh_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
 contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
 ok "direct skill helpers"
 
