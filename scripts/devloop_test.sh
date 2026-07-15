@@ -1892,7 +1892,21 @@ make_remote_release "$remote_version" "$remote_releases"
 remote_release_base="file://$remote_releases"
 remote_no_tools="$work/remote-no-tools"
 mkdir -p "$remote_no_tools"
-remote_no_tools_path="$remote_no_tools:/usr/bin:/bin:/usr/sbin:/sbin"
+for remote_system_dir in /usr/bin /bin /usr/sbin /sbin; do
+  [ -d "$remote_system_dir" ] || continue
+  for remote_system_entry in "$remote_system_dir"/*; do
+    remote_system_name="$(basename "$remote_system_entry")"
+    case "$remote_system_name" in
+      brew|claude|codex|fzf|gh|glow|gum|tmux) continue ;;
+    esac
+    [ -e "$remote_no_tools/$remote_system_name" ] && continue
+    ln -s "$remote_system_entry" "$remote_no_tools/$remote_system_name"
+  done
+done
+remote_no_tools_path="$remote_no_tools"
+if PATH="$remote_no_tools_path" command -v tmux >/dev/null 2>&1; then
+  fail "remote no-tools fixture exposed tmux"
+fi
 
 remote_custom_root="$work/remote-custom-root"
 remote_custom_bin="$work/remote-custom-bin"
@@ -1980,7 +1994,7 @@ remote_needs_yes_bin="$work/remote-needs-yes-bin"
 mkdir -p "$remote_needs_yes_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_needs_yes_bin/brew"
 chmod +x "$remote_needs_yes_bin/brew"
-remote_needs_yes_path="$remote_needs_yes_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_needs_yes_path="$remote_needs_yes_bin:$remote_no_tools_path"
 if remote_needs_yes_output="$(
   HOME="$work/remote-needs-yes-home" PATH="$remote_needs_yes_path" bash "$REMOTE_INSTALLER" \
     --version "$remote_version" \
@@ -1998,7 +2012,7 @@ remote_noop_brew_bin="$work/remote-noop-brew-bin"
 mkdir -p "$remote_noop_brew_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_noop_brew_bin/brew"
 chmod +x "$remote_noop_brew_bin/brew"
-remote_noop_brew_path="$remote_noop_brew_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_noop_brew_path="$remote_noop_brew_bin:$remote_no_tools_path"
 if remote_noop_brew_output="$(
   HOME="$work/remote-noop-brew-home" PATH="$remote_noop_brew_path" bash "$REMOTE_INSTALLER" \
     --yes \
@@ -2018,7 +2032,7 @@ for tool in glow gum fzf tmux codex claude; do
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_tool_bin/$tool"
   chmod +x "$remote_tool_bin/$tool"
 done
-remote_path="$remote_tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_path="$remote_tool_bin:$remote_no_tools_path"
 
 update_root="$work/update-root"
 update_bin="$work/update-bin"
@@ -2187,7 +2201,7 @@ done
 BREW
 chmod +x "$remote_bootstrap_bin/brew"
 remote_bootstrap_home="$work/remote-bootstrap-home"
-remote_bootstrap_path="$remote_bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_bootstrap_path="$remote_bootstrap_bin:$remote_no_tools_path"
 if ! remote_bootstrap_output="$(
   HOME="$remote_bootstrap_home" PATH="$remote_bootstrap_path" bash "$REMOTE_INSTALLER" \
     --yes \
@@ -2565,19 +2579,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/glow"
 chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude" "$no_gh_bin/glow"
-# Mirror the system bin dirs without gh so `command -v gh` fails regardless of
-# where gh is installed on the host (CI runners ship gh in /usr/bin).
-sys_clean="$work/sys-clean"
-mkdir -p "$sys_clean"
-for sys_dir in /usr/bin /bin; do
-  [ -d "$sys_dir" ] || continue
-  for sys_entry in "$sys_dir"/*; do
-    sys_name="$(basename "$sys_entry")"
-    [ "$sys_name" = "gh" ] && continue
-    [ -e "$sys_clean/$sys_name" ] && continue
-    ln -s "$sys_entry" "$sys_clean/$sys_name"
-  done
-done
+sys_clean="$remote_no_tools"
 doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
 contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
 contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
