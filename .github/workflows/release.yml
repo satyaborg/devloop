@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "devloop-ci"
+          git config --global user.email "ci@devloop.sh"
+          git config --global init.defaultBranch main
+
+      - name: Syntax check
+        run: bash -n devloop scripts/install.sh scripts/release.sh scripts/skill_helpers.sh scripts/install.remote.sh scripts/devloop_test.sh
+
+      - name: Test suite
+        run: bash scripts/devloop_test.sh
+
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure shellcheck
+        run: command -v shellcheck >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+
+      - name: Run shellcheck
+        run: shellcheck devloop scripts/install.sh scripts/skill_helpers.sh scripts/release.sh scripts/install.remote.sh scripts/devloop_test.sh
+
+  release:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release ref
+        run: |
+          export DEVLOOP_RELEASE_LIB=1
+          source scripts/release.sh
+          tag_version="${GITHUB_REF_NAME#v}"
+          root_version="$(sed -n '1p' VERSION)"
+          site_version="$(sed -n '1p' site/public/VERSION)"
+          echo "tag=$tag_version root=$root_version site=$site_version"
+          if ! release_version_valid "$tag_version"; then
+            echo "::error::tag must be v followed by a valid SemVer version"
+            exit 1
+          fi
+          if [ "$tag_version" != "$root_version" ] || [ "$tag_version" != "$site_version" ]; then
+            echo "::error::tag, VERSION, and site/public/VERSION must match"
+            exit 1
+          fi
+          git fetch --quiet origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::release tag commit must belong to main"
+            exit 1
+          fi
+
+      - name: Build release assets
+        run: |
+          mkdir -p dist
+          export DEVLOOP_RELEASE_LIB=1
+          source scripts/release.sh
+          release_create_artifacts "$(sed -n '1p' VERSION)" dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes dist/*
