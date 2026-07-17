@@ -11,7 +11,7 @@ cd devloop
 devloop doctor         # verify required dependencies
 ```
 
-Required to run a loop: Bash, git, `glow`, `gum`, `fzf`, and the `codex` and `claude` CLIs. The install scripts use Homebrew to install missing git/UI tools and the Codex/Claude Code casks when `brew` is available. The test suite itself needs only Bash, git, and coreutils, so you can develop and test without the agent CLIs installed.
+Required to run a loop: Bash, git, `glow`, `gum`, `fzf`, `tmux`, and the `codex` and `claude` CLIs. The install scripts use Homebrew to install missing git/UI tools and tmux, plus the Codex/Claude Code casks when `brew` is available. Interactive runs enter a named tmux session by default; use `--no-tmux` when debugging the foreground process. The test suite itself needs only Bash, git, and coreutils because tmux behavior is covered with a fake executable.
 
 ## Development loop
 

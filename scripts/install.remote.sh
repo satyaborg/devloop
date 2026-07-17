@@ -217,7 +217,7 @@ missing_agent_casks() {
 
 print_dependency_status() {
   local tool
-  for tool in git glow gum fzf codex claude; do
+  for tool in git glow gum fzf tmux codex claude; do
     if command -v "$tool" >/dev/null 2>&1; then
       info "[ok] $tool: $(command -v "$tool")"
     fi
@@ -305,7 +305,7 @@ install_required_dependencies() {
     brew install --cask "${missing_casks[@]}"
   fi
 
-  still_missing="$(missing_commands git glow gum fzf codex claude)"
+  still_missing="$(missing_commands git glow gum fzf tmux codex claude)"
   if [ -n "$still_missing" ]; then
     info "still missing required dependencies: $still_missing"
     return 1
@@ -410,7 +410,7 @@ main() {
     VERSION="$(resolve_latest_version)"
   fi
   version="$(normalize_version "$VERSION")"
-  formula_missing="$(missing_commands git glow gum fzf)"
+  formula_missing="$(missing_commands git glow gum fzf tmux)"
   cask_missing="$(missing_agent_casks)"
 
   if [ "$DRY_RUN" = true ]; then

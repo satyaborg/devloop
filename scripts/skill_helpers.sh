@@ -353,6 +353,7 @@ devloop_doctor() {
   devloop_doctor_command glow || status=1
   devloop_doctor_command gum || status=1
   devloop_doctor_command fzf || status=1
+  devloop_doctor_command tmux || status=1
   printf '\nSkills\n'
   devloop_doctor_skills "$root" || status=1
   devloop_doctor_github

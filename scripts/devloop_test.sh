@@ -85,6 +85,10 @@ contains "$help" "--version" "help"
 contains "$help" "--timeout-minutes" "help"
 contains "$help" "--report-format html|markdown" "help"
 contains "$help" "choose report format" "help"
+contains "$help" "named tmux session" "help"
+contains "$help" "--no-tmux" "help"
+contains "$help" "Ctrl-b d" "help"
+contains "$help" "tmux attach -t" "help"
 ok "help output"
 
 remote_help="$("$REMOTE_INSTALLER" --help)"
@@ -109,6 +113,13 @@ not_contains "$readme_text" "render.py" "README Python spec renderer"
 contains "$readme_text" "render.sh" "README spec renderer"
 contains "$readme_text" "sibling HTML companion" "README spec renderer"
 contains "$readme_text" "HTML report" "README report docs"
+contains "$readme_text" "tmux" "README required dependency"
+contains "$readme_text" "--no-tmux" "README foreground override"
+contains "$readme_text" "Ctrl-b d" "README detach guidance"
+contains "$readme_text" "tmux attach -t" "README reattach guidance"
+contributing_text="$(cat "$REPO_ROOT/CONTRIBUTING.md")"
+contains "$contributing_text" "tmux" "CONTRIBUTING required dependency"
+contains "$contributing_text" "--no-tmux" "CONTRIBUTING foreground override"
 ok "README install docs"
 
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
@@ -449,9 +460,312 @@ USE_TUI=true
 tui_help="$(welcome_tui)"
 contains "$tui_help" "devloop update" "TUI help"
 contains "$tui_help" "devloop nightshift" "TUI help"
+contains "$tui_help" "named tmux session" "TUI help"
+contains "$tui_help" "--no-tmux" "TUI help"
+contains "$tui_help" "Ctrl-b d" "TUI help"
+contains "$tui_help" "tmux attach -t" "TUI help"
 not_contains "$tui_help" "devloop $obsolete_update_command" "TUI help"
 USE_TUI="$old_use_tui"
 unset -f gum
+
+tmux_repo="$work/Fancy Repo!"
+mkdir -p "$tmux_repo"
+tmux_repo="$(cd "$tmux_repo" >/dev/null 2>&1 && pwd -P)"
+tmux_spec="$tmux_repo/Spec @ One.md"
+tmux_track="$tmux_repo/continued-run.md"
+git init -q "$tmux_repo"
+cat > "$tmux_spec" <<'TMUX_SPEC'
+---
+type: feat
+---
+
+# Tmux Spec
+
+## Acceptance criteria
+1. Exercise the tmux boundary.
+TMUX_SPEC
+cat > "$tmux_track" <<TRACK
+# Track
+
+- spec: $tmux_spec
+- source-repo: $tmux_repo
+- worktree: $tmux_repo
+TRACK
+
+equals "$(tmux_normalize_component " Fancy !! Name " repo)" "fancy-name" "tmux component normalization"
+equals "$(tmux_normalize_component "!!!" repo)" "repo" "tmux component fallback"
+equals "$(tmux_session_base_name "$tmux_repo" "$tmux_spec")" "devloop-fancy-repo-spec-one" "tmux run session base"
+equals "$(tmux_session_base_name "$work/!!!" "$work/---.md")" "devloop-repo-run" "tmux session fallback base"
+if devloop_tmux_interactive </dev/null; then fail "tmux eligibility accepted non-TTY stdin"; fi
+if (devloop_tmux_interactive) > "$work/non-tty-stdout"; then fail "tmux eligibility accepted non-TTY stdout"; fi
+
+tmux_bin="$work/tmux-bin"
+tmux_log="$work/tmux.log"
+mkdir -p "$tmux_bin"
+cat > "$tmux_bin/tmux" <<'TMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf '%s\n' "CALL"
+  for arg in "$@"; do printf 'ARG=%s\n' "$arg"; done
+  printf '%s\n' "END"
+} >> "$DEVLOOP_TMUX_LOG"
+case "${1:-}" in
+  list-sessions)
+    if [ -n "${DEVLOOP_TMUX_SESSIONS:-}" ]; then printf '%s\n' "$DEVLOOP_TMUX_SESSIONS"; fi
+    ;;
+  new-session)
+    if [ "${DEVLOOP_TMUX_NEW_FAIL:-0}" = "1" ]; then exit 17; fi
+    ;;
+  switch-client)
+    if [ "${DEVLOOP_TMUX_SWITCH_FAIL:-0}" = "1" ]; then exit 19; fi
+    ;;
+esac
+TMUX
+chmod +x "$tmux_bin/tmux"
+old_path="$PATH"
+PATH="$tmux_bin:$PATH"
+DEVLOOP_TMUX_LOG="$tmux_log"
+export PATH DEVLOOP_TMUX_LOG
+
+: > "$tmux_log"
+DEVLOOP_TMUX_SESSIONS=$'devloop-fancy-repo-spec-one\ndevloop-fancy-repo-spec-one-2'
+export DEVLOOP_TMUX_SESSIONS
+equals "$(tmux_allocate_session_name "devloop-fancy-repo-spec-one")" "devloop-fancy-repo-spec-one-3" "tmux collision allocation"
+contains "$(cat "$tmux_log")" "ARG=#{session_name}" "tmux exact session listing"
+
+: > "$tmux_log"
+DEVLOOP_TMUX_SESSIONS=""
+export DEVLOOP_TMUX_SESSIONS
+tmux_marker="$work/tmux-shell-interpolation-marker"
+if ! (
+  cd "$tmux_repo"
+  unset TMUX
+  tmux_launch_session "$tmux_repo" "$tmux_spec" run --plain "arg with spaces" "; touch $tmux_marker"
+); then
+  fail "outside-tmux launch failed"
+fi
+outside_tmux_log="$(cat "$tmux_log")"
+contains "$outside_tmux_log" "ARG=new-session" "outside-tmux launch"
+contains "$outside_tmux_log" "ARG=-s" "outside-tmux named session"
+contains "$outside_tmux_log" "ARG=devloop-fancy-repo-spec-one" "outside-tmux session name"
+contains "$outside_tmux_log" "ARG=-c" "outside-tmux working directory flag"
+contains "$outside_tmux_log" "ARG=$tmux_repo" "outside-tmux working directory"
+contains "$outside_tmux_log" "ARG=PATH=$PATH" "outside-tmux PATH forwarding"
+contains "$outside_tmux_log" "ARG=$SCRIPT_PATH" "outside-tmux runtime"
+contains "$outside_tmux_log" "ARG=arg with spaces" "outside-tmux argv spaces"
+contains "$outside_tmux_log" "ARG=; touch $tmux_marker" "outside-tmux argv metacharacters"
+not_contains "$outside_tmux_log" "ARG=-d" "outside-tmux attached launch"
+not_contains "$outside_tmux_log" "ARG=-A" "outside-tmux never reuses a session"
+not_contains "$outside_tmux_log" "ARG=sh" "outside-tmux no shell wrapper"
+equals "$(count_occurrences "$tmux_log" "ARG=--no-tmux")" "1" "outside-tmux recursion guard"
+[[ ! -e "$tmux_marker" ]] || fail "tmux launcher evaluated a child argument"
+
+: > "$tmux_log"
+TMUX="/tmp/fake-tmux,1,0"
+export TMUX
+if ! (cd "$tmux_repo" && tmux_launch_session "$tmux_repo" "$tmux_track" continue "$tmux_track"); then
+  fail "inside-tmux launch failed"
+fi
+inside_tmux_log="$(cat "$tmux_log")"
+contains "$inside_tmux_log" "ARG=-d" "inside-tmux detached creation"
+contains "$inside_tmux_log" "ARG=switch-client" "inside-tmux client switch"
+contains "$inside_tmux_log" "ARG=continue" "inside-tmux continue command"
+equals "$(count_occurrences "$tmux_log" "ARG=--no-tmux")" "1" "inside-tmux recursion guard"
+
+: > "$tmux_log"
+DEVLOOP_TMUX_NEW_FAIL=1
+export DEVLOOP_TMUX_NEW_FAIL
+if tmux_new_failure_output="$(cd "$tmux_repo" && tmux_launch_session "$tmux_repo" "$tmux_spec" run "$tmux_spec" 2>&1)"; then
+  fail "tmux launcher accepted failed new-session"
+fi
+contains "$tmux_new_failure_output" "failed to create tmux session" "tmux new-session failure"
+not_contains "$(cat "$tmux_log")" "ARG=switch-client" "tmux new-session failure does not switch"
+unset DEVLOOP_TMUX_NEW_FAIL
+
+: > "$tmux_log"
+DEVLOOP_TMUX_SWITCH_FAIL=1
+export DEVLOOP_TMUX_SWITCH_FAIL
+if tmux_switch_failure_output="$(cd "$tmux_repo" && tmux_launch_session "$tmux_repo" "$tmux_spec" run "$tmux_spec" 2>&1)"; then
+  fail "tmux launcher accepted failed switch-client"
+fi
+contains "$tmux_switch_failure_output" "tmux session is still running" "tmux switch failure preservation"
+contains "$tmux_switch_failure_output" "tmux switch-client -t devloop-fancy-repo-spec-one" "tmux switch recovery"
+contains "$tmux_switch_failure_output" "tmux attach -t devloop-fancy-repo-spec-one" "tmux attach recovery"
+equals "$(count_occurrences "$tmux_log" "ARG=new-session")" "1" "tmux switch failure single launch"
+unset DEVLOOP_TMUX_SWITCH_FAIL TMUX
+
+if tmux_missing_output="$(
+  tmux_command_available() { return 1; }
+  tmux_launch_session "$tmux_repo" "$tmux_spec" run "$tmux_spec" 2>&1
+)"; then
+  fail "tmux launcher accepted missing tmux"
+fi
+contains "$tmux_missing_output" "rerun the installer or install tmux" "missing tmux guidance"
+ok "tmux launcher helpers"
+
+tmux_boundary_log="$work/tmux-boundary.log"
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() {
+    printf 'launch' >> "$tmux_boundary_log"
+    for arg in "$@"; do printf ' <%s>' "$arg" >> "$tmux_boundary_log"; done
+    printf '\n' >> "$tmux_boundary_log"
+  }
+  run_header() { :; }
+  run_devloop() { printf '%s\n' "unexpected foreground run" >> "$tmux_boundary_log"; }
+  maybe_enter_worktree() { :; }
+  run_command --coder claude --reviewer codex --timeout-minutes 9 "$tmux_spec" 3
+); then
+  fail "eligible explicit run failed"
+fi
+explicit_launch="$(cat "$tmux_boundary_log")"
+contains "$explicit_launch" "launch <$tmux_repo> <$tmux_spec> <run>" "eligible explicit run boundary"
+contains "$explicit_launch" "<--coder> <claude>" "eligible explicit run coder argv"
+contains "$explicit_launch" "<--reviewer> <codex>" "eligible explicit run reviewer argv"
+not_contains "$explicit_launch" "foreground" "eligible explicit run executes only in tmux"
+
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf '%s\n' "unexpected tmux launch" >> "$tmux_boundary_log"; return 99; }
+  run_header() { :; }
+  run_devloop() { printf 'foreground'; for arg in "$@"; do printf ' <%s>' "$arg"; done; printf '\n'; }
+  maybe_enter_worktree() { :; }
+  run_command --no-tmux --plain "$tmux_spec" 2 > "$tmux_boundary_log"
+); then
+  fail "--no-tmux explicit run failed"
+fi
+contains "$(cat "$tmux_boundary_log")" "foreground <$tmux_spec> <2>" "--no-tmux explicit foreground run"
+not_contains "$(cat "$tmux_boundary_log")" "unexpected tmux" "--no-tmux explicit run bypass"
+
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 1; }
+  tmux_launch_session() { printf '%s\n' "unexpected tmux launch" >> "$tmux_boundary_log"; return 99; }
+  run_header() { :; }
+  run_devloop() { printf '%s\n' "foreground noninteractive"; }
+  maybe_enter_worktree() { :; }
+  run_command "$tmux_spec" > "$tmux_boundary_log"
+); then
+  fail "noninteractive explicit run failed"
+fi
+equals "$(cat "$tmux_boundary_log")" "foreground noninteractive" "noninteractive explicit foreground run"
+
+: > "$tmux_boundary_log"
+if (
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf '%s\n' "launch attempted" >> "$tmux_boundary_log"; return 17; }
+  run_header() { :; }
+  run_devloop() { printf '%s\n' "foreground retry" >> "$tmux_boundary_log"; }
+  run_command "$tmux_spec"
+); then
+  fail "explicit run accepted tmux launch failure"
+fi
+equals "$(cat "$tmux_boundary_log")" "launch attempted" "tmux failure has no foreground retry"
+
+: > "$tmux_boundary_log"
+if invalid_spec_output="$(
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf '%s\n' "launch attempted" >> "$tmux_boundary_log"; }
+  run_command "$tmux_repo/missing.md" 2>&1
+)"; then
+  fail "explicit run accepted missing spec"
+fi
+contains "$invalid_spec_output" "usage: devloop" "missing spec validation"
+[[ ! -s "$tmux_boundary_log" ]] || fail "missing spec created a tmux session"
+
+equals "$(validate_track_for_run "$tmux_track")" "$tmux_track" "continue track validation"
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf 'launch'; for arg in "$@"; do printf ' <%s>' "$arg"; done; printf '\n'; }
+  run_from_track() { printf '%s\n' "unexpected foreground continue"; }
+  continue_command "$tmux_track" > "$tmux_boundary_log"
+); then
+  fail "eligible explicit continue failed"
+fi
+contains "$(cat "$tmux_boundary_log")" "launch <$tmux_repo> <$tmux_track> <continue> <$tmux_track>" "eligible explicit continue boundary"
+not_contains "$(cat "$tmux_boundary_log")" "foreground" "eligible explicit continue executes only in tmux"
+
+: > "$tmux_boundary_log"
+if ! (
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf '%s\n' "unexpected tmux launch"; return 99; }
+  run_from_track() { printf 'foreground continue <%s>\n' "$1"; }
+  continue_command --no-tmux "$tmux_track" > "$tmux_boundary_log"
+); then
+  fail "--no-tmux explicit continue failed"
+fi
+equals "$(cat "$tmux_boundary_log")" "foreground continue <$tmux_track>" "--no-tmux continue foreground"
+
+: > "$tmux_boundary_log"
+if invalid_track_output="$(
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf '%s\n' "launch attempted" >> "$tmux_boundary_log"; }
+  continue_command "$tmux_repo/missing-track.md" 2>&1
+)"; then
+  fail "continue accepted missing track"
+fi
+contains "$invalid_track_output" "track not found" "missing track validation"
+[[ ! -s "$tmux_boundary_log" ]] || fail "missing track created a tmux session"
+
+menu_prompt_log="$work/menu-prompt.log"
+: > "$menu_prompt_log"
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  USE_TUI=true
+  ENTER_WORKTREE=false
+  UI_BACK=false
+  devloop_tmux_interactive() { return 0; }
+  devloop_coder() { printf '%s\n' "claude"; }
+  devloop_reviewer() { printf '%s\n' "codex"; }
+  devloop_timeout_minutes() { printf '%s\n' "42"; }
+  interactive_create_pr_choice() { printf '%s\n' "prompt" >> "$menu_prompt_log"; printf '%s\n' "true"; }
+  run_header() { :; }
+  tmux_launch_session() { printf 'launch'; for arg in "$@"; do printf ' <%s>' "$arg"; done; printf '\n'; }
+  run_devloop() { printf '%s\n' "unexpected foreground menu run"; }
+  interactive_run_setup "$tmux_spec" > "$tmux_boundary_log"
+); then
+  fail "menu-selected tmux run failed"
+fi
+menu_launch="$(cat "$tmux_boundary_log")"
+contains "$menu_launch" "launch <$tmux_repo> <$tmux_spec> <run>" "menu-selected run boundary"
+contains "$menu_launch" "<--tui>" "menu-selected run TUI choice"
+contains "$menu_launch" "<--coder> <claude>" "menu-selected run coder choice"
+contains "$menu_launch" "<--reviewer> <codex>" "menu-selected run reviewer choice"
+contains "$menu_launch" "<--timeout-minutes> <42>" "menu-selected run timeout choice"
+contains "$menu_launch" "<--create-pr>" "menu-selected run PR choice"
+contains "$menu_launch" "<--no-shell>" "menu-selected run shell choice"
+equals "$(wc -l < "$menu_prompt_log" | tr -d ' ')" "1" "menu-selected run prompts once before tmux"
+
+: > "$tmux_boundary_log"
+if ! (
+  cd "$tmux_repo"
+  UI_BACK=false
+  list_artifact_files() { printf '%s\n' "$tmux_track"; }
+  ui_pick_from_file() { sed -n '1p' "$1"; }
+  devloop_tmux_interactive() { return 0; }
+  tmux_launch_session() { printf 'launch'; for arg in "$@"; do printf ' <%s>' "$arg"; done; printf '\n'; }
+  run_from_track() { printf '%s\n' "unexpected foreground menu continue"; }
+  interactive_continue_run > "$tmux_boundary_log"
+); then
+  fail "menu-selected tmux continue failed"
+fi
+equals "$(cat "$tmux_boundary_log")" "launch <$tmux_repo> <$tmux_track> <continue> <$tmux_track>" "menu-selected continue boundary"
+ok "tmux run and continue boundaries"
+
+PATH="$old_path"
+export PATH
+unset DEVLOOP_TMUX_LOG DEVLOOP_TMUX_SESSIONS
 
 criteria_file="$work/criteria.md"
 cat > "$criteria_file" <<'MARKDOWN'
@@ -1032,7 +1346,7 @@ night_digest="$night_repo_real/.devloop/nightshift/2026-07-05/digest.md"
 contains "$(cat "$night_prompt_capture")" "write specs only, do not implement" "nightshift survey prompt capture"
 contains "$(cat "$night_survey_args_capture")" "$night_repo_real|nightshift-survey|claude -p" "nightshift survey uses run_with_prompt"
 equals "$(grep -c '^args ' "$night_run_log" | tr -d ' ')" "5" "nightshift runner invocation count"
-contains "$(cat "$night_run_log")" "--plain --no-shell --create-pr --coder claude --reviewer codex --timeout-minutes 12" "nightshift runner headless flags"
+contains "$(cat "$night_run_log")" "--plain --no-tmux --no-shell --create-pr --coder claude --reviewer codex --timeout-minutes 12" "nightshift runner headless flags"
 contains "$(cat "$night_run_log")" "$night_repo_real/.devloop/nightshift/2026-07-05/specs/01-first.md 4" "nightshift runner max passes"
 equals "$(grep -E '^(start|end) ' "$night_run_log")" $'start 01-first.md\nend 01-first.md\nstart 02-second.md\nend 02-second.md\nstart 03-third.md\nend 03-third.md\nstart 04-timeout.md\nend 04-timeout.md\nstart 05-crash.md\nend 05-crash.md' "nightshift runner sequential order"
 equals "$(cat "$night_leak_capture")" "global-branch|global-pr|global-report" "nightshift run repo local scoping"
@@ -1578,7 +1892,21 @@ make_remote_release "$remote_version" "$remote_releases"
 remote_release_base="file://$remote_releases"
 remote_no_tools="$work/remote-no-tools"
 mkdir -p "$remote_no_tools"
-remote_no_tools_path="$remote_no_tools:/usr/bin:/bin:/usr/sbin:/sbin"
+for remote_system_dir in /usr/bin /bin /usr/sbin /sbin; do
+  [ -d "$remote_system_dir" ] || continue
+  for remote_system_entry in "$remote_system_dir"/*; do
+    remote_system_name="$(basename "$remote_system_entry")"
+    case "$remote_system_name" in
+      brew|claude|codex|fzf|gh|glow|gum|tmux) continue ;;
+    esac
+    [ -e "$remote_no_tools/$remote_system_name" ] && continue
+    ln -s "$remote_system_entry" "$remote_no_tools/$remote_system_name"
+  done
+done
+remote_no_tools_path="$remote_no_tools"
+if PATH="$remote_no_tools_path" command -v tmux >/dev/null 2>&1; then
+  fail "remote no-tools fixture exposed tmux"
+fi
 
 remote_custom_root="$work/remote-custom-root"
 remote_custom_bin="$work/remote-custom-bin"
@@ -1598,8 +1926,8 @@ contains "$remote_dry_output" "verify: $remote_release_base/v$remote_version/dev
 contains "$remote_dry_output" "install: $remote_custom_root/$remote_version" "remote dry run install dir"
 contains "$remote_dry_output" "link: $remote_custom_bin/devloop -> $remote_custom_root/$remote_version/devloop" "remote dry run bin dir"
 contains "$remote_dry_output" "skills: $work/remote-dry-home/.agents/skills, $work/remote-dry-home/.claude/skills" "remote dry run skills"
-contains "$remote_dry_output" "missing required dependencies: glow gum fzf" "remote missing UI guidance"
-contains "$remote_dry_output" "install with: brew install glow gum fzf" "remote missing UI guidance"
+contains "$remote_dry_output" "missing required dependencies: glow gum fzf tmux" "remote missing UI guidance"
+contains "$remote_dry_output" "install with: brew install glow gum fzf tmux" "remote missing UI guidance"
 contains "$remote_dry_output" "missing required cask dependencies: codex claude-code" "remote missing agent guidance"
 contains "$remote_dry_output" "install with: brew install --cask codex claude-code" "remote missing agent guidance"
 [[ ! -e "$remote_custom_root" ]] || fail "remote dry run created install root"
@@ -1666,7 +1994,7 @@ remote_needs_yes_bin="$work/remote-needs-yes-bin"
 mkdir -p "$remote_needs_yes_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_needs_yes_bin/brew"
 chmod +x "$remote_needs_yes_bin/brew"
-remote_needs_yes_path="$remote_needs_yes_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_needs_yes_path="$remote_needs_yes_bin:$remote_no_tools_path"
 if remote_needs_yes_output="$(
   HOME="$work/remote-needs-yes-home" PATH="$remote_needs_yes_path" bash "$REMOTE_INSTALLER" \
     --version "$remote_version" \
@@ -1684,7 +2012,7 @@ remote_noop_brew_bin="$work/remote-noop-brew-bin"
 mkdir -p "$remote_noop_brew_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_noop_brew_bin/brew"
 chmod +x "$remote_noop_brew_bin/brew"
-remote_noop_brew_path="$remote_noop_brew_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_noop_brew_path="$remote_noop_brew_bin:$remote_no_tools_path"
 if remote_noop_brew_output="$(
   HOME="$work/remote-noop-brew-home" PATH="$remote_noop_brew_path" bash "$REMOTE_INSTALLER" \
     --yes \
@@ -1700,11 +2028,11 @@ ok "remote installer fails when dependencies remain missing"
 
 remote_tool_bin="$work/remote-tool-bin"
 mkdir -p "$remote_tool_bin"
-for tool in glow gum fzf codex claude; do
+for tool in glow gum fzf tmux codex claude; do
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$remote_tool_bin/$tool"
   chmod +x "$remote_tool_bin/$tool"
 done
-remote_path="$remote_tool_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_path="$remote_tool_bin:$remote_no_tools_path"
 
 update_root="$work/update-root"
 update_bin="$work/update-bin"
@@ -1858,7 +2186,7 @@ if [ "${1:-}" = "--cask" ]; then shift; fi
 tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 for formula in "$@"; do
   case "$formula" in
-    git|glow|gum|fzf|codex)
+    git|glow|gum|fzf|tmux|codex)
       command_name="$formula"
       printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$command_name"
       chmod +x "$tool_dir/$command_name"
@@ -1873,7 +2201,7 @@ done
 BREW
 chmod +x "$remote_bootstrap_bin/brew"
 remote_bootstrap_home="$work/remote-bootstrap-home"
-remote_bootstrap_path="$remote_bootstrap_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+remote_bootstrap_path="$remote_bootstrap_bin:$remote_no_tools_path"
 if ! remote_bootstrap_output="$(
   HOME="$remote_bootstrap_home" PATH="$remote_bootstrap_path" bash "$REMOTE_INSTALLER" \
     --yes \
@@ -1884,11 +2212,12 @@ if ! remote_bootstrap_output="$(
   printf '%s\n' "$remote_bootstrap_output" >&2
   fail "remote installer dependency bootstrap failed"
 fi
-contains "$remote_bootstrap_output" "installing required dependencies: glow gum fzf" "remote installer installs UI dependencies"
+contains "$remote_bootstrap_output" "installing required dependencies: glow gum fzf tmux" "remote installer installs UI dependencies"
 contains "$remote_bootstrap_output" "installing required cask dependencies: codex claude-code" "remote installer installs agent dependencies"
 PATH="$remote_bootstrap_path" command -v glow >/dev/null 2>&1 || fail "remote installer did not make glow available"
 PATH="$remote_bootstrap_path" command -v gum >/dev/null 2>&1 || fail "remote installer did not make gum available"
 PATH="$remote_bootstrap_path" command -v fzf >/dev/null 2>&1 || fail "remote installer did not make fzf available"
+PATH="$remote_bootstrap_path" command -v tmux >/dev/null 2>&1 || fail "remote installer did not make tmux available"
 PATH="$remote_bootstrap_path" command -v codex >/dev/null 2>&1 || fail "remote installer did not make codex available"
 PATH="$remote_bootstrap_path" command -v claude >/dev/null 2>&1 || fail "remote installer did not make claude available"
 ok "remote installer bootstraps missing dependencies"
@@ -2014,7 +2343,7 @@ if [ "${1:-}" = "--cask" ]; then shift; fi
 tool_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 for formula in "$@"; do
   case "$formula" in
-    git|glow|gum|fzf|codex)
+    git|glow|gum|fzf|tmux|codex)
       command_name="$formula"
       printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tool_dir/$command_name"
       chmod +x "$tool_dir/$command_name"
@@ -2036,6 +2365,7 @@ contains "$(cat /tmp/devloop-install-test.out)" "gh auth login" "installer optio
 PATH="$install_path" command -v glow >/dev/null 2>&1 || fail "installer did not make glow available"
 PATH="$install_path" command -v gum >/dev/null 2>&1 || fail "installer did not make gum available"
 PATH="$install_path" command -v fzf >/dev/null 2>&1 || fail "installer did not make fzf available"
+PATH="$install_path" command -v tmux >/dev/null 2>&1 || fail "installer did not make tmux available"
 PATH="$install_path" command -v codex >/dev/null 2>&1 || fail "installer did not make codex available"
 PATH="$install_path" command -v claude >/dev/null 2>&1 || fail "installer did not make claude available"
 [[ -f "$install_home/.agents/skills/devloop-spec/SKILL.md" ]] || fail "installer did not install Codex spec skill"
@@ -2232,6 +2562,7 @@ contains "$doctor_output" "[ok] glow:" "doctor"
 contains "$doctor_output" "[ok] skill devloop-spec" "doctor"
 contains "$doctor_output" "[ok] gum:" "doctor"
 contains "$doctor_output" "[ok] fzf:" "doctor"
+contains "$doctor_output" "[ok] tmux:" "doctor"
 contains "$doctor_output" "GitHub PR integration" "doctor"
 contains "$doctor_output" "[PASS] gh installed" "doctor"
 contains "$doctor_output" "[PASS] gh authenticated" "doctor"
@@ -2244,24 +2575,15 @@ ok "doctor"
 
 no_gh_bin="$work/no-gh-bin"
 mkdir -p "$no_gh_bin"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/codex"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/claude"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/glow"
-chmod +x "$no_gh_bin/codex" "$no_gh_bin/claude" "$no_gh_bin/glow"
-# Mirror the system bin dirs without gh so `command -v gh` fails regardless of
-# where gh is installed on the host (CI runners ship gh in /usr/bin).
-sys_clean="$work/sys-clean"
-mkdir -p "$sys_clean"
-for sys_dir in /usr/bin /bin; do
-  [ -d "$sys_dir" ] || continue
-  for sys_entry in "$sys_dir"/*; do
-    sys_name="$(basename "$sys_entry")"
-    [ "$sys_name" = "gh" ] && continue
-    [ -e "$sys_clean/$sys_name" ] && continue
-    ln -s "$sys_entry" "$sys_clean/$sys_name"
-  done
+for tool in codex claude glow gum fzf tmux; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$no_gh_bin/$tool"
+  chmod +x "$no_gh_bin/$tool"
 done
-doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor failed when gh was unavailable"
+sys_clean="$remote_no_tools"
+if ! doctor_no_gh_output="$(HOME="$install_home" PATH="$bin_dir:$no_gh_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)"; then
+  printf '%s\n' "$doctor_no_gh_output" >&2
+  fail "doctor failed when gh was unavailable"
+fi
 contains "$doctor_no_gh_output" "devloop doctor: ready" "doctor no gh"
 contains "$doctor_no_gh_output" "[FAIL] gh installed" "doctor no gh"
 contains "$doctor_no_gh_output" "PR-backed loop readiness unavailable" "doctor no gh"
@@ -2273,7 +2595,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/codex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/gum"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/fzf"
-chmod +x "$no_glow_bin/codex" "$no_glow_bin/claude" "$no_glow_bin/gum" "$no_glow_bin/fzf"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$no_glow_bin/tmux"
+chmod +x "$no_glow_bin/codex" "$no_glow_bin/claude" "$no_glow_bin/gum" "$no_glow_bin/fzf" "$no_glow_bin/tmux"
 if doctor_no_glow_output="$(HOME="$install_home" PATH="$bin_dir:$no_glow_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)"; then
   printf '%s\n' "$doctor_no_glow_output" >&2
   fail "doctor passed when glow was unavailable"
@@ -2281,6 +2604,20 @@ fi
 contains "$doctor_no_glow_output" "[fail] missing command: glow" "doctor no glow"
 contains "$doctor_no_glow_output" "devloop doctor: not ready" "doctor no glow"
 ok "doctor requires glow"
+
+no_tmux_bin="$work/no-tmux-bin"
+mkdir -p "$no_tmux_bin"
+for tool in codex claude glow gum fzf; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$no_tmux_bin/$tool"
+  chmod +x "$no_tmux_bin/$tool"
+done
+if doctor_no_tmux_output="$(HOME="$install_home" PATH="$bin_dir:$no_tmux_bin:$sys_clean" "$bin_dir/devloop" doctor 2>&1)"; then
+  printf '%s\n' "$doctor_no_tmux_output" >&2
+  fail "doctor passed when tmux was unavailable"
+fi
+contains "$doctor_no_tmux_output" "[fail] missing command: tmux" "doctor no tmux"
+contains "$doctor_no_tmux_output" "devloop doctor: not ready" "doctor no tmux"
+ok "doctor requires tmux"
 
 agent="$work/spec-agent"
 cat > "$agent" <<'AGENT'
@@ -2450,7 +2787,7 @@ contains "$(HOME="$helper_home" devloop_skills_dirs)" "$helper_home/.agents/skil
 devloop_can_replace_skill "$helper_home/.agents/skills/devloop-spec" || fail "installed skill should be replaceable"
 devloop_valid_skill_name "devloop-spec" || fail "valid skill name rejected"
 equals "$(devloop_skill_name "$helper_home/.agents/skills/devloop-spec/SKILL.md")" "devloop-spec" "skill name"
-helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$tool_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
+helper_doctor_output="$(HOME="$helper_home" PATH="$fake_bin:$bin_dir:$no_gh_bin:$sys_clean" devloop_doctor "$REPO_ROOT" 2>&1)" || fail "direct doctor failed"
 contains "$helper_doctor_output" "devloop doctor: ready" "direct doctor"
 ok "direct skill helpers"
 
