@@ -44,7 +44,17 @@ See [AGENTS.md](AGENTS.md) for the repository map and the same guidelines in age
 
 ## Releases
 
-Releases are cut by maintainers from a CI-green `main` with [`scripts/release.sh`](scripts/release.sh), which bumps `VERSION`, regenerates `CHANGELOG.md` from commit history with [git-cliff](https://git-cliff.org/), tags, and publishes the GitHub Release. The release script skips the full local shell suite by default because CI already runs it on merge to `main`; for `--push` and `--publish`, it first verifies local `HEAD` matches upstream. Pass `--run-tests` when you want an extra local preflight. You do not need to touch `VERSION` or `CHANGELOG.md` in a normal PR.
+Releases use a version pull request followed by a separate publish step:
+
+```sh
+./scripts/release.sh minor
+# Merge the generated pull request after CI passes.
+git switch main
+git pull --ff-only
+./scripts/release.sh publish
+```
+
+The bump command requires a clean `main` matching `origin/main`, creates `chore/release-vX.Y.Z`, updates both version files and `CHANGELOG.md`, and opens a pull request. After that pull request merges, `publish` tags the current version without incrementing it. Publication refuses a stale changelog, so commits added after release preparation require a pull request that refreshes `CHANGELOG.md`. The tag-triggered release workflow reruns the shell suite and shellcheck, validates SemVer, requires the tagged commit to belong to `main`, verifies the tag matches both version files, builds the archive and checksum, and creates the GitHub Release. Pass `--run-tests` to either command for an extra local preflight. You do not need to touch `VERSION` or `CHANGELOG.md` in a normal pull request.
 
 ## Reporting bugs and proposing features
 

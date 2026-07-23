@@ -79,7 +79,7 @@ cd devloop
 bash scripts/devloop_test.sh
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, full gates, and release notes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, full gates, and the two-step release flow.
 
 ## Privacy
 

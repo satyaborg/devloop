@@ -122,6 +122,12 @@ contains "$contributing_text" "tmux" "CONTRIBUTING required dependency"
 contains "$contributing_text" "--no-tmux" "CONTRIBUTING foreground override"
 ok "README install docs"
 
+release_workflow_text="$(cat "$REPO_ROOT/.github/workflows/release.yml")"
+contains "$release_workflow_text" "fetch-depth: 0" "release workflow full history"
+contains "$release_workflow_text" "release_version_valid \"\$tag_version\"" "release workflow SemVer guard"
+contains "$release_workflow_text" "git merge-base --is-ancestor \"\$GITHUB_SHA\" refs/remotes/origin/main" "release workflow main ancestry guard"
+ok "release workflow guards"
+
 skill_path="$("$REPO_ROOT/devloop" spec --skill-path)"
 [[ "$skill_path" == "$REPO_ROOT/skills/devloop-spec/SKILL.md" ]] || fail "unexpected skill path: $skill_path"
 contains "$("$REPO_ROOT/devloop" spec --print-skill)" "name: devloop-spec" "spec skill"
@@ -1824,7 +1830,8 @@ ok "pure helpers"
   export DEVLOOP_RELEASE_LIB
   # shellcheck disable=SC1091
   source "$SCRIPTS_DIR/release.sh"
-  contains "$(release_usage)" "usage: ./scripts/release.sh" "release usage"
+  contains "$(release_usage)" "usage:" "release usage"
+  contains "$(release_usage)" "./scripts/release.sh publish" "release publish usage"
   release_version_valid "0.1.0" || fail "release version rejected valid patch"
   release_version_valid "1.2.3-alpha.1+build.7" || fail "release version rejected valid prerelease"
   if release_version_valid "01.2.3"; then fail "release version accepted leading zero"; fi
@@ -1843,11 +1850,6 @@ ok "pure helpers"
   equals "$(release_next_version minor "0.1.0")" "0.2.0" "minor bump"
   equals "$(release_next_version major "0.1.0")" "1.0.0" "major bump"
   if release_next_version patch "0.1.0-alpha.1" >/dev/null 2>&1; then fail "release bump accepted prerelease"; fi
-  # shellcheck disable=SC2329
-  release_require_command() {
-    if [ "$1" = "git-cliff" ]; then return 1; fi
-    return 0
-  }
   ROOT="$work/release-root"
   mkdir -p "$ROOT/site/public"
   git init -q "$ROOT"
@@ -1856,17 +1858,26 @@ ok "pure helpers"
   equals "$(sed -n '1p' "$ROOT/site/public/VERSION")" "9.9.8" "release writes site version"
   printf '%s\n' "9.9.9" > "$ROOT/VERSION"
   printf '%s\n' "9.9.9" > "$ROOT/site/public/VERSION"
-  dry_run_output="$(release_main "patch" --dry-run)" || fail "release dry-run required git-cliff"
+  dry_run_output="$(release_main "patch" --dry-run)" || fail "release pull request dry run failed"
   contains "$dry_run_output" "next: 9.9.10 (v9.9.10)" "release dry-run"
-  contains "$dry_run_output" "would skip local tests (use --run-tests to run bash scripts/devloop_test.sh)" "release dry-run"
-  contains "$dry_run_output" "would tag: v9.9.10" "release dry-run"
-  test_dry_run_output="$(release_main "patch" --run-tests --dry-run)" || fail "release test dry-run required git-cliff"
+  contains "$dry_run_output" "would create branch: chore/release-v9.9.10" "release dry-run"
+  contains "$dry_run_output" "would update VERSION, site/public/VERSION, and CHANGELOG.md" "release dry-run"
+  contains "$dry_run_output" "would open pull request: chore: release 9.9.10" "release dry-run"
+  contains "$dry_run_output" "pull request CI remains authoritative" "release dry-run"
+  test_dry_run_output="$(release_main "patch" --run-tests --dry-run)" || fail "release test dry-run failed"
   contains "$test_dry_run_output" "would run bash scripts/devloop_test.sh" "release test dry-run"
-  publish_dry_run_output="$(release_main "patch" --publish --dry-run)" || fail "release publish dry-run required git-cliff"
-  contains "$publish_dry_run_output" "would verify local HEAD matches upstream, then skip local tests" "release publish dry-run"
-  contains "$publish_dry_run_output" "would push branch and tag" "release publish dry-run"
-  contains "$publish_dry_run_output" "would build release assets: devloop-9.9.10.tar.gz and devloop-9.9.10.tar.gz.sha256" "release publish dry-run"
-  contains "$publish_dry_run_output" "would create GitHub release: gh release create v9.9.10 --verify-tag --generate-notes" "release publish dry-run"
+  publish_dry_run_output="$(release_main publish --dry-run)" || fail "release publish dry-run failed"
+  contains "$publish_dry_run_output" "version: 9.9.9" "release publish dry-run"
+  contains "$publish_dry_run_output" "tag: v9.9.9" "release publish dry-run"
+  contains "$publish_dry_run_output" "would require CHANGELOG.md to match current main" "release publish dry-run"
+  contains "$publish_dry_run_output" "would create and push tag: v9.9.9" "release publish dry-run"
+  contains "$publish_dry_run_output" "tag workflow would build assets" "release publish dry-run"
+  publish_test_dry_run_output="$(release_main publish --run-tests --dry-run)" || fail "release publish test dry-run failed"
+  contains "$publish_test_dry_run_output" "would run bash scripts/devloop_test.sh" "release publish test dry-run"
+  if old_publish_output="$(release_main patch --publish --dry-run 2>&1)"; then
+    fail "release accepted the removed bump-and-publish flag"
+  fi
+  contains "$old_publish_output" "unknown option: --publish" "release removed publish flag"
   git -C "$ROOT" config user.email devloop-test@example.com
   git -C "$ROOT" config user.name "devloop test"
   git -C "$ROOT" add VERSION site/public/VERSION
@@ -1875,14 +1886,130 @@ ok "pure helpers"
   printf '%s\n' "dirty" > "$ROOT/dirty"
   if release_assert_clean_tree >/dev/null 2>&1; then fail "release clean tree accepted dirty repo"; fi
   rm "$ROOT/dirty"
-  if release_assert_head_matches_upstream >/dev/null 2>&1; then fail "release upstream accepted missing upstream"; fi
-  git -C "$ROOT" branch verified-main
-  git -C "$ROOT" branch --set-upstream-to=verified-main >/dev/null
-  release_assert_head_matches_upstream || fail "release upstream rejected matching HEAD"
-  git -C "$ROOT" commit --allow-empty -q -m local-ahead
-  if release_assert_head_matches_upstream >/dev/null 2>&1; then fail "release upstream accepted local ahead HEAD"; fi
-  [ -n "$(release_current_branch)" ] || fail "release current branch missing"
-  DEVLOOP_RELEASE_ALLOW_BRANCH=1 release_assert_push_branch || fail "release push branch rejected"
+  release_assert_version_files "9.9.9" || fail "release rejected matching version files"
+  printf '%s\n' "9.9.8" > "$ROOT/site/public/VERSION"
+  if release_assert_version_files "9.9.9" >/dev/null 2>&1; then fail "release accepted mismatched version files"; fi
+  printf '%s\n' "9.9.9" > "$ROOT/site/public/VERSION"
+
+  release_flow_root="$work/release-flow"
+  release_flow_remote="$work/release-flow-remote.git"
+  release_flow_bin="$work/release-flow-bin"
+  release_gh_log="$work/release-gh.log"
+  mkdir -p "$release_flow_root/site/public" "$release_flow_bin"
+  cp "$REPO_ROOT/cliff.toml" "$release_flow_root/cliff.toml"
+  printf '%s\n' "9.9.9" > "$release_flow_root/VERSION"
+  printf '%s\n' "9.9.9" > "$release_flow_root/site/public/VERSION"
+  printf '%s\n' "# Changelog" > "$release_flow_root/CHANGELOG.md"
+  git init -q "$release_flow_root"
+  git -C "$release_flow_root" branch -m main
+  git -C "$release_flow_root" config user.email devloop-test@example.com
+  git -C "$release_flow_root" config user.name "devloop test"
+  git -C "$release_flow_root" add .
+  git -C "$release_flow_root" commit -q -m "feat: initial release fixture"
+  git init -q --bare "$release_flow_remote"
+  git -C "$release_flow_root" remote add origin "$release_flow_remote"
+  git -C "$release_flow_root" push -q -u origin main
+  cat > "$release_flow_bin/git-cliff" <<'GIT_CLIFF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+{
+  printf '%s\n\n' "# Changelog"
+  printf '## [9.9.10](https://github.com/satyaborg/devloop/releases/tag/v9.9.10) - %s\n\n' "$(git for-each-ref --format='%(taggerdate:short)' refs/tags/v9.9.10)"
+  git log --reverse --format='- %s' --grep='^feat:'
+} > "$output"
+GIT_CLIFF
+  cat > "$release_flow_bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$RELEASE_GH_LOG"
+printf '%s\n' "https://example.test/release-pr"
+GH
+  chmod +x "$release_flow_bin/git-cliff" "$release_flow_bin/gh"
+  export RELEASE_GH_LOG="$release_gh_log"
+  PATH="$release_flow_bin:$PATH"
+  ROOT="$release_flow_root"
+
+  GIT_AUTHOR_DATE="2026-07-14T10:00:00Z"
+  GIT_COMMITTER_DATE="2026-07-14T10:00:00Z"
+  export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+  release_prepare_output="$(release_prepare_pr patch false false 2>&1)" || fail "release pull request preparation failed"
+  unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+  equals "$(release_current_branch)" "chore/release-v9.9.10" "release pull request branch"
+  equals "$(release_current_version)" "9.9.10" "release pull request root version"
+  equals "$(sed -n '1p' "$ROOT/site/public/VERSION")" "9.9.10" "release pull request site version"
+  contains "$(cat "$ROOT/CHANGELOG.md")" " - 2026-07-14" "release pull request changelog date"
+  contains "$(cat "$ROOT/CHANGELOG.md")" "- feat: initial release fixture" "release pull request changelog"
+  contains "$(cat "$release_gh_log")" "pr create --base main --head chore/release-v9.9.10" "release pull request creation"
+  contains "$(cat "$release_gh_log")" "./scripts/release.sh publish" "release pull request instructions"
+  contains "$release_prepare_output" "opened release pull request for v9.9.10" "release pull request output"
+  if git -C "$ROOT" rev-parse -q --verify refs/tags/v9.9.10 >/dev/null; then fail "release pull request left a local tag"; fi
+  git -C "$ROOT" ls-remote --exit-code --heads origin refs/heads/chore/release-v9.9.10 >/dev/null || fail "release pull request branch was not pushed"
+
+  git -C "$ROOT" switch -q main
+  GIT_AUTHOR_DATE="2026-07-15T10:00:00Z" GIT_COMMITTER_DATE="2026-07-15T10:00:00Z" \
+    git -C "$ROOT" merge -q --no-ff -m "Merge release pull request" chore/release-v9.9.10
+  git -C "$ROOT" push -q origin main
+  next_day_changelog="$work/release-next-day-changelog.md"
+  GIT_COMMITTER_DATE="2026-07-15T10:00:00Z" release_render_changelog "9.9.10" "$next_day_changelog"
+  contains "$(cat "$next_day_changelog")" " - 2026-07-15" "release next-day changelog date"
+  if cmp -s "$ROOT/CHANGELOG.md" "$next_day_changelog"; then fail "release next-day changelogs unexpectedly matched before normalization"; fi
+  release_changelog_matches "9.9.10" "$ROOT/CHANGELOG.md" "$next_day_changelog" || fail "release rejected a date-only changelog difference"
+  rm "$next_day_changelog"
+
+  printf '%s\n' "late release change" > "$ROOT/late.txt"
+  git -C "$ROOT" add late.txt
+  GIT_AUTHOR_DATE="2026-07-15T11:00:00Z" GIT_COMMITTER_DATE="2026-07-15T11:00:00Z" \
+    git -C "$ROOT" commit -q -m "feat: land after release preparation"
+  git -C "$ROOT" push -q origin main
+  if stale_changelog_output="$(GIT_COMMITTER_DATE="2026-07-15T11:00:00Z" release_publish false false 2>&1)"; then
+    fail "release publish accepted a stale changelog"
+  fi
+  contains "$stale_changelog_output" "CHANGELOG.md does not match v9.9.10 at current main" "release stale changelog"
+  contains "$stale_changelog_output" "refresh CHANGELOG.md in a release pull request" "release stale changelog instructions"
+  if git -C "$ROOT" rev-parse -q --verify refs/tags/v9.9.10 >/dev/null; then fail "stale changelog left a local tag"; fi
+
+  GIT_COMMITTER_DATE="2026-07-15T11:00:00Z" release_render_changelog "9.9.10" "$ROOT/CHANGELOG.md"
+  git -C "$ROOT" add CHANGELOG.md
+  GIT_AUTHOR_DATE="2026-07-15T12:00:00Z" GIT_COMMITTER_DATE="2026-07-15T12:00:00Z" \
+    git -C "$ROOT" commit -q -m "chore: refresh release changelog"
+  git -C "$ROOT" push -q origin main
+  release_head="$(git -C "$ROOT" rev-parse HEAD)"
+
+  cat > "$release_flow_remote/hooks/pre-receive" <<'PRE_RECEIVE'
+#!/usr/bin/env bash
+set -euo pipefail
+while read -r _old _new ref; do
+  if [ "$ref" = "refs/tags/v9.9.10" ]; then exit 1; fi
+done
+PRE_RECEIVE
+  chmod +x "$release_flow_remote/hooks/pre-receive"
+  if failed_push_output="$(GIT_COMMITTER_DATE="2026-07-15T12:00:00Z" release_publish false false 2>&1)"; then
+    fail "release publish accepted a rejected tag push"
+  fi
+  contains "$failed_push_output" "pre-receive hook declined" "release rejected tag push"
+  if git -C "$ROOT" rev-parse -q --verify refs/tags/v9.9.10 >/dev/null; then fail "failed tag push left a local tag"; fi
+  if git -C "$ROOT" ls-remote --exit-code --tags origin refs/tags/v9.9.10 >/dev/null 2>&1; then fail "failed tag push created a remote tag"; fi
+  rm "$release_flow_remote/hooks/pre-receive"
+
+  release_publish_output="$(GIT_COMMITTER_DATE="2026-07-15T12:00:00Z" release_publish false false 2>&1)" || fail "release publish failed"
+  equals "$(release_current_version)" "9.9.10" "release publish preserved version"
+  equals "$(git -C "$ROOT" rev-parse HEAD)" "$release_head" "release publish preserved commit"
+  equals "$(git -C "$ROOT" rev-list -n 1 v9.9.10)" "$release_head" "release publish tag commit"
+  git -C "$ROOT" ls-remote --exit-code --tags origin refs/tags/v9.9.10 >/dev/null || fail "release publish tag was not pushed"
+  contains "$release_publish_output" "published v9.9.10" "release publish output"
+  contains "$release_publish_output" "GitHub Actions will build assets" "release publish workflow output"
+  if duplicate_publish_output="$(release_publish false false 2>&1)"; then
+    fail "release publish accepted an existing tag"
+  fi
+  contains "$duplicate_publish_output" "tag already exists: v9.9.10" "release duplicate publish"
 )
 ok "release helpers"
 
