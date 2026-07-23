@@ -1863,6 +1863,7 @@ ok "pure helpers"
   contains "$dry_run_output" "would create branch: chore/release-v9.9.10" "release dry-run"
   contains "$dry_run_output" "would update VERSION, site/public/VERSION, and CHANGELOG.md" "release dry-run"
   contains "$dry_run_output" "would open pull request: chore: release 9.9.10" "release dry-run"
+  contains "$dry_run_output" "would enable auto-merge after required CI passes" "release dry-run"
   contains "$dry_run_output" "pull request CI remains authoritative" "release dry-run"
   test_dry_run_output="$(release_main "patch" --run-tests --dry-run)" || fail "release test dry-run failed"
   contains "$test_dry_run_output" "would run bash scripts/devloop_test.sh" "release test dry-run"
@@ -1949,7 +1950,8 @@ GH
   contains "$(cat "$ROOT/CHANGELOG.md")" "- feat: initial release fixture" "release pull request changelog"
   contains "$(cat "$release_gh_log")" "pr create --base main --head chore/release-v9.9.10" "release pull request creation"
   contains "$(cat "$release_gh_log")" "./scripts/release.sh publish" "release pull request instructions"
-  contains "$release_prepare_output" "opened release pull request for v9.9.10" "release pull request output"
+  contains "$(cat "$release_gh_log")" "pr merge https://example.test/release-pr --auto --merge" "release pull request auto-merge"
+  contains "$release_prepare_output" "enabled auto-merge for v9.9.10 after required CI passes" "release pull request output"
   if git -C "$ROOT" rev-parse -q --verify refs/tags/v9.9.10 >/dev/null; then fail "release pull request left a local tag"; fi
   git -C "$ROOT" ls-remote --exit-code --heads origin refs/heads/chore/release-v9.9.10 >/dev/null || fail "release pull request branch was not pushed"
 

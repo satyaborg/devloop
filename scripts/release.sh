@@ -24,7 +24,7 @@ usage:
 
 Release flow:
   1. Run patch, minor, or major to open a version-bump pull request.
-  2. Merge the pull request after CI passes.
+  2. The release pull request merges automatically after required CI passes.
   3. Run publish from main to push the existing version tag.
   4. GitHub Actions builds the assets and creates the GitHub Release.
 
@@ -302,7 +302,7 @@ release_prepare_pr() {
   local bump="$1"
   local dry_run="$2"
   local run_tests="$3"
-  local current version tag branch title
+  local current version tag branch title pr_url
 
   current="$(release_current_version)"
   version="$(release_next_version "$bump" "$current")" || return $?
@@ -323,6 +323,7 @@ release_prepare_pr() {
     fi
     printf 'would commit: %s\n' "$title"
     printf 'would open pull request: %s\n' "$title"
+    printf '%s\n' "would enable auto-merge after required CI passes"
     return 0
   fi
 
@@ -350,8 +351,10 @@ release_prepare_pr() {
   fi
 
   git -C "$ROOT" push -u origin "$branch" || return $?
-  gh pr create --base main --head "$branch" --title "$title" --body "$(release_pr_body "$version")" || return $?
-  printf 'opened release pull request for %s\n' "$tag"
+  pr_url="$(gh pr create --base main --head "$branch" --title "$title" --body "$(release_pr_body "$version")")" || return $?
+  printf '%s\n' "$pr_url"
+  gh pr merge "$pr_url" --auto --merge || return $?
+  printf 'enabled auto-merge for %s after required CI passes\n' "$tag"
 }
 
 release_publish() {
