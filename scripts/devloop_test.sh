@@ -1037,7 +1037,7 @@ printf '%s\n' "spec_dir=.specs" > "$clean_status_repo/.devloop/config"
 if ! has_user_dirty_paths "$clean_status_repo"; then fail "devloop config was not treated as user dirt"; fi
 equals "$(clean_candidate_status "$clean_status_track" "$clean_status_repo" "$work/source-repo")" "dirty" "clean candidate sees config dirt"
 
-config_repo="$work/config-repo"
+config_repo="$work/a-repo"
 config_home="$work/config-home"
 git init -q "$config_repo"
 config_repo_real="$(cd "$config_repo" && pwd -P)"
@@ -1069,15 +1069,21 @@ contains "$configured_specs" "custom-specs/custom.md" "configured spec search in
 contains "$configured_specs" "$config_default_specs/devloop.md" "configured spec search still includes default"
 if (cd "$config_repo" && HOME="$config_home" write_config_spec_dir "../bad") >/dev/null 2>&1; then fail "write_config_spec_dir accepted path traversal"; fi
 
-absolute_specs="$work/shared-specs"
+absolute_specs="$work/z-shared"
 equals "$(cd "$config_repo" && HOME="$config_home" write_config_spec_dir local "$absolute_specs")" "$absolute_specs" "write absolute config spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$absolute_specs" "absolute configured spec dir"
 equals "$(cd "$config_repo" && HOME="$config_home" configured_spec_dir)" "$absolute_specs" "absolute custom spec dir"
 [[ -d "$absolute_specs" ]] || fail "absolute configured spec dir was not created"
 printf '%s\n' "# Shared" > "$absolute_specs/shared.md"
+printf '%s\n' "# Older shared" > "$absolute_specs/2026-07-01-older.md"
 absolute_configured_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 contains "$absolute_configured_specs" "$absolute_specs/shared.md" "configured spec search includes absolute dir"
 contains "$absolute_configured_specs" "$config_default_specs/devloop.md" "absolute spec search still includes default"
+equals "$absolute_configured_specs" "$absolute_specs/shared.md
+$config_default_specs/devloop.md
+$config_default_specs/2026-07-25-latest.md
+$config_default_specs/2026-07-23-older.md
+$absolute_specs/2026-07-01-older.md" "spec files sort by basename across directories"
 equals "$(spec_dir_status "$absolute_specs")" "exists" "spec dir status exists"
 equals "$(spec_dir_status "$work/missing-specs")" "missing" "spec dir status missing"
 (cd "$config_repo" && HOME="$config_home" remove_config_spec_dir local)

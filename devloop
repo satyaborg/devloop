@@ -810,13 +810,18 @@ EOF
 }
 
 list_spec_files() {
-  local dir
+  local dir path
   spec_search_dirs |
     while IFS= read -r dir; do
       if [ -d "$dir" ]; then
         find "$dir" -type f -name '*.md'
       fi
-    done | LC_ALL=C sort -r
+    done |
+    while IFS= read -r path; do
+      printf '%s\t%s\n' "${path##*/}" "$path"
+    done |
+    LC_ALL=C sort -t $'\t' -k1,1r -k2,2r |
+    cut -f2-
 }
 
 spec_dir_status() {
