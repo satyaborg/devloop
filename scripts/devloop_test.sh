@@ -169,6 +169,12 @@ not_contains "$spec_template_text" "**I1" "spec template plain invariant labels"
 contains "$review_skill_text" "Check every spec obligation independently" "review skill obligations"
 contains "$review_skill_text" "Every acceptance criterion, invariant, and failure mode is \`PASS\`." "review skill obligations"
 contains "$review_skill_text" "Do not flag work required solely by an invariant or failure mode as scope drift." "review skill scope drift"
+contains "$review_skill_text" "Run every declared test suite" "review skill test verification"
+contains "$review_skill_text" "gh pr checks" "review skill CI verification"
+contains "$review_skill_text" "10 minutes" "review skill bounded CI verification"
+contains "$review_skill_text" "Never run deploy, publish, release, seed, or migration commands" "review skill verification safety"
+contains "$review_skill_text" "write an \`UNCLEAR\` review" "review skill unavailable verification"
+contains "$review_skill_text" "Factor completed test and CI results into the verdict" "review skill verification verdict"
 ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
@@ -859,10 +865,18 @@ Verdict: ACCEPT
 | Simplicity | PASS | no extra abstraction |
 | Security | N/A | no security boundary |
 | Operational safety | PASS | no partial update |
+
+## Verification matrix
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Test suites | PASS | `bash scripts/devloop_test.sh` passed |
+| CI | N/A | no open pull request |
 MARKDOWN
 equals "$(parse_verdict "$review_file")" "ACCEPT" "parse_verdict"
 has_passing_matrix "$review_file" "$obligations_file" || fail "has_passing_matrix rejected passing matrix"
 has_passing_quality_matrix "$review_file" || fail "has_passing_quality_matrix rejected passing matrix"
+has_passing_verification_matrix "$review_file" || fail "has_passing_verification_matrix rejected passing matrix"
 sed 's/| AC2 | PASS |/| AC2 | FAIL |/' "$review_file" > "$work/review-fail.md"
 if has_passing_matrix "$work/review-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing criterion"; fi
 sed 's/| F1 | PASS |/| F1 | FAIL |/' "$review_file" > "$work/review-failure-fail.md"
@@ -871,6 +885,15 @@ sed 's/| I1 | PASS |/| I1 | FAIL |/' "$review_file" > "$work/review-invariant-fa
 if has_passing_matrix "$work/review-invariant-fail.md" "$obligations_file"; then fail "has_passing_matrix accepted failing invariant"; fi
 sed 's/| Maintainability | PASS |/| Maintainability | FAIL |/' "$review_file" > "$work/review-quality-fail.md"
 if has_passing_quality_matrix "$work/review-quality-fail.md"; then fail "has_passing_quality_matrix accepted failing matrix"; fi
+sed 's/| Test suites | PASS |/| Test suites | FAIL |/' "$review_file" > "$work/review-test-suites-fail.md"
+if has_passing_verification_matrix "$work/review-test-suites-fail.md"; then fail "has_passing_verification_matrix accepted failing test suites"; fi
+sed 's/| CI | N\/A |/| CI | FAIL |/' "$review_file" > "$work/review-ci-fail.md"
+if has_passing_verification_matrix "$work/review-ci-fail.md"; then fail "has_passing_verification_matrix accepted failing CI"; fi
+cp "$work/review-ci-fail.md" "$work/review-ci-misplaced.md"
+printf '\n## Notes\n\n| CI | PASS | misplaced result |\n' >> "$work/review-ci-misplaced.md"
+if has_passing_verification_matrix "$work/review-ci-misplaced.md"; then fail "has_passing_verification_matrix accepted misplaced CI row"; fi
+sed 's/no open pull request//' "$review_file" > "$work/review-empty-verification-evidence.md"
+has_passing_verification_matrix "$work/review-empty-verification-evidence.md" || fail "has_passing_verification_matrix rejected empty evidence unlike sibling gates"
 
 coder_prompt_text="$(coder_prompt "$criteria_file" ".devloop/tracks/test.md" 1 true "" "$obligations_file")"
 contains "$coder_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "coder prompt obligations"
@@ -878,16 +901,40 @@ contains "$coder_prompt_text" "F1: (Empty input): The command reports the error 
 contains "$coder_prompt_text" "I1: State changes only after validation succeeds." "coder prompt invariant"
 contains "$coder_prompt_text" "satisfying every spec obligation" "coder prompt contract"
 
-review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" true)"
+review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" true "https://github.com/example/project/pull/7")"
 contains "$review_prompt_text" "Skill: use the installed devloop-review skill." "review prompt"
 contains "$review_prompt_text" "Bundled skill path, for fallback only: $REPO_ROOT/skills/devloop-review/SKILL.md" "review prompt"
 contains "$review_prompt_text" "Engineering quality matrix" "review prompt"
+contains "$review_prompt_text" "Verification matrix" "review prompt verification"
+contains "$review_prompt_text" "Strict verification: enabled" "review prompt strict verification"
+contains "$review_prompt_text" "Run every declared test suite" "review prompt test suites"
+contains "$review_prompt_text" 'gh pr view "https://github.com/example/project/pull/7" --json headRefOid --jq .headRefOid' "review prompt CI SHA"
+contains "$review_prompt_text" 'gh pr checks "https://github.com/example/project/pull/7" --json bucket,name,link' "review prompt CI polling"
+contains "$review_prompt_text" "Poll every 15 seconds for at most 10 minutes." "review prompt bounded CI polling"
+not_contains "$review_prompt_text" "gh pr checks \"https://github.com/example/project/pull/7\" --watch" "review prompt unbounded CI watch"
+not_contains "$review_prompt_text" "test configuration, executable scripts" "review prompt unsafe test discovery"
+contains "$review_prompt_text" "Never run deploy, publish, release, seed, or migration commands" "review prompt test safety"
+contains "$review_prompt_text" "write UNCLEAR" "review prompt unavailable verification"
+contains "$review_prompt_text" "Factor completed test and CI results into the verdict." "review prompt verification verdict"
 contains "$review_prompt_text" "Spec obligations (acceptance criteria, invariants, and failure modes):" "review prompt obligations"
 contains "$review_prompt_text" "F1: (Empty input): The command reports the error without changing state." "review prompt failure mode"
 contains "$review_prompt_text" "I1: State changes only after validation succeeds." "review prompt invariant"
 contains "$review_prompt_text" "ACCEPT requires every acceptance criterion, invariant, and failure mode PASS" "review prompt contract"
 contains "$review_prompt_text" "outside the spec's declared scope or is not needed to satisfy any listed obligation" "review prompt scope drift"
 not_contains "$review_prompt_text" "outside the acceptance criteria" "review prompt scope drift"
+
+no_pr_review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" true)"
+contains "$no_pr_review_prompt_text" "Pull request: none" "review prompt no PR"
+contains "$no_pr_review_prompt_text" "CI is N/A because no open pull request exists." "review prompt no PR CI"
+
+non_strict_review_prompt_text="$(review_prompt codex "$criteria_file" ".devloop/tracks/test.md" main 1 ".devloop/reviews/test-r1.md" test 5 "$obligations_file" false "https://github.com/example/project/pull/7")"
+contains "$non_strict_review_prompt_text" "Strict verification: disabled" "review prompt non-strict verification"
+not_contains "$non_strict_review_prompt_text" "Verification matrix" "review prompt non-strict matrix"
+not_contains "$non_strict_review_prompt_text" "Pull request:" "review prompt non-strict PR"
+not_contains "$non_strict_review_prompt_text" "Run every declared test suite" "review prompt non-strict tests"
+equals "$(review_ci_wait_minutes 30)" "10" "review CI wait default cap"
+equals "$(review_ci_wait_minutes 8)" "4" "review CI wait short-run cap"
+equals "$(review_ci_wait_minutes 1)" "1" "review CI wait minimum cap"
 
 findings_a="$work/findings-a.md"
 findings_b="$work/findings-b.md"
@@ -2850,6 +2897,7 @@ if [ "$mode" = "missing-review" ]; then exit 0; fi
 verdict="ACCEPT"
 ac_status="PASS"
 maintainability="PASS"
+test_suites="PASS"
 findings="None"
 fixes="None"
 case "$mode" in
@@ -2862,6 +2910,7 @@ case "$mode" in
     ;;
   bad-ac) ac_status="FAIL" ;;
   bad-quality) maintainability="FAIL" ;;
+  bad-verification) test_suites="FAIL" ;;
   unclear) verdict="UNCLEAR" ;;
 esac
 mkdir -p "$(dirname "$output")"
@@ -2887,6 +2936,13 @@ Verdict: $verdict
 | Simplicity | PASS | fixture |
 | Security | N/A | fixture |
 | Operational safety | PASS | fixture |
+
+## Verification matrix
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Test suites | $test_suites | fixture suite passed |
+| CI | N/A | fixture has no pull request |
 
 ## Review flags
 
@@ -3436,6 +3492,15 @@ if bad_quality_output="$(run_loop "$loop_repo" "e2e-bad-quality" bad-quality 1 2
 fi
 contains "$bad_quality_output" "unclear" "bad quality loop"
 ok "e2e bad quality matrix"
+
+loop_repo="$work/loop-bad-verification"
+make_loop_repo "$loop_repo" "e2e-bad-verification" "E2E Bad Verification"
+if bad_verification_output="$(run_loop "$loop_repo" "e2e-bad-verification" bad-verification 1 2>&1)"; then
+  printf '%s\n' "$bad_verification_output" >&2
+  fail "bad verification loop unexpectedly passed"
+fi
+contains "$bad_verification_output" "unclear" "bad verification loop"
+ok "e2e bad verification matrix"
 
 loop_repo="$work/loop-missing-review"
 make_loop_repo "$loop_repo" "e2e-missing-review" "E2E Missing Review"

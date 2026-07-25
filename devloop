@@ -6,6 +6,7 @@ CODEX_REASONING_ARGS=(-c 'model_reasoning_effort="xhigh"')
 CLAUDE_MODEL_ARGS=(--model claude-opus-4-8)
 CLAUDE_EFFORT_ARGS=(--effort xhigh)
 DEFAULT_TIMEOUT_MINUTES=30
+DEFAULT_REVIEW_CI_WAIT_MINUTES=10
 DEFAULT_SPEC_DIR=".devloop/specs"
 DEFAULT_CODER="codex"
 DEFAULT_REVIEWER="claude"
@@ -3277,7 +3278,7 @@ run_devloop() {
     local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
     event_step "$reviewer_id" "pass $pass/$max: $(agent_label "$reviewer") reviewing"
-    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict")" "$reviewer_id"; then
+    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict" "$PULL_REQUEST" "$(review_ci_wait_minutes "$timeout_minutes")")" "$reviewer_id"; then
       event_done "$reviewer_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
@@ -3309,6 +3310,8 @@ run_devloop() {
       if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
         STATUS="unclear"
       elif [ "$strict" = true ] && ! has_passing_quality_matrix "$repo/$review"; then
+        STATUS="unclear"
+      elif [ "$strict" = true ] && ! has_passing_verification_matrix "$repo/$review"; then
         STATUS="unclear"
       else
         STATUS="accepted"
@@ -3629,6 +3632,16 @@ agent_label() {
     claude) printf '%s' "Claude Code" ;;
     *) printf '%s' "$1" ;;
   esac
+}
+
+review_ci_wait_minutes() {
+  local timeout_minutes="$1"
+  local wait_minutes="$DEFAULT_REVIEW_CI_WAIT_MINUTES"
+  if [ "$timeout_minutes" -le "$wait_minutes" ]; then
+    wait_minutes=$((timeout_minutes / 2))
+    if [ "$wait_minutes" -lt 1 ]; then wait_minutes=1; fi
+  fi
+  printf '%s\n' "$wait_minutes"
 }
 
 agent_choice_value() {
@@ -4437,14 +4450,60 @@ review_prompt() {
   local max="$8"
   local obligations_file="$9"
   local strict="${10}"
-  local obligations priors review_skill strict_rule
+  local pull_request="${11:-}"
+  local ci_wait_minutes="${12:-$DEFAULT_REVIEW_CI_WAIT_MINUTES}"
+  local obligations priors review_skill strict_rule verification_context
+  local verification_steps verification_section verification_rules write_step unclear_rule
   obligations="$(cat "$obligations_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
   review_skill="$ROOT_DIR/skills/devloop-review/SKILL.md"
   strict_rule=""
+  verification_context="Strict verification: disabled"
+  verification_steps=""
+  verification_section=""
+  verification_rules=""
+  write_step="4"
+  unclear_rule="- Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes."
   if [ "$strict" = true ]; then
     strict_rule="
-- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, passing full tests, 100% coverage when coverage tooling exists, and every engineering quality row PASS or N/A."
+- ACCEPT also requires regression-test evidence, red/green evidence when behavior changed, every declared test suite passing, 100% coverage when coverage tooling exists, applicable CI passing, and every engineering quality row PASS or N/A."
+    verification_context="Strict verification: enabled
+CI wait cap: $ci_wait_minutes minutes"
+    if [ -n "$pull_request" ]; then
+      verification_context="$verification_context
+Pull request: $pull_request
+Capture reviewed SHA: git rev-parse HEAD
+Confirm PR head: gh pr view \"$pull_request\" --json headRefOid --jq .headRefOid
+Poll checks: gh pr checks \"$pull_request\" --json bucket,name,link
+Poll every 15 seconds for at most $ci_wait_minutes minutes.
+Confirm the PR head still matches the reviewed SHA after polling."
+    else
+      verification_context="$verification_context
+Pull request: none
+CI is N/A because no open pull request exists. Inspect CI configuration and record that reason."
+    fi
+    verification_steps="4. Discover declared test suites only from README or CONTRIBUTING test instructions, manifest test scripts, test configuration, and CI test jobs.
+5. Inspect every command before running it. Never run deploy, publish, release, seed, or migration commands, or commands that mutate state outside the worktree.
+6. Run every declared test suite that is safe for local review.
+7. Inspect CI configuration. If a pull request is provided, verify its head SHA and poll applicable checks within the stated cap.
+8. Factor completed test and CI results into the verdict.
+9. Always write the review after the bounded verification attempt. If verification is unavailable or remains pending at the cap, record the affected row as FAIL and write UNCLEAR with the blocker."
+    verification_section="
+## Verification matrix
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Test suites | <PASS, FAIL, or N/A> | <every command and result, why no suite exists, or the blocker> |
+| CI | <PASS, FAIL, or N/A> | <terminal results, why CI is not applicable, or the blocker> |"
+    verification_rules="
+- ACCEPT requires a complete Verification matrix. Test suites and CI must be PASS or genuinely N/A.
+- Test suites may be N/A only when the repository declares none.
+- CI may be N/A when CI is absent, no workflow applies, no open pull request exists, or no check registers within the wait cap. Record the exact reason.
+- Reject when an applicable test suite or CI check fails.
+- If a safe test cannot run, CI cannot be queried, the PR head differs from the reviewed SHA, or registered checks remain pending at the cap, record FAIL and write UNCLEAR with the blocker.
+- Do not infer that arbitrary executable scripts are tests. Never run commands that deploy, publish, release, seed, migrate, or mutate state outside the worktree."
+    write_step="10"
+    unclear_rule="- Use UNCLEAR only when spec ambiguity or unavailable verification prevents a defensible ACCEPT or REJECT, and put the exact question or blocker in Notes."
   fi
   cat <<EOF
 You are reviewing a $(agent_label "$coder") implementation. Be a senior reviewer, not a linter.
@@ -4457,6 +4516,7 @@ Prior reviews:
 $priors
 Spec obligations (acceptance criteria, invariants, and failure modes):
 $obligations
+$verification_context
 Output path: $output
 Skill: use the installed devloop-review skill.
 Bundled skill path, for fallback only: $review_skill
@@ -4465,7 +4525,8 @@ Steps:
 1. Read the spec and track.
 2. Run: git diff $base...HEAD
 3. Read prior reviews so you do not repeat resolved findings.
-4. Write the review to $output using this exact format:
+$verification_steps
+$write_step. Write the review to $output using this exact format:
 
 # Review $pass
 
@@ -4490,6 +4551,8 @@ Verdict: <ACCEPT | REJECT | UNCLEAR>
 | Simplicity | <PASS, FAIL, or N/A> | <evidence> |
 | Security | <PASS, FAIL, or N/A> | <evidence> |
 | Operational safety | <PASS, FAIL, or N/A> | <evidence> |
+
+$verification_section
 
 ## Review flags
 
@@ -4518,10 +4581,11 @@ Rules:
 - Include exactly one row for every listed spec obligation. Omit sample identifiers that are not present in the spec.
 - ACCEPT requires every acceptance criterion, invariant, and failure mode PASS with concrete implementation evidence and concrete test evidence.$strict_rule
 - ACCEPT requires a complete Engineering quality matrix. Reject if any engineering quality row is FAIL.
+$verification_rules
 - Flag a silent decision when the diff makes a tradeoff, default choice, migration choice, or risk acceptance that is not recorded in the spec or track.
 - Flag scope drift when the diff changes behavior, public API, dependencies, files, or architecture outside the spec's declared scope or is not needed to satisfy any listed obligation, or includes a broad refactor not needed for the spec.
 - Flag a missing test when behavior changed without targeted test evidence, even if the full suite passed.
-- Use UNCLEAR only when spec ambiguity prevents a defensible ACCEPT or REJECT, and put the exact question in Notes.
+$unclear_rule
 - For ACCEPT: Findings and Fix instructions bodies are "None".
 - Findings must explain WHY, not just WHAT.
 EOF
@@ -4686,6 +4750,22 @@ has_passing_quality_matrix() {
     "Security" \
     "Operational safety"; do
     if ! grep -Eiq "^\|[[:space:]]*${area}[[:space:]]*\|[[:space:]]*(PASS|N/A)[[:space:]]*\|" "$file"; then
+      return 1
+    fi
+  done
+}
+
+has_passing_verification_matrix() {
+  local file="$1"
+  local check section
+  section="$(awk '
+    /^##[[:space:]]+Verification matrix[[:space:]]*$/ { inside = 1; next }
+    inside && /^##[[:space:]]+/ { exit }
+    inside { print }
+  ' "$file")"
+  [ -n "$section" ] || return 1
+  for check in "Test suites" "CI"; do
+    if ! printf '%s\n' "$section" | grep -Eiq "^\|[[:space:]]*${check}[[:space:]]*\|[[:space:]]*(PASS|N/A)[[:space:]]*\|"; then
       return 1
     fi
   done
