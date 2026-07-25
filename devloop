@@ -816,7 +816,7 @@ list_spec_files() {
       if [ -d "$dir" ]; then
         find "$dir" -type f -name '*.md'
       fi
-    done | LC_ALL=C sort
+    done | LC_ALL=C sort -r
 }
 
 spec_dir_status() {

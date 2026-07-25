@@ -1045,11 +1045,16 @@ config_default_specs="$config_repo_real/.devloop/specs"
 mkdir -p "$config_repo/.devloop/specs" "$config_home"
 equals "$(HOME="$config_home" devloop_config_file)" "$config_home/.devloop/config" "default config file"
 printf '%s\n' "# Devloop" > "$config_repo/.devloop/specs/devloop.md"
+printf '%s\n' "# Older" > "$config_repo/.devloop/specs/2026-07-23-older.md"
+printf '%s\n' "# Latest" > "$config_repo/.devloop/specs/2026-07-25-latest.md"
 config_specs="$(cd "$config_repo" && HOME="$config_home" list_spec_files)"
 [[ -f "$config_home/.devloop/config" ]] || fail "global config was not created"
 if grep -q "spec_dir=" "$config_home/.devloop/config"; then fail "global config seeded a default spec dir"; fi
 contains "$(cat "$config_home/.devloop/config")" "timeout_minutes=30" "global config default timeout"
 contains "$config_specs" "$config_default_specs/devloop.md" "default spec search uses repo .devloop/specs"
+equals "$config_specs" "$config_default_specs/devloop.md
+$config_default_specs/2026-07-25-latest.md
+$config_default_specs/2026-07-23-older.md" "spec files sort descending with latest ISO date first"
 equals "$(cd "$config_repo" && HOME="$config_home" devloop_spec_dir)" "$config_default_specs" "default spec dir is repo .devloop/specs"
 equals "$(cd "$config_repo" && HOME="$config_home" spec_search_label)" "$config_default_specs" "spec search label is single default dir"
 if (cd "$config_repo" && HOME="$config_home" configured_spec_dir) >/dev/null 2>&1; then fail "default spec dir reported as custom"; fi
