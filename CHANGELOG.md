@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1](https://github.com/satyaborg/devloop/releases/tag/v0.10.1) - 2026-07-29
+
+### Added
+
+- default-tmux-sessions ([7632883](https://github.com/satyaborg/devloop/commit/76328837480a9803ca85ce485d75b10edc06aff5))
+- add two-step release flow ([b8348cd](https://github.com/satyaborg/devloop/commit/b8348cd0c5304e2968c99c150e88a5ec138c48b7))
+- auto-merge release pull requests ([860a2e6](https://github.com/satyaborg/devloop/commit/860a2e65fcce9f75c4c709c940e704830bdb4493))
+
+
+### Fixed
+
+- isolate dependency tests from host tools ([17a1a34](https://github.com/satyaborg/devloop/commit/17a1a34e32070e79f47231954ceaa149dc6b5528))
+- isolate doctor dependency fixtures ([f54e584](https://github.com/satyaborg/devloop/commit/f54e58480ac16f7991def1111fee83f8a35dd306))
+- sort spec picker newest first ([31a26ea](https://github.com/satyaborg/devloop/commit/31a26eaa5265d13d63269229bd13c2c7729fe622))
+- sort specs by filename across directories ([89f68d8](https://github.com/satyaborg/devloop/commit/89f68d8864bfa12aa93157081a1df01f91c4d99b))
+- suppress-agent-transcripts ([f7ff5be](https://github.com/satyaborg/devloop/commit/f7ff5beaa77e72a64f1ab78384115b14a3481f5d))
+- preserve custom agent skill fallback ([808e44d](https://github.com/satyaborg/devloop/commit/808e44d3f5587b4177908b9d75e1d9653dc339f9))
+- escape spec prompt backticks ([6a8bd64](https://github.com/satyaborg/devloop/commit/6a8bd64cd209b9d9a00df33d63a5ac5d32476fea))
+
 ## [0.10.0](https://github.com/satyaborg/devloop/releases/tag/v0.10.0) - 2026-07-14
 
 ### Added
