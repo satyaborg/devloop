@@ -4242,10 +4242,9 @@ run_claude() {
 run_with_prompt() {
   local cwd="$1"
   local log="$2"
-  local id="$3"
   local prompt="$4"
   shift 4
-  local prompt_file stdout_file stderr_file output_file code_file line pid
+  local prompt_file stdout_file stderr_file output_file code_file pid
   prompt_file="$(mktemp "${TMPDIR:-/tmp}/devloop-prompt.XXXXXX")"
   stdout_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stdout.XXXXXX")"
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/devloop-stderr.XXXXXX")"
@@ -4278,11 +4277,6 @@ run_with_prompt() {
   if [ -n "$log" ]; then
     mkdir -p "$(dirname "$log")"
     cp "$output_file" "$log"
-  fi
-  if [ -n "$id" ]; then
-    while IFS= read -r line; do
-      if [ -n "$line" ]; then event_log "$id" "$line"; fi
-    done < "$output_file"
   fi
   rm -f "$prompt_file" "$stdout_file" "$stderr_file" "$output_file" "$code_file"
 }

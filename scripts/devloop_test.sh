@@ -117,6 +117,7 @@ contains "$readme_text" "tmux" "README required dependency"
 contains "$readme_text" "--no-tmux" "README foreground override"
 contains "$readme_text" "Ctrl-b d" "README detach guidance"
 contains "$readme_text" "tmux attach -t" "README reattach guidance"
+contains "$readme_text" "Internal agent transcripts are stored in \`.devloop/logs/\` rather than printed during a run." "README agent transcript logging"
 contributing_text="$(cat "$REPO_ROOT/CONTRIBUTING.md")"
 contains "$contributing_text" "tmux" "CONTRIBUTING required dependency"
 contains "$contributing_text" "--no-tmux" "CONTRIBUTING foreground override"
@@ -473,6 +474,70 @@ contains "$tui_help" "tmux attach -t" "TUI help"
 not_contains "$tui_help" "devloop $obsolete_update_command" "TUI help"
 USE_TUI="$old_use_tui"
 unset -f gum
+
+transcript_success_agent() {
+  local index=1
+  while [ "$index" -le 64 ]; do
+    printf 'agent-success-stdout-%02d\n' "$index"
+    index=$((index + 1))
+  done
+  printf '%s\n' "To continue this session, run codex exec resume 11111111-1111-4111-8111-111111111111"
+  printf '%s\n' "agent-success-stderr-marker" >&2
+}
+
+transcript_failure_agent() {
+  printf '%s\n' "agent-failure-stdout-marker"
+  printf '%s\n' "agent-failure-stderr-marker" >&2
+  return 23
+}
+
+old_use_tui="$USE_TUI"
+transcript_success_terminal="$work/transcript-success-terminal.log"
+transcript_success_log="$work/transcript-success-agent.log"
+USE_TUI=true
+{
+  event_step "transcript-success" "capturing successful agent output"
+  run_with_prompt "$work" "$transcript_success_log" "transcript-success" "fixture prompt" transcript_success_agent
+  event_done "transcript-success" true "done"
+  event_log "transcript-success" "explicit event warning remains visible"
+} > "$transcript_success_terminal" 2>&1
+transcript_success_output="$(cat "$transcript_success_terminal")"
+not_contains "$transcript_success_output" "agent-success-stdout-" "TUI agent stdout suppression"
+not_contains "$transcript_success_output" "agent-success-stderr-marker" "TUI agent stderr suppression"
+contains "$transcript_success_output" "capturing successful agent output" "TUI lifecycle status"
+contains "$transcript_success_output" "done" "TUI lifecycle result"
+contains "$transcript_success_output" "explicit event warning remains visible" "TUI explicit warning"
+equals "$RUN_CODE" "0" "successful agent exit code"
+equals "$(printf '%s\n' "$RUN_STDOUT" | wc -l | tr -d ' ')" "65" "successful agent captured stdout"
+equals "$RUN_STDERR" "agent-success-stderr-marker" "successful agent captured stderr"
+contains "$RUN_OUTPUT" "agent-success-stdout-64" "successful agent combined stdout"
+contains "$RUN_OUTPUT" "agent-success-stderr-marker" "successful agent combined stderr"
+equals "$(extract_session_id "$RUN_OUTPUT")" "11111111-1111-4111-8111-111111111111" "captured session extraction"
+equals "$(cat "$transcript_success_log")" "$RUN_OUTPUT" "successful agent complete log"
+equals "$(wc -l < "$transcript_success_log" | tr -d ' ')" "66" "successful agent log line count"
+
+transcript_failure_terminal="$work/transcript-failure-terminal.log"
+transcript_failure_log="$work/transcript-failure-agent.log"
+USE_TUI=false
+{
+  event_step "transcript-failure" "capturing failing agent output"
+  set +e
+  run_with_prompt "$work" "$transcript_failure_log" "transcript-failure" "fixture prompt" transcript_failure_agent
+  set -e
+  event_done "transcript-failure" false "agent exited with error, see log"
+} > "$transcript_failure_terminal" 2>&1
+transcript_failure_output="$(cat "$transcript_failure_terminal")"
+not_contains "$transcript_failure_output" "agent-failure-stdout-marker" "plain agent stdout suppression"
+not_contains "$transcript_failure_output" "agent-failure-stderr-marker" "plain agent stderr suppression"
+contains "$transcript_failure_output" "capturing failing agent output" "plain lifecycle status"
+contains "$transcript_failure_output" "agent exited with error, see log" "plain failure result"
+equals "$RUN_CODE" "23" "failed agent exit code"
+equals "$RUN_STDOUT" "agent-failure-stdout-marker" "failed agent captured stdout"
+equals "$RUN_STDERR" "agent-failure-stderr-marker" "failed agent captured stderr"
+equals "$RUN_OUTPUT" $'agent-failure-stdout-marker\nagent-failure-stderr-marker' "failed agent combined output"
+equals "$(cat "$transcript_failure_log")" "$RUN_OUTPUT" "failed agent complete log"
+USE_TUI="$old_use_tui"
+ok "agent transcript suppression"
 
 tmux_repo="$work/Fancy Repo!"
 mkdir -p "$tmux_repo"
