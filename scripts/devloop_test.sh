@@ -2784,13 +2784,18 @@ repo_specs_real="$(cd "$repo_specs" && pwd -P)"
 contains "$(cat /tmp/devloop-spec-test.out)" "interactive spec session" "spec command"
 contains "$(cat /tmp/devloop-spec-test.out)" "write: $repo_specs_real" "spec command target"
 if [ -f "$repo_specs/$(date +%F)-shell-migration-spec.md" ]; then fail "spec command wrote the spec instead of launching the agent"; fi
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Skill: use the installed devloop-spec skill." "spec prompt skill"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Keep devloop as Bash." "spec prompt"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Requested spec path: choose $repo_specs_real/$(date +%F)-<slug>.md" "spec prompt configured output"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "has open questions that could change the work" "spec prompt interview gate"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Do not turn a conversation" "spec prompt interview gate"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "Devloop owns the implementation" "spec prompt ownership"
-contains "$(cat /tmp/devloop-spec-agent-prompt.txt)" "devloop --create-pr <spec path>" "spec prompt handoff"
+spec_prompt_text="$(cat /tmp/devloop-spec-agent-prompt.txt)"
+expected_spec_prompt="$(printf 'Use the installed `devloop-spec` skill.\n\nOutput directory: %s\n\nContext:\nKeep devloop as Bash.' "$repo_specs_real")"
+equals "$spec_prompt_text" "$expected_spec_prompt" "spec prompt"
+
+(
+  cd "$repo"
+  HOME="$spec_home" main spec --agent "$agent" >/tmp/devloop-spec-test.out
+)
+spec_prompt_text="$(cat /tmp/devloop-spec-agent-prompt.txt)"
+expected_spec_prompt="$(printf 'Use the installed `devloop-spec` skill.\n\nOutput directory: %s' "$repo_specs_real")"
+equals "$spec_prompt_text" "$expected_spec_prompt" "cold-start spec prompt"
+not_contains "$spec_prompt_text" "Context:" "cold-start spec prompt"
 contains "$(absolute_path "$work/absolute-path/nested.md")" "/absolute-path/nested.md" "absolute path"
 existing_spec="$repo/existing.md"
 existing_spec_real="$(cd "$repo" && pwd -P)/existing.md"
@@ -2799,6 +2804,14 @@ rm -f /tmp/devloop-spec-agent-prompt.txt
 if (cd "$repo" && HOME="$spec_home" main spec --agent "$agent" --output "$existing_spec" "Replace me") >/tmp/devloop-spec-existing.out 2>/tmp/devloop-spec-existing.err; then fail "spec command allowed existing output without force"; fi
 contains "$(cat /tmp/devloop-spec-existing.err)" "spec already exists: $existing_spec_real" "spec existing output"
 if [ -f /tmp/devloop-spec-agent-prompt.txt ]; then fail "spec command launched agent for existing output"; fi
+
+(
+  cd "$repo"
+  HOME="$spec_home" main spec --agent "$agent" --output "$existing_spec" --force "Replace me" >/tmp/devloop-spec-test.out
+)
+spec_prompt_text="$(cat /tmp/devloop-spec-agent-prompt.txt)"
+expected_spec_prompt="$(printf 'Use the installed `devloop-spec` skill.\n\nOutput path: %s\n\nOverwrite allowed: true\n\nContext:\nReplace me' "$existing_spec_real")"
+equals "$spec_prompt_text" "$expected_spec_prompt" "forced spec prompt"
 ok "spec launch"
 
 cat > "$fake_bin/codex" <<'AGENT'
