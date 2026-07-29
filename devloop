@@ -5359,7 +5359,7 @@ spec_prompt() {
     target_line="Output directory: $target_dir"
   fi
 
-  printf '%s\n' 'Use the installed `devloop-spec` skill.'
+  printf "Use the installed \`devloop-spec\` skill.\n"
   printf 'If unavailable, read the bundled skill at: %s\n\n' "$skill"
   printf '%s\n' "$target_line"
   if [ "$force" = true ]; then
