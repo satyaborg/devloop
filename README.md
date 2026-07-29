@@ -69,6 +69,7 @@ Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents
 
 - Uses an isolated sibling git worktree by default; pass `--in-place` to stay in the current worktree.
 - Runs up to 5 passes, commits eligible coder changes, and executes `.devloop/verify` after each coder pass when present. Keep `.devloop/verify` local and auditable.
+- Shows lifecycle statuses and final results in the terminal. Internal agent transcripts are stored in `.devloop/logs/` rather than printed during a run.
 - Writes tracks, reviews, reports, logs, session ids, and spec snapshots under `.devloop/`; generated worktrees and branches remain for inspection.
 
 ## Contributing
