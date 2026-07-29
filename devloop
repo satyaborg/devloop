@@ -5322,7 +5322,7 @@ spec_command() {
     target_dir="$(absolute_dir_path "$spec_dir")" || return 1
   fi
 
-  prompt="$(spec_prompt "$context" "$target_path" "$force" "$target_dir")"
+  prompt="$(spec_prompt "$context" "$target_path" "$force" "$skill" "$target_dir")"
   printf 'agent: %s\n' "$(agent_label "$agent")"
   printf 'mode:  interactive spec session\n'
   printf 'write: %s\n' "$target_dir"
@@ -5350,7 +5350,8 @@ spec_prompt() {
   local context="$1"
   local output="$2"
   local force="$3"
-  local target_dir="$4"
+  local skill="$4"
+  local target_dir="$5"
   local target_line
   if [ -n "$output" ]; then
     target_line="Output path: $output"
@@ -5358,7 +5359,8 @@ spec_prompt() {
     target_line="Output directory: $target_dir"
   fi
 
-  printf '%s\n\n' 'Use the installed `devloop-spec` skill.'
+  printf '%s\n' 'Use the installed `devloop-spec` skill.'
+  printf 'If unavailable, read the bundled skill at: %s\n\n' "$skill"
   printf '%s\n' "$target_line"
   if [ "$force" = true ]; then
     printf '\n%s\n' "Overwrite allowed: true"
