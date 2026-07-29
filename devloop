@@ -5301,9 +5301,8 @@ spec_command() {
     skill-path) printf '%s\n' "$skill"; return ;;
   esac
 
-  local context today prompt spec_dir target_path target_dir
+  local context prompt spec_dir target_path target_dir
   context="$(resolve_spec_context ${context_items[@]+"${context_items[@]}"})"
-  today="$(date +%F)"
   spec_dir="$(devloop_spec_dir)"
   if [ -n "$output" ]; then
     target_path="$(absolute_path "$output")" || return 1
@@ -5317,7 +5316,7 @@ spec_command() {
     target_dir="$(absolute_dir_path "$spec_dir")" || return 1
   fi
 
-  prompt="$(spec_prompt "$context" "$target_path" "$force" "$skill" "$today" "$target_dir")"
+  prompt="$(spec_prompt "$context" "$target_path" "$force" "$skill" "$target_dir")"
   printf 'agent: %s\n' "$(agent_label "$agent")"
   printf 'mode:  interactive spec session\n'
   printf 'write: %s\n' "$target_dir"
@@ -5325,10 +5324,7 @@ spec_command() {
 }
 
 resolve_spec_context() {
-  if [ "$#" -eq 0 ]; then
-    printf '%s\n' "No source material was provided. Use the cold-start interview path in the bundled skill to discover intent before writing the spec."
-    return
-  fi
+  if [ "$#" -eq 0 ]; then return; fi
   local first=true
   local item file
   for item in "$@"; do
@@ -5339,7 +5335,7 @@ resolve_spec_context() {
       printf 'Source file: %s\n\n' "$file"
       cat "$file"
     else
-      printf 'Context:\n%s\n' "$item"
+      printf '%s\n' "$item"
     fi
   done
 }
@@ -5349,51 +5345,23 @@ spec_prompt() {
   local output="$2"
   local force="$3"
   local skill="$4"
-  local today="$5"
-  local target_dir="$6"
-  local target_line overwrite_line
+  local target_dir="$5"
+  local target_line
   if [ -n "$output" ]; then
-    target_line="Requested spec path: $output"
+    target_line="Output path: $output"
   else
-    target_line="Requested spec path: choose $target_dir/$today-<slug>.md"
+    target_line="Output directory: $target_dir"
   fi
+
+  printf "Use the installed \`devloop-spec\` skill.\n"
+  printf 'If unavailable, read the bundled skill at: %s\n\n' "$skill"
+  printf '%s\n' "$target_line"
   if [ "$force" = true ]; then
-    overwrite_line="Overwrite policy: overwriting the requested path is allowed."
-  else
-    overwrite_line="Overwrite policy: do not overwrite an existing spec; choose a non-conflicting path instead."
+    printf '\n%s\n' "Overwrite allowed: true"
   fi
-  cat <<EOF
-Skill: use the installed devloop-spec skill.
-
-You are running inside an interactive agent session launched by devloop.
-You own the interview and the spec text. Devloop owns the implementation,
-review, PR, and report loop after the spec file exists.
-
-Current date: $today
-Spec directory: $target_dir
-$target_line
-$overwrite_line
-
-If the source context is missing, too thin, ambiguous, spans multiple possible
-implementation slices, or has open questions that could change the work, follow
-the skill's interview path before drafting. Do not turn a conversation,
-artifact bundle, or notes into a spec until scope and acceptance criteria are
-clear. Ask one question at a time until the spec can be written without invented
-requirements.
-
-When ready, write exactly one devloop-ready markdown spec to the requested path.
-After writing the spec, tell the user the path and offer to continue with:
-
-devloop --create-pr <spec path>
-
-Do not implement the change directly in this session unless the user explicitly
-asks you to leave the devloop flow.
-
-Bundled skill path, for fallback only: $skill
-
-Context:
-$context
-EOF
+  if [ -n "$context" ]; then
+    printf '\nContext:\n%s\n' "$context"
+  fi
 }
 
 launch_spec_agent() {
