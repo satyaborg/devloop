@@ -3112,7 +3112,7 @@ run_devloop() {
 
   local naming_error
   naming_error=""
-  if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text"; then
+  if ! resolve_work_item "$coder" "$SOURCE_REPO" "$spec" "$spec_text" "$create_pr"; then
     naming_error="$WORK_ITEM_ERROR"
     event_gate "branch name" 0 "$naming_error"
     if [ -n "${WORK_ITEM_LOG:-}" ]; then
@@ -3243,7 +3243,7 @@ run_devloop() {
     if [ "$create_pr" = true ] && [ -n "$PASS_COMMIT" ]; then
       local pr_id="pull-request-$pass"
       event_step "$pr_id" "pushing branch and opening draft PR"
-      if create_pull_request "$repo" "$FINAL_BRANCH" "$base" "$spec" "$criteria_file" "$FINAL_COMMIT" "$SOURCE_REPO"; then
+      if create_pull_request "$repo" "$FINAL_BRANCH" "$base" "$spec" "$criteria_file" "$FINAL_COMMIT" "$SOURCE_REPO" "$(pull_request_title "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SCOPE" "$WORK_DESCRIPTION")"; then
         event_done "$pr_id" true "draft PR ready: $PULL_REQUEST"
         if ! sync_spec_pr "$spec" "$PULL_REQUEST"; then
           event_log "$pr_id" "spec backlink skipped (could not update $spec)"
@@ -3864,6 +3864,8 @@ parse_bool() {
 WORK_TYPE=""
 WORK_SLUG=""
 WORK_BREAKING=""
+WORK_SCOPE=""
+WORK_DESCRIPTION=""
 WORK_ITEM_ERROR=""
 WORK_ITEM_LOG=""
 
@@ -3872,16 +3874,21 @@ resolve_work_item() {
   local repo="$2"
   local spec="$3"
   local spec_text="$4"
+  local require_pr_title="${5:-false}"
   WORK_TYPE=""
   WORK_SLUG=""
   WORK_BREAKING=""
+  WORK_SCOPE=""
+  WORK_DESCRIPTION=""
   WORK_ITEM_ERROR=""
   WORK_ITEM_LOG=""
 
-  local fm_type fm_slug fm_breaking_raw fm_breaking
+  local fm_type fm_slug fm_breaking_raw fm_breaking fm_scope fm_description
   fm_type="$(frontmatter_value "type" "$spec_text")"
   fm_slug="$(frontmatter_value "slug" "$spec_text")"
   fm_breaking_raw="$(frontmatter_value "breaking" "$spec_text")"
+  fm_scope="$(frontmatter_value "scope" "$spec_text")"
+  fm_description="$(frontmatter_value "description" "$spec_text")"
   fm_breaking=""
 
   if [ -n "$fm_type" ]; then
@@ -3899,6 +3906,8 @@ resolve_work_item() {
   fi
 
   if [ -n "$fm_slug" ]; then fm_slug="$(slugify "$fm_slug")"; fi
+  if [ -n "$fm_scope" ]; then fm_scope="$(slugify "$fm_scope")"; fi
+  if [ -n "$fm_description" ]; then fm_description="$(normalize_pr_description "$fm_description")"; fi
 
   if [ -n "$fm_breaking_raw" ]; then
     local parsed_breaking
@@ -3913,11 +3922,17 @@ resolve_work_item() {
     fm_breaking="$parsed_breaking"
   fi
 
-  if [ -n "$fm_type" ] && [ -n "$fm_slug" ] && [ -n "$fm_breaking" ]; then
+  if [ -n "$fm_type" ] && [ -n "$fm_slug" ] && [ -n "$fm_breaking" ] &&
+     { [ "$require_pr_title" != true ] || { [ -n "$fm_scope" ] && [ -n "$fm_description" ]; }; }; then
     validate_work_item "$fm_type" "$fm_slug" "$fm_breaking" || return 1
+    if [ "$require_pr_title" = true ]; then
+      validate_pr_title_parts "$fm_scope" "$fm_description" || return 1
+    fi
     WORK_TYPE="$fm_type"
     WORK_SLUG="$fm_slug"
     WORK_BREAKING="$fm_breaking"
+    WORK_SCOPE="$fm_scope"
+    WORK_DESCRIPTION="$fm_description"
     WORK_ITEM_LOG=""
     return 0
   fi
@@ -3938,13 +3953,20 @@ resolve_work_item() {
   local final_type="$WORK_TYPE"
   local final_slug="$WORK_SLUG"
   local final_breaking="$WORK_BREAKING"
+  local final_scope="$WORK_SCOPE"
+  local final_description="$WORK_DESCRIPTION"
   if [ -n "$fm_type" ]; then final_type="$fm_type"; fi
   if [ -n "$fm_slug" ]; then final_slug="$fm_slug"; fi
   if [ -n "$fm_breaking" ]; then final_breaking="$fm_breaking"; fi
+  if [ -n "$fm_scope" ]; then final_scope="$fm_scope"; fi
+  if [ -n "$fm_description" ]; then final_description="$fm_description"; fi
   validate_work_item "$final_type" "$final_slug" "$final_breaking" || return 1
+  validate_pr_title_parts "$final_scope" "$final_description" || return 1
   WORK_TYPE="$final_type"
   WORK_SLUG="$final_slug"
   WORK_BREAKING="$final_breaking"
+  WORK_SCOPE="$final_scope"
+  WORK_DESCRIPTION="$final_description"
 }
 
 validate_work_item() {
@@ -3969,9 +3991,23 @@ validate_work_item() {
   esac
 }
 
+normalize_pr_description() {
+  printf '%s\n' "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:].]+$//'
+}
+
+validate_pr_title_parts() {
+  local scope="$1"
+  local description="$2"
+  if [ -z "$scope" ]; then WORK_ITEM_ERROR="naming output scope is required"; return 1; fi
+  if [ "$(slugify "$scope")" != "$scope" ]; then WORK_ITEM_ERROR="naming output scope must be lowercase kebab-case"; return 1; fi
+  if [ -z "$(normalize_pr_description "$description")" ]; then WORK_ITEM_ERROR="naming output description is required"; return 1; fi
+}
+
 parse_work_item() {
   local output="$1"
-  local candidates candidate type slug breaking index
+  local candidates candidate type slug breaking scope description index
   local items=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/devloop-json.XXXXXX")"
   printf '%s\n' "$output" | grep -Eo '\{[^{}]*\}' > "$candidates" || true
@@ -3983,11 +4019,17 @@ parse_work_item() {
     type="$(printf '%s\n' "$candidate" | sed -nE 's/.*"type"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
     slug="$(printf '%s\n' "$candidate" | sed -nE 's/.*"slug"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
     breaking="$(printf '%s\n' "$candidate" | sed -nE 's/.*"breaking"[[:space:]]*:[[:space:]]*(true|false).*/\1/p')"
-    if [ -n "$type" ] && [ -n "$slug" ] && [ -n "$breaking" ]; then
-      if validate_work_item "$type" "$slug" "$breaking"; then
+    scope="$(printf '%s\n' "$candidate" | sed -nE 's/.*"scope"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+    description="$(printf '%s\n' "$candidate" | sed -nE 's/.*"description"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+    if [ -n "$type" ] && [ -n "$slug" ] && [ -n "$breaking" ] && [ -n "$scope" ] && [ -n "$description" ]; then
+      scope="$(slugify "$scope")"
+      description="$(normalize_pr_description "$description")"
+      if validate_work_item "$type" "$slug" "$breaking" && validate_pr_title_parts "$scope" "$description"; then
         WORK_TYPE="$type"
         WORK_SLUG="$(slugify "$slug")"
         WORK_BREAKING="$breaking"
+        WORK_SCOPE="$scope"
+        WORK_DESCRIPTION="$description"
         rm -f "$candidates"
         return 0
       fi
@@ -4007,10 +4049,15 @@ Work item naming task.
 Read the spec and, when useful, inspect the repository to choose the semantic work item identity.
 
 Return exactly one JSON object and no markdown:
-{"type":"feat","slug":"short-kebab-case-name","breaking":false}
+{"type":"feat","scope":"domain","description":"concise work summary","slug":"short-kebab-case-name","breaking":false}
 
 Rules:
 - type must be one of: feat, fix, chore.
+- scope must be one short lowercase domain or component name, such as simulator, recording, cli, or pytest.
+- description must be concise lowercase prose that describes the work without a type or scope prefix.
+- description may repeat the scope when that reads naturally, as in "simulator result validation".
+- Prefer imperative descriptions when they read naturally, such as "remove end of recording delay".
+- A valid title built from the fields should read like "feat(simulator): simulator result validation".
 - Use feat for new capability or materially expanded behavior.
 - Use fix for correcting broken, incorrect, or regressed behavior.
 - Use chore for maintenance, docs, tests, dependency work, refactors, and internal cleanup.
@@ -4642,6 +4689,18 @@ pass_commit_message() {
   fi
 }
 
+pull_request_title() {
+  local type="$1"
+  local breaking="$2"
+  local scope="$3"
+  local description="$4"
+  if [ "$breaking" = true ]; then
+    printf '%s(%s)!: %s\n' "$type" "$scope" "$description"
+  else
+    printf '%s(%s): %s\n' "$type" "$scope" "$description"
+  fi
+}
+
 paste_join() {
   local file="$1"
   local separator="$2"
@@ -4728,7 +4787,8 @@ create_pull_request() {
   local criteria_file="${5:-}"
   local commit="${6:-}"
   local source_repo="${7:-}"
-  ensure_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit" "$source_repo"
+  local title="${8:-}"
+  ensure_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit" "$source_repo" "$title"
 }
 
 push_pull_request_branch() {
@@ -4856,6 +4916,7 @@ create_draft_pull_request() {
   local criteria_file="${5:-}"
   local commit="${6:-}"
   local source_repo="${7:-}"
+  local title="${8:-}"
   local body_file out
   if ! body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-create.XXXXXX")"; then
     PULL_REQUEST_ERROR="PR body file failed: mktemp failed"
@@ -4866,7 +4927,7 @@ create_draft_pull_request() {
     rm -f "$body_file"
     return 1
   fi
-  if ! run_compact_command "$repo" "open draft pull request" gh pr create --draft --fill --base "$base" --head "$branch" --body-file "$body_file"; then
+  if ! run_compact_command "$repo" "open draft pull request" gh pr create --draft --base "$base" --head "$branch" --title "$title" --body-file "$body_file"; then
     out="$RUN_OUTPUT"
     PULL_REQUEST_ERROR="PR creation failed: $(gh_error_detail "$out")"
     rm -f "$body_file"
@@ -4886,11 +4947,12 @@ ensure_pull_request() {
   local criteria_file="${5:-}"
   local commit="${6:-}"
   local source_repo="${7:-}"
+  local title="${8:-}"
   PULL_REQUEST_ERROR=""
   if ! push_pull_request_branch "$repo" "$branch"; then return 1; fi
   if ! lookup_pull_request "$repo" "$branch"; then return 1; fi
   if [ -n "$PULL_REQUEST" ]; then return 0; fi
-  create_draft_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit" "$source_repo"
+  create_draft_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit" "$source_repo" "$title"
 }
 
 round_review_comment_body() {
