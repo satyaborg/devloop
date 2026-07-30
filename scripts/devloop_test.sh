@@ -1838,20 +1838,16 @@ view_log="$work/view.log"
 mkdir -p "$view_bin"
 cat > "$view_bin/glow" <<'GLOW'
 #!/usr/bin/env bash
-{
-  printf 'glow'
-  for arg in "$@"; do printf ' <%s>' "$arg"; done
-  printf '\n'
-} >> "$DEVLOOP_VIEW_LOG"
+line="glow"
+for arg in "$@"; do line="$line <$arg>"; done
+printf '%s\n' "$line" >> "$DEVLOOP_VIEW_LOG"
 printf '%s\n' "rendered markdown"
 GLOW
 cat > "$view_bin/gum" <<'GUM'
 #!/usr/bin/env bash
-{
-  printf 'gum'
-  for arg in "$@"; do printf ' <%s>' "$arg"; done
-  printf '\n'
-} >> "$DEVLOOP_VIEW_LOG"
+line="gum"
+for arg in "$@"; do line="$line <$arg>"; done
+printf '%s\n' "$line" >> "$DEVLOOP_VIEW_LOG"
 cat >/dev/null
 GUM
 chmod +x "$view_bin/glow" "$view_bin/gum"
@@ -1877,11 +1873,9 @@ not_contains "$(cat "$view_log")" "glow" "markdown view absent glow"
 contains "$(cat "$view_log")" "gum <pager>" "markdown view absent glow fallback"
 cat > "$view_bin/glow" <<'GLOW'
 #!/usr/bin/env bash
-{
-  printf 'glow'
-  for arg in "$@"; do printf ' <%s>' "$arg"; done
-  printf '\n'
-} >> "$DEVLOOP_VIEW_LOG"
+line="glow"
+for arg in "$@"; do line="$line <$arg>"; done
+printf '%s\n' "$line" >> "$DEVLOOP_VIEW_LOG"
 printf '%s\n' "rendered markdown"
 GLOW
 chmod +x "$view_bin/glow"
