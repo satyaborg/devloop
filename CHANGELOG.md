@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1](https://github.com/satyaborg/devloop/releases/tag/v0.11.1) - 2026-07-30
+
+### Fixed
+
+- generate scoped pull request titles ([56d35f1](https://github.com/satyaborg/devloop/commit/56d35f1f1aed385fc88519221d96aa56c79f39e1))
+
 ## [0.11.0](https://github.com/satyaborg/devloop/releases/tag/v0.11.0) - 2026-07-30
 
 ### Added
