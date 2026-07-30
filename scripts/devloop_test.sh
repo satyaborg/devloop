@@ -996,9 +996,11 @@ if devloop_version_gt 1.2.3 1.2.3; then fail "devloop version comparison accepte
 if devloop_version_gt 1.2.3-alpha.1 1.2.3; then fail "devloop version comparison accepted prerelease over release"; fi
 if devloop_prompt_tty_ready; then fail "update prompt tty check accepted non-tty test shell"; fi
 
-frontmatter_text=$'---\ntype: fix!\nslug: "Chat Retry"\nbreaking: true\nempty: null\n---\n# Title'
+frontmatter_text=$'---\ntype: fix!\nslug: "Chat Retry"\nbreaking: true\nscope: "Chat"\ndescription: "Retry Failed Chats."\nempty: null\n---\n# Title'
 equals "$(frontmatter_value type "$frontmatter_text")" "fix!" "frontmatter type"
 equals "$(frontmatter_value slug "$frontmatter_text")" "Chat Retry" "frontmatter slug"
+equals "$(frontmatter_value scope "$frontmatter_text")" "Chat" "frontmatter scope"
+equals "$(frontmatter_value description "$frontmatter_text")" "Retry Failed Chats." "frontmatter description"
 equals "$(frontmatter_value empty "$frontmatter_text")" "" "frontmatter ignores null"
 
 backlink_url="https://github.com/owner/repo/pull/123"
@@ -1047,16 +1049,23 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 ok "sync_spec_pr"
 
-parse_work_item 'noise {"type":"feat","slug":"chat-retry","breaking":false}' || fail "parse_work_item failed"
+parse_work_item 'noise {"type":"feat","scope":"chat","description":"retry failed chats","slug":"chat-retry","breaking":false}' || fail "parse_work_item failed"
 equals "$WORK_TYPE" "feat" "work item type"
 equals "$WORK_SLUG" "chat-retry" "work item slug"
 equals "$WORK_BREAKING" "false" "work item breaking"
-if parse_work_item '{"type":"feat","slug":"feat-chat-retry","breaking":false}' >/dev/null 2>&1; then fail "parse_work_item accepted type-prefixed slug"; fi
+equals "$WORK_SCOPE" "chat" "work item scope"
+equals "$WORK_DESCRIPTION" "retry failed chats" "work item description"
+if parse_work_item '{"type":"feat","scope":"chat","description":"retry failed chats","slug":"feat-chat-retry","breaking":false}' >/dev/null 2>&1; then fail "parse_work_item accepted type-prefixed slug"; fi
+if parse_work_item '{"type":"feat","slug":"chat-retry","breaking":false}' >/dev/null 2>&1; then fail "parse_work_item accepted missing PR title fields"; fi
 
 equals "$(branch_base fix true null-check)" "fix!/null-check" "branch_base breaking"
 equals "$(pass_commit_message feat false chat-retry 1)" "feat: chat-retry" "first pass commit"
 equals "$(pass_commit_message feat false chat-retry 2)" "fix: chat-retry" "later pass commit"
 equals "$(pass_commit_message chore false docs 2)" "chore: docs" "later chore commit"
+equals "$(normalize_pr_description "  Remove End Of Recording Delay.  ")" "remove end of recording delay" "PR description normalization"
+equals "$(pull_request_title feat false simulator "simulator result validation")" "feat(simulator): simulator result validation" "pull request title"
+equals "$(pull_request_title fix false recording "remove end of recording delay")" "fix(recording): remove end of recording delay" "fix pull request title"
+equals "$(pull_request_title feat true simulator "simulator result validation")" "feat(simulator)!: simulator result validation" "breaking pull request title"
 
 branch_repo="$work/branch-repo"
 git init -q "$branch_repo"
@@ -2885,7 +2894,7 @@ cat > "$fake_bin/codex" <<'AGENT'
 set -euo pipefail
 prompt="$(cat)"
 if printf '%s\n' "$prompt" | grep -q "Work item naming task"; then
-  printf '%s\n' '{"type":"feat","slug":"fake-loop","breaking":false}'
+  printf '%s\n' '{"type":"feat","scope":"result","description":"write result file","slug":"fake-loop","breaking":false}'
   exit 0
 fi
 pass="$(printf '%s\n' "$prompt" | sed -nE 's/^Pass: ([0-9]+).*/\1/p' | head -n 1)"
@@ -3040,6 +3049,8 @@ status: draft
 type: feat
 slug: $slug
 breaking: false
+scope: result
+description: write result file
 pr: null
 ---
 
@@ -3086,6 +3097,8 @@ PATH="$old_path"
 equals "$WORK_TYPE" "feat" "naming fallback type override"
 equals "$WORK_SLUG" "fake-loop" "naming fallback slug"
 equals "$WORK_BREAKING" "false" "naming fallback breaking"
+equals "$WORK_SCOPE" "result" "naming fallback scope"
+equals "$WORK_DESCRIPTION" "write result file" "naming fallback description"
 ok "naming fallback"
 
 run_loop() {
@@ -3325,6 +3338,8 @@ create_line="$(grep -n 'gh pr create' "$pr_log" | cut -d: -f1 | head -n 1)"
 review_line="$(grep -n 'agent reviewer 1' "$pr_log" | cut -d: -f1 | head -n 1)"
 [[ -n "$create_line" && -n "$review_line" && "$create_line" -lt "$review_line" ]] || fail "PR was not created before reviewer pass 1"
 contains "$(cat "$pr_log")" "--body-file" "PR create body flag"
+contains "$(cat "$pr_log")" "--title feat(result): write result file" "PR create title"
+not_contains "$(cat "$pr_log")" "--fill" "PR create skips commit title autofill"
 [[ -s "$pr_state/pr-body.md" ]] || fail "created PR body missing"
 pr_body="$(cat "$pr_state/pr-body.md")"
 contains "$pr_body" "E2E PR Accept" "created PR body"
