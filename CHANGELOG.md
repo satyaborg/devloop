@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0](https://github.com/satyaborg/devloop/releases/tag/v0.12.0) - 2026-08-17
+
+### Added
+
+- bind review acceptance to a verified checkpoint sha ([a21ec9f](https://github.com/satyaborg/devloop/commit/a21ec9f02f65ce064c8504c8ddbc2f9aab779f97))
+- replace per-round PR comments with one living review status ([999bfe4](https://github.com/satyaborg/devloop/commit/999bfe48a1dadee77e5681b8248f516f50ffc7b6))
+- run stack manifests as dependency-ordered pull requests ([a645bdc](https://github.com/satyaborg/devloop/commit/a645bdcf595cb083d122ec4012da604fd4ad3c93))
+
+
+### Fixed
+
+- serialize view fixture logs ([e39842e](https://github.com/satyaborg/devloop/commit/e39842efe6a1dd85a21958755d21e315fde5d00a))
+- drop the jq variable binding from the checks query ([6ed383a](https://github.com/satyaborg/devloop/commit/6ed383a1a95d1ae819ecf7eeb1226362e8148372))
+
 ## [0.11.1](https://github.com/satyaborg/devloop/releases/tag/v0.11.1) - 2026-07-30
 
 ### Fixed
