@@ -66,6 +66,8 @@ Devloop ships two agent skills, installed into `~/.claude/skills` and `~/.agents
 - [`devloop-spec`](skills/devloop-spec/SKILL.md) — interviews when scope is unclear, then writes one concrete, devloop-ready spec with optional HTML rendering.
 - [`devloop-review`](skills/devloop-review/SKILL.md) — judges each pass against the spec and engineering quality gates, returning ACCEPT, REJECT, or UNCLEAR with fix instructions.
 
+Codex reads its user skills from `~/.agents/skills`. `devloop doctor` warns when obsolete `~/.codex/skills/devloop-*` shadows remain.
+
 ## Runtime
 
 - Uses an isolated sibling git worktree by default; pass `--in-place` to stay in the current worktree.
