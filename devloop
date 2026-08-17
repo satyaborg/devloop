@@ -72,6 +72,17 @@ CODER_SESSION_ID=""
 REVIEWER_SESSION_ID=""
 PULL_REQUEST=""
 PULL_REQUEST_ERROR=""
+REVIEWED_HEAD=""
+ACCEPTED_HEAD=""
+REMOTE_HEAD=""
+CHECKS_STATE=""
+STATUS_COMMENT_ID=""
+STACK_SPECS=()
+STACK_BRANCHES=()
+STACK_PULL_REQUESTS=()
+STACK_STATUSES=()
+READINESS=""
+READINESS_DETAIL=""
 RUN_START_PASS=1
 VERIFY_LOG=""
 VERIFY_DETAIL=""
@@ -201,6 +212,7 @@ Common commands:
   devloop nightshift
   devloop nightshift --install-schedule 02:00
   devloop .devloop/specs/change.md
+  devloop .devloop/specs/change-stack.md
   devloop --tui .devloop/specs/change.md
   devloop --plain .devloop/specs/change.md
   devloop --report-format markdown .devloop/specs/change.md 3
@@ -2785,7 +2797,7 @@ EOF
 
 is_devloop_runtime_artifact_path() {
   case "$1" in
-    .devloop/specs/*|.devloop/tracks/*|.devloop/reviews/*|.devloop/reports/*|.devloop/logs/*|.devloop/sessions/*) return 0 ;;
+    .devloop/specs/*|.devloop/tracks/*|.devloop/reviews/*|.devloop/reports/*|.devloop/logs/*|.devloop/sessions/*|.devloop/status/*) return 0 ;;
   esac
   return 1
 }
@@ -3018,6 +3030,13 @@ run_command() {
   if [ "$max" -lt 1 ]; then max=1; fi
   if [ "$max" -gt 10 ]; then max=10; fi
 
+  local resolved_spec
+  resolved_spec="$(absolute_existing_file "$spec" 2>/dev/null || printf '%s\n' "$spec")"
+  if is_stack_manifest "$resolved_spec"; then
+    run_stack "$resolved_spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+    return $?
+  fi
+
   if [ "$no_tmux" = false ] && devloop_tmux_interactive; then
     local validated_spec repo
     validated_spec="$(validate_spec_for_tmux "$spec" "$strict")" || return $?
@@ -3036,6 +3055,102 @@ run_command() {
   return "$(final_exit_code "$code")"
 }
 
+parse_stack_children() {
+  local manifest="$1"
+  local dir line child
+  [ -f "$manifest" ] || return 1
+  dir="$(cd "$(dirname "$manifest")" >/dev/null 2>&1 && pwd -P)" || return 1
+  spec_section "$manifest" "Stack" |
+    sed -nE 's/.*\]\(([^)]+\.md)\).*/\1/p; s/^[[:space:]]*[-*0-9.]+[[:space:]]+([^[:space:]]+\.md)[[:space:]]*$/\1/p' |
+    while IFS= read -r line; do
+      child="$line"
+      case "$child" in
+        /*) ;;
+        *) child="$dir/${child#./}" ;;
+      esac
+      printf '%s\n' "$child"
+    done
+}
+
+is_stack_manifest() {
+  local spec="$1"
+  local children
+  [ -f "$spec" ] || return 1
+  children="$(parse_stack_children "$spec")" || return 1
+  [ -n "$children" ]
+}
+
+stack_child_missing() {
+  local children="$1"
+  local child
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    if [ ! -f "$child" ]; then printf '%s\n' "$child"; return 0; fi
+  done <<< "$children"
+  return 1
+}
+
+run_stack() {
+  local manifest="$1"
+  local max="$2"
+  local report_format="$3"
+  local strict="$4"
+  local use_worktree="$5"
+  local coder="$6"
+  local reviewer="$7"
+  local create_pr="$8"
+  local timeout_minutes="$9"
+  local children child missing base index total code
+  children="$(parse_stack_children "$manifest")"
+  if [ -z "$children" ]; then
+    printf 'stack manifest lists no child specs: %s\n' "$manifest" >&2
+    return 2
+  fi
+  if missing="$(stack_child_missing "$children")"; then
+    printf 'stack child spec not found: %s\n' "$missing" >&2
+    return 2
+  fi
+  total="$(printf '%s\n' "$children" | grep -c .)"
+  STACK_BRANCHES=()
+  STACK_PULL_REQUESTS=()
+  STACK_STATUSES=()
+  STACK_SPECS=()
+  base=""
+  index=0
+  code=0
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    index=$((index + 1))
+    ui_print_notice "stack $index/$total: $(basename "$child")"
+    run_devloop "$child" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes" "$base"
+    code=$?
+    STACK_SPECS+=("$child")
+    STACK_BRANCHES+=("$FINAL_BRANCH")
+    STACK_PULL_REQUESTS+=("$PULL_REQUEST")
+    STACK_STATUSES+=("$STATUS")
+    if [ "$STATUS" != "accepted" ]; then
+      printf 'stack stopped at %s (%s)\n' "$(basename "$child")" "$STATUS" >&2
+      print_stack_summary
+      return "$(final_exit_code "$code")"
+    fi
+    base="$FINAL_BRANCH"
+  done <<< "$children"
+  print_stack_summary
+  return "$(final_exit_code "$code")"
+}
+
+print_stack_summary() {
+  local index total
+  total="${#STACK_SPECS[@]}"
+  printf '\ndevloop stack\n\n'
+  index=0
+  while [ "$index" -lt "$total" ]; do
+    result_line "$((index + 1)). $(basename "${STACK_SPECS[$index]}")" \
+      "${STACK_STATUSES[$index]} | ${STACK_BRANCHES[$index]}${STACK_PULL_REQUESTS[$index]:+ | ${STACK_PULL_REQUESTS[$index]}}"
+    index=$((index + 1))
+  done
+}
+
 run_devloop() {
   local spec_arg="$1"
   local max="$2"
@@ -3046,6 +3161,7 @@ run_devloop() {
   local reviewer="$7"
   local create_pr="$8"
   local timeout_minutes="${9:-$DEFAULT_TIMEOUT_MINUTES}"
+  local base_override="${10:-}"
 
   MAX="$max"
   CODER="$coder"
@@ -3060,6 +3176,10 @@ run_devloop() {
   FINAL_COMMIT_MESSAGE=""
   PULL_REQUEST=""
   PULL_REQUEST_ERROR=""
+  REVIEWED_HEAD=""
+  ACCEPTED_HEAD=""
+  READINESS=""
+  READINESS_DETAIL=""
   COMMIT_PASSES=()
   COMMIT_HASHES=()
   COMMIT_MESSAGES=()
@@ -3097,7 +3217,11 @@ run_devloop() {
   local source_branch
   source_branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
   local base
-  base="$(base_branch "$SOURCE_REPO")"
+  if [ -n "$base_override" ]; then
+    base="$base_override"
+  else
+    base="$(base_branch "$SOURCE_REPO")"
+  fi
 
   event_step "preflight" "running preflight checks"
   if preflight_run "$SOURCE_REPO" "$coder" "$reviewer" "$create_pr"; then
@@ -3129,7 +3253,7 @@ run_devloop() {
   local repo="$SOURCE_REPO"
   if [ "$use_worktree" = true ]; then
     event_step "worktree" "creating worktree"
-    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || {
+    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG" "${base_override:-HEAD}")" || {
       rm -f "$criteria_file" "$obligations_file"
       return 2
     }
@@ -3164,6 +3288,7 @@ run_devloop() {
   fi
   local coder_session=".devloop/sessions/$slug-coder-$coder.id"
   local reviewer_session=".devloop/sessions/$slug-reviewer-$reviewer.id"
+  local status_history=".devloop/status/$slug-history.tsv"
 
   init_track "$repo/$TRACK" "$run_spec" "$spec" "$PWD" "$SOURCE_REPO" "$repo" "$base" "$source_branch" "$run_branch" "$max" "$report_format" "$strict" "$coder" "$reviewer" "$WORK_TYPE" "$WORK_BREAKING" "$create_pr" "$timeout_minutes"
 
@@ -3281,8 +3406,9 @@ run_devloop() {
     local review=".devloop/reviews/$slug-r$pass.md"
     local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
+    REVIEWED_HEAD="$(head_sha "$repo")"
     event_step "$reviewer_id" "pass $pass/$max: $(agent_label "$reviewer") reviewing"
-    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict")" "$reviewer_id"; then
+    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict" "$REVIEWED_HEAD")" "$reviewer_id"; then
       event_done "$reviewer_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
@@ -3295,27 +3421,35 @@ run_devloop() {
       break
     fi
 
+    local verdict
+    verdict="$(parse_verdict "$repo/$review")"
+    append_status_history "$repo/$status_history" "$pass" \
+      "$(matrix_result "$repo/$review" "Acceptance matrix")" \
+      "$(matrix_result "$repo/$review" "Engineering quality matrix")" \
+      "$REVIEWED_HEAD" "${verdict:-no verdict}"
+
     if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ]; then
       local pr_comment_id="pr-review-comment-$pass"
-      event_step "$pr_comment_id" "posting review to PR"
-      if post_pr_round_review "$repo" "$PULL_REQUEST" "$repo/$review" "$pass"; then
-        event_done "$pr_comment_id" true "comment posted"
+      event_step "$pr_comment_id" "updating PR review status"
+      if post_status_comment "$repo" "$PULL_REQUEST" "$repo/$review" "$repo/$status_history" "running" "$REVIEWED_HEAD" "$FINAL_BRANCH"; then
+        event_done "$pr_comment_id" true "status updated"
       else
         STATUS="pr-error"
         event_done "$pr_comment_id" false "$PULL_REQUEST_ERROR"
         break
       fi
     fi
-
-    local verdict
-    verdict="$(parse_verdict "$repo/$review")"
     if [ "$verdict" = "ACCEPT" ]; then
       event_gate "pass $pass review verdict" 1 "$verdict"
-      if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
+      if head_drifted "$repo" "$REVIEWED_HEAD"; then
+        event_gate "pass $pass checkpoint" 0 "head moved off reviewed $(short_sha "$REVIEWED_HEAD")"
+        STATUS="head-drift"
+      elif [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
         STATUS="unclear"
       elif [ "$strict" = true ] && ! has_passing_quality_matrix "$repo/$review"; then
         STATUS="unclear"
       else
+        ACCEPTED_HEAD="$REVIEWED_HEAD"
         STATUS="accepted"
       fi
       break
@@ -3345,13 +3479,30 @@ run_devloop() {
   REVIEWER_SESSION_ID="$(read_first_line "$repo/$reviewer_session")"
   synthesize_report "$repo" "$slug" "$reviewer" "$run_spec" "$spec" "$spec_text" "$SOURCE_REPO" "$repo" "$TRACK" "$REPORT" "$STATUS" "$PASSES" "$max" "$base" "$source_branch" "$FINAL_BRANCH" "$FINAL_COMMIT" "$FINAL_COMMIT_MESSAGE" "$PULL_REQUEST" "$PULL_REQUEST_ERROR" "$coder" "$repo/$reviewer_session" "$CODER_SESSION_ID" "$REVIEWER_SESSION_ID" "$report_format"
 
+  if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" = "accepted" ]; then
+    event_step "final-verification" "verifying accepted checkpoint"
+    if final_verification "$repo" "$PULL_REQUEST" "$ACCEPTED_HEAD" "$initial_dirty"; then
+      event_done "final-verification" true "$READINESS_DETAIL"
+      event_step "pr-ready" "marking pull request ready for review"
+      if mark_pull_request_ready "$repo" "$PULL_REQUEST"; then
+        event_done "pr-ready" true "ready for human review"
+      else
+        READINESS="blocked"
+        READINESS_DETAIL="$PULL_REQUEST_ERROR"
+        event_done "pr-ready" false "$PULL_REQUEST_ERROR"
+      fi
+    else
+      event_done "final-verification" false "$READINESS_DETAIL"
+    fi
+  fi
+
   if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" != "pr-error" ]; then
-    event_step "pr-final-report" "posting final report to PR"
-    if post_pr_final_report "$repo" "$PULL_REQUEST" "$slug" "$STATUS" "$PASSES" "$max" "$FINAL_BRANCH"; then
-      event_done "pr-final-report" true "comment posted"
+    event_step "pr-final-status" "publishing final review status"
+    if post_status_comment "$repo" "$PULL_REQUEST" "$repo/.devloop/reviews/$slug-r$PASSES.md" "$repo/$status_history" "$STATUS" "${ACCEPTED_HEAD:-$REVIEWED_HEAD}" "$FINAL_BRANCH"; then
+      event_done "pr-final-status" true "status published"
     else
       STATUS="pr-error"
-      event_done "pr-final-report" false "$PULL_REQUEST_ERROR"
+      event_done "pr-final-status" false "$PULL_REQUEST_ERROR"
     fi
   fi
 
@@ -4141,12 +4292,13 @@ create_worktree() {
   local type="$2"
   local breaking="$3"
   local slug="$4"
+  local start_point="${5:-HEAD}"
   local current branch worktree leaf
   current=""
   branch="$(next_branch "$repo" "$type" "$breaking" "$slug" "$current")"
   leaf="$(branch_leaf "$branch")"
   worktree="$(next_worktree_path "$repo" "$leaf")"
-  if ! git -C "$repo" worktree add -b "$branch" "$worktree" HEAD >/dev/null 2>&1; then
+  if ! git -C "$repo" worktree add -b "$branch" "$worktree" "$start_point" >/dev/null 2>&1; then
     printf 'failed to create worktree\n' >&2
     return 1
   fi
@@ -4483,6 +4635,7 @@ review_prompt() {
   local max="$8"
   local obligations_file="$9"
   local strict="${10}"
+  local checkpoint="${11:-}"
   local obligations priors review_skill strict_rule
   obligations="$(cat "$obligations_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
@@ -4499,6 +4652,8 @@ Spec: $spec
 Track: $track
 Base: $base
 Pass: $pass
+Checkpoint: ${checkpoint:-unknown}
+Review exactly this checkpoint. Do not commit, amend, or push. Any new commit invalidates the verdict.
 Prior reviews:
 $priors
 Spec obligations (acceptance criteria, invariants, and failure modes):
@@ -4710,6 +4865,118 @@ paste_join() {
 parse_verdict() {
   local file="$1"
   sed -nE 's/^Verdict:[[:space:]]+(ACCEPT|REJECT|UNCLEAR).*/\1/p' "$file" | head -n 1
+}
+
+head_sha() {
+  local repo="$1"
+  git -C "$repo" rev-parse HEAD 2>/dev/null
+}
+
+short_sha() {
+  local sha="$1"
+  printf '%s\n' "${sha:0:7}"
+}
+
+head_drifted() {
+  local repo="$1"
+  local reviewed="$2"
+  local current
+  [ -n "$reviewed" ] || return 1
+  current="$(head_sha "$repo")" || return 1
+  [ "$current" != "$reviewed" ]
+}
+
+worktree_clean() {
+  local repo="$1"
+  local initial_dirty="$2"
+  local pending
+  pending="$(committable_paths "$repo" "$initial_dirty")"
+  [ -z "$pending" ]
+}
+
+remote_pull_request_head() {
+  local repo="$1"
+  local pr="$2"
+  local out
+  REMOTE_HEAD=""
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json headRefOid --jq '.headRefOid // ""' 2>&1)"; then
+    PULL_REQUEST_ERROR="PR head lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  REMOTE_HEAD="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+}
+
+pull_request_checks_state() {
+  local repo="$1"
+  local pr="$2"
+  local query out
+  CHECKS_STATE=""
+  query='[.statusCheckRollup[]?]
+    | if length == 0 then "none"
+      elif ([.[] | select((.conclusion // .state // "") | ascii_downcase | test("^(success|neutral|skipped)$"))] | length) == length then "green"
+      elif ([.[] | select((.conclusion // .state // "") == "")] | length) > 0 then "pending"
+      else "failing" end'
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json statusCheckRollup --jq "$query" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR checks lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  CHECKS_STATE="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+}
+
+mark_pull_request_ready() {
+  local repo="$1"
+  local pr="$2"
+  local out
+  if ! run_compact_command "$repo" "mark pull request ready" gh pr ready "$pr"; then
+    out="$RUN_OUTPUT"
+    PULL_REQUEST_ERROR="PR ready failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+}
+
+final_verification() {
+  local repo="$1"
+  local pr="$2"
+  local accepted="$3"
+  local initial_dirty="$4"
+  local local_head
+  READINESS="blocked"
+  READINESS_DETAIL=""
+  if [ -z "$accepted" ]; then
+    READINESS_DETAIL="no accepted checkpoint recorded"
+    return 1
+  fi
+  local_head="$(head_sha "$repo")"
+  if [ "$local_head" != "$accepted" ]; then
+    READINESS_DETAIL="local head $(short_sha "$local_head") moved off accepted checkpoint $(short_sha "$accepted")"
+    return 1
+  fi
+  if ! worktree_clean "$repo" "$initial_dirty"; then
+    READINESS_DETAIL="worktree has uncommitted task changes"
+    return 1
+  fi
+  if ! remote_pull_request_head "$repo" "$pr"; then
+    READINESS_DETAIL="$PULL_REQUEST_ERROR"
+    return 1
+  fi
+  if [ "$REMOTE_HEAD" != "$accepted" ]; then
+    READINESS_DETAIL="remote PR head $(short_sha "$REMOTE_HEAD") differs from accepted checkpoint $(short_sha "$accepted")"
+    return 1
+  fi
+  if ! pull_request_checks_state "$repo" "$pr"; then
+    READINESS_DETAIL="$PULL_REQUEST_ERROR"
+    return 1
+  fi
+  case "$CHECKS_STATE" in
+    green|none)
+      READINESS="ready"
+      READINESS_DETAIL="accepted checkpoint $(short_sha "$accepted") verified"
+      ;;
+    *)
+      READINESS_DETAIL="required checks are $CHECKS_STATE for $(short_sha "$accepted")"
+      return 1
+      ;;
+  esac
 }
 
 has_passing_matrix() {
@@ -4955,31 +5222,206 @@ ensure_pull_request() {
   create_draft_pull_request "$repo" "$branch" "$base" "$spec" "$criteria_file" "$commit" "$source_repo" "$title"
 }
 
-round_review_comment_body() {
-  local review_file="$1"
+STATUS_COMMENT_MARKER="<!-- devloop-review-status -->"
+
+review_state_label() {
+  local status="$1"
+  local readiness="$2"
+  local verdict="$3"
+  case "$status" in
+    accepted)
+      if [ "$readiness" = "ready" ]; then printf '%s\n' "Ready for human review"; else printf '%s\n' "Final verification"; fi
+      ;;
+    head-drift) printf '%s\n' "Review pending" ;;
+    reviewer-error|review-missing|no-verdict) printf '%s\n' "Review unavailable" ;;
+    running) printf '%s\n' "Review pending" ;;
+    *)
+      if [ "$verdict" = "REJECT" ]; then printf '%s\n' "Changes required"; else printf '%s\n' "Review pending"; fi
+      ;;
+  esac
+}
+
+matrix_result() {
+  local file="$1"
+  local heading="$2"
+  local rows fails
+  [ -f "$file" ] || { printf '%s\n' "Unavailable"; return 0; }
+  rows="$(review_section "$file" "$heading" | grep -cE '^\|[[:space:]]*[A-Za-z]' || true)"
+  if [ "${rows:-0}" -le 1 ]; then printf '%s\n' "Unavailable"; return 0; fi
+  fails="$(review_section "$file" "$heading" | grep -ciE '\|[[:space:]]*(FAIL|UNCLEAR)[[:space:]]*\|' || true)"
+  if [ "${fails:-0}" -gt 0 ]; then printf '%s\n' "Changes required"; else printf '%s\n' "Passed"; fi
+}
+
+matrix_evidence() {
+  local file="$1"
+  local heading="$2"
+  local total passed
+  [ -f "$file" ] || { printf '%s\n' "no review recorded"; return 0; }
+  total="$(review_section "$file" "$heading" | grep -cE '^\|[[:space:]]*(AC|F|I)[0-9]+[[:space:]]*\||^\|[[:space:]]*(Correctness|Test quality|Maintainability|Architecture boundaries|Simplicity|Security|Operational safety)[[:space:]]*\|' || true)"
+  if [ "${total:-0}" -eq 0 ]; then printf '%s\n' "no rows reported"; return 0; fi
+  passed="$(review_section "$file" "$heading" | grep -ciE '\|[[:space:]]*(PASS|N/A)[[:space:]]*\|' || true)"
+  printf '%s of %s rows passed\n' "${passed:-0}" "$total"
+}
+
+append_status_history() {
+  local history_file="$1"
   local pass="$2"
-  local verdict
-  verdict="$(parse_verdict "$review_file")"
-  if [ -z "$verdict" ]; then verdict="UNCLEAR"; fi
+  local specification="$3"
+  local engineering="$4"
+  local checkpoint="$5"
+  local outcome="$6"
+  mkdir -p "$(dirname "$history_file")" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%s\t%s\n' "$pass" "$specification" "$engineering" "$(short_sha "$checkpoint")" "$outcome" >> "$history_file"
+}
+
+render_status_history() {
+  local history_file="$1"
+  [ -f "$history_file" ] || return 0
+  awk -F'\t' '{ printf "| %s | %s | %s | `%s` | %s |\n", $1, $2, $3, $4, $5 }' "$history_file"
+}
+
+status_history_count() {
+  local history_file="$1"
+  if [ -f "$history_file" ]; then wc -l < "$history_file" | tr -d ' '; else printf '%s\n' "0"; fi
+}
+
+status_comment_body() {
+  local review_file="$1"
+  local history_file="$2"
+  local status="$3"
+  local readiness="$4"
+  local readiness_detail="$5"
+  local checkpoint="$6"
+  local branch="$7"
+  local verdict label specification engineering findings passes summary
+  verdict="$(if [ -f "$review_file" ]; then parse_verdict "$review_file"; fi)"
+  label="$(review_state_label "$status" "$readiness" "$verdict")"
+  specification="$(matrix_result "$review_file" "Acceptance matrix")"
+  engineering="$(matrix_result "$review_file" "Engineering quality matrix")"
+  passes="$(status_history_count "$history_file")"
+  findings=""
+  if [ "$verdict" != "ACCEPT" ] && [ -f "$review_file" ]; then
+    findings="$(review_section "$review_file" "Findings" | sed '1d' | sed '/^[[:space:]]*$/d')"
+  fi
+  case "$label" in
+    "Ready for human review") summary="The accepted checkpoint matches the pull-request head and required checks passed." ;;
+    "Final verification") summary="The checkpoint was accepted. ${readiness_detail:-Final checks are running.}" ;;
+    "Changes required") summary="The current checkpoint has open findings." ;;
+    "Review unavailable") summary="The review did not produce a usable verdict. Run status: $status." ;;
+    *) summary="A checkpoint was pushed and is awaiting a completed review. Run status: $status." ;;
+  esac
   cat <<EOF
-# Devloop Review Round $pass
+$STATUS_COMMENT_MARKER
+## Review status
 
-- Verdict: $verdict
+**$label**
 
-$(cat "$review_file")
+$summary
+
+### Quality gates
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Specification | $specification | $(matrix_evidence "$review_file" "Acceptance matrix") |
+| Engineering | $engineering | $(matrix_evidence "$review_file" "Engineering quality matrix") |
+EOF
+  if [ -n "$findings" ]; then
+    printf '\n### Open findings\n\n%s\n' "$findings"
+  fi
+  cat <<EOF
+
+<details>
+<summary>Review history: $passes $(if [ "$passes" = "1" ]; then printf 'pass'; else printf 'passes'; fi)</summary>
+
+| Pass | Specification | Engineering | Checkpoint | Outcome |
+| ---: | --- | --- | --- | --- |
+$(render_status_history "$history_file")
+
+</details>
+
+<details>
+<summary>Gate details</summary>
+
+$(review_section "$review_file" "Acceptance matrix" 2>/dev/null || printf '%s\n' "No acceptance matrix recorded.")
+
+$(review_section "$review_file" "Engineering quality matrix" 2>/dev/null || printf '%s\n' "No engineering quality matrix recorded.")
+
+</details>
+
+<details>
+<summary>Latest review detail</summary>
+
+$(if [ -f "$review_file" ]; then cat "$review_file"; else printf '%s\n' "No review recorded."; fi)
+
+</details>
+
+<details>
+<summary>Run details</summary>
+
+- Branch: \`$branch\`
+- Checkpoint: \`${checkpoint:-none}\`
+- Verification: ${VERIFY_LOG:-not configured}
+- Readiness: ${readiness:-not evaluated}${readiness_detail:+ ($readiness_detail)}
+
+</details>
+
+---
+
+Generated by [devloop.sh](https://devloop.sh)
 EOF
 }
 
-post_pr_round_review() {
+find_status_comment() {
+  local repo="$1"
+  local pr="$2"
+  local out query
+  STATUS_COMMENT_ID=""
+  query="[.comments[] | select(.body | contains(\"$STATUS_COMMENT_MARKER\"))] | last | .url // \"\""
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json comments --jq "$query" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR status comment lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  out="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+  case "$out" in
+    *\#issuecomment-*) STATUS_COMMENT_ID="${out##*\#issuecomment-}" ;;
+    *) STATUS_COMMENT_ID="" ;;
+  esac
+}
+
+upsert_status_comment() {
+  local repo="$1"
+  local pr="$2"
+  local body_file="$3"
+  local out slug
+  if ! find_status_comment "$repo" "$pr"; then return 1; fi
+  if [ -n "$STATUS_COMMENT_ID" ]; then
+    slug="$(cd "$repo" >/dev/null 2>&1 && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null | head -n 1)"
+    if [ -n "$slug" ]; then
+      if ! out="$(cd "$repo" >/dev/null 2>&1 && gh api --method PATCH "repos/$slug/issues/comments/$STATUS_COMMENT_ID" -f body="$(cat "$body_file")" 2>&1)"; then
+        PULL_REQUEST_ERROR="PR status comment update failed: $(gh_error_detail "$out")"
+        return 1
+      fi
+      return 0
+    fi
+  fi
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr comment "$pr" --body-file "$body_file" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR status comment failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+}
+
+post_status_comment() {
   local repo="$1"
   local pr="$2"
   local review_file="$3"
-  local pass="$4"
-  local body_file out
-  body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-review.XXXXXX")"
-  round_review_comment_body "$review_file" "$pass" > "$body_file"
-  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr comment "$pr" --body-file "$body_file" 2>&1)"; then
-    PULL_REQUEST_ERROR="PR comment failed: $(gh_error_detail "$out")"
+  local history_file="$4"
+  local status="$5"
+  local checkpoint="$6"
+  local branch="$7"
+  local body_file
+  body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-status.XXXXXX")"
+  status_comment_body "$review_file" "$history_file" "$status" "$READINESS" "$READINESS_DETAIL" "$checkpoint" "$branch" > "$body_file"
+  if ! upsert_status_comment "$repo" "$pr" "$body_file"; then
     rm -f "$body_file"
     return 1
   fi
@@ -4989,8 +5431,8 @@ post_pr_round_review() {
 latest_pr_review_comment() {
   local repo="$1"
   local pr="$2"
-  local out
-  local query='[.comments[].body | select(contains("# Devloop Review Round "))] | last // ""'
+  local out query
+  query="[.comments[].body | select(contains(\"$STATUS_COMMENT_MARKER\"))] | last // \"\""
   if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json comments --jq "$query" 2>&1)"; then
     PULL_REQUEST_ERROR="PR review lookup failed: $(gh_error_detail "$out")"
     return 1
@@ -5008,86 +5450,6 @@ review_section() {
     inside && /^##[[:space:]]+/ { exit }
     inside { print }
   ' "$file"
-}
-
-final_pr_report_body() {
-  local repo="$1"
-  local slug="$2"
-  local status="$3"
-  local pass="$4"
-  local max="$5"
-  local pr="$6"
-  local branch="$7"
-  local latest_review="$repo/.devloop/reviews/$slug-r$pass.md"
-  local final_verdict acceptance engineering risk
-  final_verdict=""
-  if [ -f "$latest_review" ]; then final_verdict="$(parse_verdict "$latest_review")"; fi
-  if [ -z "$final_verdict" ]; then final_verdict="none"; fi
-  acceptance="$(review_section "$latest_review" "Acceptance matrix" || true)"
-  engineering="$(review_section "$latest_review" "Engineering quality matrix" || true)"
-  if [ -z "$acceptance" ]; then acceptance="- Not available."; fi
-  if [ -z "$engineering" ]; then engineering="- Not available."; fi
-  case "$status" in
-    accepted) risk="No blocking residual risk was recorded by the final review." ;;
-    *) risk="The run ended as $status. Inspect the latest findings and missing tests before merging." ;;
-  esac
-  cat <<EOF
-# Devloop Final Report
-
-| Field | Value |
-| --- | --- |
-| Final status | $status |
-| Pass count | $pass / $max |
-| Final verdict | $final_verdict |
-| PR URL | $pr |
-| Branch | $branch |
-
-## Acceptance Matrix Summary
-
-$acceptance
-
-## Engineering Quality Summary
-
-$engineering
-
-## Implementation Summary
-
-- Final branch: \`$branch\`
-- Final commit: \`${FINAL_COMMIT:-none}\`
-- Commit message: ${FINAL_COMMIT_MESSAGE:-none}
-
-## Commit References
-
-$(commit_lines)
-
-## Tests Run
-
-- Verification hook log: ${VERIFY_LOG:-not configured}
-- Review test evidence: see the acceptance matrix summary above.
-
-## Residual Risk
-
-- $risk
-EOF
-}
-
-post_pr_final_report() {
-  local repo="$1"
-  local pr="$2"
-  local slug="$3"
-  local status="$4"
-  local pass="$5"
-  local max="$6"
-  local branch="$7"
-  local body_file out
-  body_file="$(mktemp "${TMPDIR:-/tmp}/devloop-pr-final.XXXXXX")"
-  final_pr_report_body "$repo" "$slug" "$status" "$pass" "$max" "$pr" "$branch" > "$body_file"
-  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr comment "$pr" --body-file "$body_file" 2>&1)"; then
-    PULL_REQUEST_ERROR="PR final report comment failed: $(gh_error_detail "$out")"
-    rm -f "$body_file"
-    return 1
-  fi
-  rm -f "$body_file"
 }
 
 synthesize_report() {
@@ -5295,6 +5657,8 @@ print_result() {
   result_line "Branch" "$FINAL_BRANCH"
   result_line "Commit" "${FINAL_COMMIT:-none}"
   if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then result_line "Worktree" "$WORKTREE_REPO"; fi
+  if [ -n "$ACCEPTED_HEAD" ]; then result_line "Accepted" "$(short_sha "$ACCEPTED_HEAD")"; fi
+  if [ -n "$READINESS" ]; then result_line "Readiness" "$READINESS${READINESS_DETAIL:+ ($READINESS_DETAIL)}"; fi
   printf '\nOpen Next\n'
   if [ -n "$PULL_REQUEST" ]; then result_line "PR" "$PULL_REQUEST"; fi
   result_line "Report" "$(display_path "$REPORT")"

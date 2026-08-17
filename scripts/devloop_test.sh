@@ -173,7 +173,7 @@ contains "$review_skill_text" "Do not flag work required solely by an invariant 
 ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
-contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR (requires \`gh\`)" "README PR mode"
+contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR, then mark it ready once the accepted checkpoint verifies (requires \`gh\`)" "README PR mode"
 ok "README PR guidance"
 
 for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
@@ -1080,6 +1080,327 @@ PULL_REQUEST_ERROR=""
 if create_pull_request "$branch_repo" "feat/chat-retry" "main" >/dev/null 2>&1; then fail "pull request creation unexpectedly passed without remote"; fi
 contains "$PULL_REQUEST_ERROR" "branch push failed" "pull request push failure"
 contains "$PULL_REQUEST_ERROR" "repository exists" "pull request push failure"
+
+checkpoint_repo="$work/checkpoint-repo"
+git init -q "$checkpoint_repo"
+git -C "$checkpoint_repo" config user.email devloop-test@example.com
+git -C "$checkpoint_repo" config user.name "devloop test"
+printf 'one\n' > "$checkpoint_repo/file.txt"
+git -C "$checkpoint_repo" add file.txt
+git -C "$checkpoint_repo" commit -q -m init
+checkpoint_head="$(head_sha "$checkpoint_repo")"
+equals "$checkpoint_head" "$(git -C "$checkpoint_repo" rev-parse HEAD)" "head_sha resolves full sha"
+equals "$(short_sha "$checkpoint_head")" "${checkpoint_head:0:7}" "short_sha truncates"
+
+if head_drifted "$checkpoint_repo" "$checkpoint_head"; then fail "head_drifted reported drift on an unchanged head"; fi
+if head_drifted "$checkpoint_repo" ""; then fail "head_drifted reported drift without a reviewed checkpoint"; fi
+printf 'two\n' >> "$checkpoint_repo/file.txt"
+git -C "$checkpoint_repo" commit -q -am "second"
+head_drifted "$checkpoint_repo" "$checkpoint_head" || fail "head_drifted missed a new commit"
+ok "checkpoint drift detection"
+
+checkpoint_dirty="$work/checkpoint-dirty.txt"
+: > "$checkpoint_dirty"
+worktree_clean "$checkpoint_repo" "$checkpoint_dirty" || fail "worktree_clean rejected a clean worktree"
+printf 'scratch\n' > "$checkpoint_repo/extra.txt"
+if worktree_clean "$checkpoint_repo" "$checkpoint_dirty"; then fail "worktree_clean accepted an uncommitted change"; fi
+printf 'extra.txt\n' > "$checkpoint_dirty"
+worktree_clean "$checkpoint_repo" "$checkpoint_dirty" || fail "worktree_clean did not preserve pre-existing changes"
+rm -f "$checkpoint_repo/extra.txt"
+: > "$checkpoint_dirty"
+ok "worktree_clean preserves pre-existing changes"
+
+checkpoint_accepted="$(head_sha "$checkpoint_repo")"
+gh() {
+  case "$*" in
+    *"--json headRefOid"*) printf '%s\n' "$GH_STUB_HEAD" ;;
+    *"--json statusCheckRollup"*) printf '%s\n' "$GH_STUB_CHECKS" ;;
+    *"pr ready"*) [ "$GH_STUB_READY" = "ok" ] || { printf 'gh: not a draft\n'; return 1; }; printf 'marked ready\n' ;;
+    *) return "$GH_STUB_CODE" ;;
+  esac
+  return "$GH_STUB_CODE"
+}
+GH_STUB_CODE=0
+GH_STUB_HEAD="$checkpoint_accepted"
+GH_STUB_CHECKS="green"
+GH_STUB_READY="ok"
+
+remote_pull_request_head "$checkpoint_repo" "https://pr/1" || fail "remote_pull_request_head failed"
+equals "$REMOTE_HEAD" "$checkpoint_accepted" "remote_pull_request_head"
+pull_request_checks_state "$checkpoint_repo" "https://pr/1" || fail "pull_request_checks_state failed"
+equals "$CHECKS_STATE" "green" "pull_request_checks_state"
+mark_pull_request_ready "$checkpoint_repo" "https://pr/1" || fail "mark_pull_request_ready failed on a draft PR"
+
+final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty" || fail "final_verification blocked a verified checkpoint"
+equals "$READINESS" "ready" "final_verification ready"
+contains "$READINESS_DETAIL" "$(short_sha "$checkpoint_accepted")" "final_verification detail names the checkpoint"
+
+if final_verification "$checkpoint_repo" "https://pr/1" "" "$checkpoint_dirty"; then fail "final_verification accepted an empty checkpoint"; fi
+contains "$READINESS_DETAIL" "no accepted checkpoint" "final_verification empty checkpoint detail"
+equals "$READINESS" "blocked" "final_verification blocked state"
+
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_head" "$checkpoint_dirty"; then fail "final_verification accepted a stale local head"; fi
+contains "$READINESS_DETAIL" "moved off accepted checkpoint" "final_verification stale local head detail"
+
+GH_STUB_HEAD="0000000000000000000000000000000000000000"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a mismatched remote head"; fi
+contains "$READINESS_DETAIL" "remote PR head" "final_verification remote head detail"
+GH_STUB_HEAD="$checkpoint_accepted"
+
+GH_STUB_CHECKS="pending"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted pending checks"; fi
+contains "$READINESS_DETAIL" "required checks are pending" "final_verification pending checks detail"
+
+GH_STUB_CHECKS="none"
+final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty" || fail "final_verification blocked a PR with no checks"
+equals "$READINESS" "ready" "final_verification treats absent checks as ready"
+GH_STUB_CHECKS="green"
+
+printf 'dirty\n' > "$checkpoint_repo/uncommitted.txt"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a dirty worktree"; fi
+contains "$READINESS_DETAIL" "uncommitted task changes" "final_verification dirty worktree detail"
+rm -f "$checkpoint_repo/uncommitted.txt"
+
+GH_STUB_CODE=1
+if remote_pull_request_head "$checkpoint_repo" "https://pr/1"; then fail "remote_pull_request_head ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR head lookup failed" "remote_pull_request_head error"
+equals "$REMOTE_HEAD" "" "remote_pull_request_head clears its result on failure"
+if pull_request_checks_state "$checkpoint_repo" "https://pr/1"; then fail "pull_request_checks_state ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR checks lookup failed" "pull_request_checks_state error"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a gh lookup failure"; fi
+contains "$READINESS_DETAIL" "PR head lookup failed" "final_verification propagates lookup failure"
+GH_STUB_CODE=0
+
+GH_STUB_READY="fail"
+if mark_pull_request_ready "$checkpoint_repo" "https://pr/1"; then fail "mark_pull_request_ready ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR ready failed" "mark_pull_request_ready error"
+GH_STUB_READY="ok"
+unset -f gh
+READINESS=""
+READINESS_DETAIL=""
+PULL_REQUEST_ERROR=""
+ok "final verification gates"
+
+status_dir="$work/status-comment"
+mkdir -p "$status_dir"
+status_review="$status_dir/review.md"
+cat > "$status_review" <<'MARKDOWN'
+# Review 2
+
+Verdict: REJECT
+
+## Acceptance matrix
+
+| Obligation | Status | Implementation evidence | Test evidence |
+| --- | --- | --- | --- |
+| AC1 | PASS | handler wired | unit test |
+| AC2 | FAIL | not implemented | none |
+
+## Engineering quality matrix
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Correctness | PASS | traced |
+| Test quality | PASS | covered |
+| Maintainability | PASS | small diff |
+| Architecture boundaries | N/A | no boundary change |
+| Simplicity | PASS | direct |
+| Security | PASS | no new surface |
+| Operational safety | PASS | recoverable |
+
+## Findings
+
+1. [P0] lib/send.ts:14 - retry never fires. Root cause: guard inverted. Principle: fail closed.
+
+## Notes
+
+- None
+MARKDOWN
+
+equals "$(matrix_result "$status_review" "Acceptance matrix")" "Changes required" "matrix_result detects a failing obligation"
+equals "$(matrix_result "$status_review" "Engineering quality matrix")" "Passed" "matrix_result passes a clean quality matrix"
+equals "$(matrix_result "$status_dir/absent.md" "Acceptance matrix")" "Unavailable" "matrix_result handles a missing review"
+equals "$(matrix_evidence "$status_review" "Acceptance matrix")" "1 of 2 rows passed" "matrix_evidence counts obligations"
+equals "$(matrix_evidence "$status_review" "Engineering quality matrix")" "7 of 7 rows passed" "matrix_evidence counts quality rows"
+equals "$(matrix_evidence "$status_dir/absent.md" "Acceptance matrix")" "no review recorded" "matrix_evidence handles a missing review"
+
+equals "$(review_state_label accepted ready ACCEPT)" "Ready for human review" "review_state_label ready"
+equals "$(review_state_label accepted blocked ACCEPT)" "Final verification" "review_state_label pending verification"
+equals "$(review_state_label max-turns "" REJECT)" "Changes required" "review_state_label rejected"
+equals "$(review_state_label head-drift "" ACCEPT)" "Review pending" "review_state_label head drift"
+equals "$(review_state_label review-missing "" "")" "Review unavailable" "review_state_label unavailable"
+equals "$(review_state_label running "" "")" "Review pending" "review_state_label running"
+
+status_history="$status_dir/history.tsv"
+append_status_history "$status_history" 1 "Changes required" "Passed" "1111111111111111111111111111111111111111" "REJECT"
+append_status_history "$status_history" 2 "Passed" "Passed" "2222222222222222222222222222222222222222" "ACCEPT"
+equals "$(status_history_count "$status_history")" "2" "status_history_count"
+equals "$(status_history_count "$status_dir/absent.tsv")" "0" "status_history_count with no history"
+contains "$(render_status_history "$status_history")" "| 1 | Changes required | Passed | \`1111111\` | REJECT |" "render_status_history first row"
+contains "$(render_status_history "$status_history")" "| 2 | Passed | Passed | \`2222222\` | ACCEPT |" "render_status_history second row"
+equals "$(render_status_history "$status_dir/absent.tsv")" "" "render_status_history with no history"
+
+status_body="$(status_comment_body "$status_review" "$status_history" running "" "" "2222222222222222222222222222222222222222" "feat/chat-retry")"
+contains "$status_body" "<!-- devloop-review-status -->" "status comment marker"
+contains "$status_body" "**Review pending**" "status comment state"
+contains "$status_body" "| Specification | Changes required | 1 of 2 rows passed |" "status comment specification gate"
+contains "$status_body" "| Engineering | Passed | 7 of 7 rows passed |" "status comment engineering gate"
+contains "$status_body" "### Open findings" "status comment findings"
+contains "$status_body" "retry never fires" "status comment finding detail"
+contains "$status_body" "<summary>Review history: 2 passes</summary>" "status comment history summary"
+contains "$status_body" "<summary>Gate details</summary>" "status comment gate details"
+contains "$status_body" "<summary>Run details</summary>" "status comment run details"
+contains "$status_body" "feat/chat-retry" "status comment branch"
+
+status_accept_review="$status_dir/accepted.md"
+sed 's/^Verdict: REJECT/Verdict: ACCEPT/; s/| AC2 | FAIL |/| AC2 | PASS |/' "$status_review" > "$status_accept_review"
+status_ready_body="$(status_comment_body "$status_accept_review" "$status_history" accepted ready "checkpoint verified" "2222222222222222222222222222222222222222" "feat/chat-retry")"
+contains "$status_ready_body" "**Ready for human review**" "accepted status comment state"
+not_contains "$status_ready_body" "### Open findings" "accepted status comment omits findings"
+contains "$status_ready_body" "| Specification | Passed | 2 of 2 rows passed |" "accepted status comment specification gate"
+
+status_empty_body="$(status_comment_body "$status_dir/absent.md" "$status_dir/absent.tsv" running "" "" "" "feat/chat-retry")"
+contains "$status_empty_body" "<summary>Review history: 0 passes</summary>" "empty status comment history"
+contains "$status_empty_body" "No review recorded." "empty status comment review detail"
+
+status_comment_url="https://github.com/o/r/pull/5#issuecomment-98765"
+gh() {
+  case "$*" in
+    *"--json comments"*) printf '%s\n' "$GH_STUB_COMMENT" ;;
+    *"nameWithOwner"*) printf '%s\n' "o/r" ;;
+    *"--method PATCH"*) printf '%s\n' "patched" >> "$status_dir/calls.log" ;;
+    *"pr comment"*) printf '%s\n' "created" >> "$status_dir/calls.log" ;;
+  esac
+  return "$GH_STUB_CODE"
+}
+GH_STUB_CODE=0
+GH_STUB_COMMENT="$status_comment_url"
+find_status_comment "$status_dir" "https://pr/5" || fail "find_status_comment failed"
+equals "$STATUS_COMMENT_ID" "98765" "find_status_comment extracts the comment id"
+GH_STUB_COMMENT=""
+find_status_comment "$status_dir" "https://pr/5" || fail "find_status_comment failed on an absent comment"
+equals "$STATUS_COMMENT_ID" "" "find_status_comment with no existing comment"
+
+: > "$status_dir/calls.log"
+printf 'body\n' > "$status_dir/body.md"
+upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md" || fail "upsert_status_comment failed to create"
+contains "$(cat "$status_dir/calls.log")" "created" "upsert_status_comment creates when absent"
+: > "$status_dir/calls.log"
+GH_STUB_COMMENT="$status_comment_url"
+upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md" || fail "upsert_status_comment failed to update"
+contains "$(cat "$status_dir/calls.log")" "patched" "upsert_status_comment edits the existing comment"
+
+post_status_comment "$status_dir" "https://pr/5" "$status_review" "$status_history" running "$checkpoint_accepted" "feat/chat-retry" || fail "post_status_comment failed"
+contains "$(latest_pr_review_comment "$status_dir" "https://pr/5")" "issuecomment" "latest_pr_review_comment reads the living comment"
+
+GH_STUB_CODE=1
+if find_status_comment "$status_dir" "https://pr/5"; then fail "find_status_comment ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR status comment lookup failed" "find_status_comment error"
+if upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md"; then fail "upsert_status_comment ignored a lookup failure"; fi
+if post_status_comment "$status_dir" "https://pr/5" "$status_review" "$status_history" running "" "feat/chat-retry"; then fail "post_status_comment ignored a gh failure"; fi
+if latest_pr_review_comment "$status_dir" "https://pr/5" >/dev/null 2>&1; then fail "latest_pr_review_comment ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR review lookup failed" "latest_pr_review_comment error"
+GH_STUB_CODE=0
+unset -f gh
+PULL_REQUEST_ERROR=""
+STATUS_COMMENT_ID=""
+ok "living status comment"
+
+is_devloop_runtime_artifact_path ".devloop/status/slug-history.tsv" || fail "status history is not treated as a runtime artifact"
+
+stack_dir="$work/stack-specs"
+mkdir -p "$stack_dir"
+cat > "$stack_dir/2026-08-17-retry-stack.md" <<'MARKDOWN'
+# Retry delivery end to end
+
+## Stack
+
+1. [Persist the outbox](./2026-08-17-retry-01-outbox.md) - branch feat/retry-outbox, base main
+2. [Retry from the outbox](./2026-08-17-retry-02-sender.md) - branch feat/retry-sender, base feat/retry-outbox
+
+## Notes
+
+- The sender depends on the outbox table.
+MARKDOWN
+printf '# Outbox\n' > "$stack_dir/2026-08-17-retry-01-outbox.md"
+printf '# Sender\n' > "$stack_dir/2026-08-17-retry-02-sender.md"
+
+stack_dir_real="$(cd "$stack_dir" && pwd -P)"
+stack_children="$(parse_stack_children "$stack_dir/2026-08-17-retry-stack.md")"
+equals "$(printf '%s\n' "$stack_children" | wc -l | tr -d ' ')" "2" "parse_stack_children count"
+equals "$(printf '%s\n' "$stack_children" | head -n 1)" "$stack_dir_real/2026-08-17-retry-01-outbox.md" "parse_stack_children resolves the first child"
+equals "$(printf '%s\n' "$stack_children" | tail -n 1)" "$stack_dir_real/2026-08-17-retry-02-sender.md" "parse_stack_children preserves order"
+is_stack_manifest "$stack_dir/2026-08-17-retry-stack.md" || fail "is_stack_manifest missed a manifest"
+if is_stack_manifest "$stack_dir/2026-08-17-retry-01-outbox.md"; then fail "is_stack_manifest matched a plain spec"; fi
+if is_stack_manifest "$stack_dir/absent.md"; then fail "is_stack_manifest matched a missing file"; fi
+
+cat > "$stack_dir/bare-stack.md" <<'MARKDOWN'
+# Bare stack
+
+## Stack
+
+- 2026-08-17-retry-01-outbox.md
+- 2026-08-17-retry-02-sender.md
+MARKDOWN
+equals "$(parse_stack_children "$stack_dir/bare-stack.md" | head -n 1)" "$stack_dir_real/2026-08-17-retry-01-outbox.md" "parse_stack_children accepts bare paths"
+
+if stack_child_missing "$stack_children" >/dev/null; then fail "stack_child_missing flagged present children"; fi
+equals "$(stack_child_missing "$stack_dir/gone.md")" "$stack_dir/gone.md" "stack_child_missing reports the first absent child"
+
+cat > "$stack_dir/empty-stack.md" <<'MARKDOWN'
+# Empty stack
+
+## Stack
+
+- None yet
+MARKDOWN
+if is_stack_manifest "$stack_dir/empty-stack.md"; then fail "is_stack_manifest matched a stack with no child specs"; fi
+if run_stack "$stack_dir/empty-stack.md" 1 markdown false false codex claude false 5 >/dev/null 2>&1; then fail "run_stack accepted a manifest with no children"; fi
+
+cat > "$stack_dir/missing-child-stack.md" <<'MARKDOWN'
+# Missing child
+
+## Stack
+
+1. [Gone](./gone.md)
+MARKDOWN
+if run_stack "$stack_dir/missing-child-stack.md" 1 markdown false false codex claude false 5 >/dev/null 2>&1; then fail "run_stack accepted a missing child spec"; fi
+
+STACK_SPECS=("$stack_dir/2026-08-17-retry-01-outbox.md" "$stack_dir/2026-08-17-retry-02-sender.md")
+STACK_STATUSES=("accepted" "max-turns")
+STACK_BRANCHES=("feat/retry-outbox" "feat/retry-sender")
+STACK_PULL_REQUESTS=("https://pr/1" "")
+stack_summary_text="$(print_stack_summary)"
+contains "$stack_summary_text" "1. 2026-08-17-retry-01-outbox.md" "stack summary first entry"
+contains "$stack_summary_text" "accepted | feat/retry-outbox | https://pr/1" "stack summary accepted child"
+contains "$stack_summary_text" "max-turns | feat/retry-sender" "stack summary stopped child"
+STACK_SPECS=()
+STACK_STATUSES=()
+STACK_BRANCHES=()
+STACK_PULL_REQUESTS=()
+ok "stack manifests"
+
+stack_worktree_repo="$work/stack-worktree-repo"
+git init -q "$stack_worktree_repo"
+git -C "$stack_worktree_repo" config user.email devloop-test@example.com
+git -C "$stack_worktree_repo" config user.name "devloop test"
+printf 'base\n' > "$stack_worktree_repo/file.txt"
+git -C "$stack_worktree_repo" add file.txt
+git -C "$stack_worktree_repo" commit -q -m init
+git -C "$stack_worktree_repo" branch feat/parent-layer
+git -C "$stack_worktree_repo" switch -q feat/parent-layer
+printf 'parent\n' >> "$stack_worktree_repo/file.txt"
+git -C "$stack_worktree_repo" commit -q -am "parent layer"
+git -C "$stack_worktree_repo" switch -q -
+stack_child_worktree="$(create_worktree "$stack_worktree_repo" feat false child-layer feat/parent-layer)"
+contains "$(cat "$stack_child_worktree/file.txt")" "parent" "create_worktree branches from the requested start point"
+git -C "$stack_worktree_repo" worktree remove --force "$stack_child_worktree"
+ok "stacked worktree start point"
+
+: > "$work/empty-obligations.txt"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Checkpoint: abc1234" "review prompt checkpoint"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Do not commit, amend, or push" "review prompt checkpoint rule"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false)" "Checkpoint: unknown" "review prompt missing checkpoint"
 mkdir -p "$branch_repo/.devloop/reports" "$branch_repo/.devloop/tracks" "$branch_repo/.devloop/reviews"
 printf '%s\n' "# Report" > "$branch_repo/.devloop/reports/chat-retry.md"
 branch_repo_real="$(cd "$branch_repo" && pwd -P)"
@@ -2692,27 +3013,81 @@ case "${1:-}" in
         count="$(find "$state/comments" -type f | wc -l | tr -d ' ')"
         body="$state/comments/comment-$((count + 1)).md"
         cp "$body_file" "$body"
-        if grep -q '^# Devloop Review Round ' "$body"; then
-          round_count="$(find "$state/comments" -name 'round-*.md' | wc -l | tr -d ' ')"
-          cp "$body" "$state/comments/round-$((round_count + 1)).md"
-          cp "$body" "$state/latest_round_comment"
-        elif grep -q '^# Devloop Final Report' "$body"; then
-          final_count="$(find "$state/comments" -name 'final-*.md' | wc -l | tr -d ' ')"
-          cp "$body" "$state/comments/final-$((final_count + 1)).md"
+        if grep -q '<!-- devloop-review-status -->' "$body"; then
+          status_count="$(find "$state/comments" -name 'status-*.md' | wc -l | tr -d ' ')"
+          cp "$body" "$state/comments/status-$((status_count + 1)).md"
+          cp "$body" "$state/status_comment"
+          printf '%s\n' "https://github.com/satyaborg/devloop/pull/123#issuecomment-4242" > "$state/status_comment_url"
         fi
         printf '%s\n' "commented"
+        ;;
+      ready)
+        if [ "${DEVLOOP_GH_READY_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh pr ready exploded" >&2
+          exit 1
+        fi
+        printf '%s\n' "ready" > "$state/pr_ready"
+        printf '%s\n' "marked ready"
         ;;
       view)
         if [ "${DEVLOOP_GH_VIEW_FAIL:-0}" = "1" ]; then
           printf '%s\n' "gh pr view exploded" >&2
           exit 1
         fi
-        if [ -f "$state/latest_round_comment" ]; then cat "$state/latest_round_comment"; fi
+        case "$*" in
+          *headRefOid*)
+            if [ "${DEVLOOP_GH_REMOTE_HEAD:-}" = "drift" ]; then
+              printf '%s\n' "0000000000000000000000000000000000000000"
+            else
+              git rev-parse HEAD 2>/dev/null
+            fi
+            ;;
+          *statusCheckRollup*)
+            printf '%s\n' "${DEVLOOP_GH_CHECKS:-none}"
+            ;;
+          *comments*)
+            case "$*" in
+              *".url"*)
+                if [ -f "$state/status_comment_url" ]; then cat "$state/status_comment_url"; fi
+                ;;
+              *)
+                if [ -f "$state/status_comment" ]; then cat "$state/status_comment"; fi
+                ;;
+            esac
+            ;;
+          *)
+            if [ -f "$state/status_comment" ]; then cat "$state/status_comment"; fi
+            ;;
+        esac
         ;;
       *)
         exit 1
         ;;
     esac
+    ;;
+  api)
+    if [ "${DEVLOOP_GH_PATCH_FAIL:-0}" = "1" ]; then
+      printf '%s\n' "gh api exploded" >&2
+      exit 1
+    fi
+    body=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -f)
+          shift
+          case "${1:-}" in
+            body=*) body="${1#body=}" ;;
+          esac
+          ;;
+      esac
+      shift || true
+    done
+    if [ -n "$body" ]; then
+      printf '%s\n' "$body" > "$state/status_comment"
+      status_count="$(find "$state/comments" -name 'status-*.md' | wc -l | tr -d ' ')"
+      printf '%s\n' "$body" > "$state/comments/status-$((status_count + 1)).md"
+    fi
+    printf '%s\n' "patched"
     ;;
   *)
     exit 1
@@ -2897,7 +3272,7 @@ mode="${DEVLOOP_FAKE_MODE:-accept}"
 if [ -n "${DEVLOOP_AGENT_LOG:-}" ]; then
   printf 'agent coder %s\n' "${pass:-1}" >> "$DEVLOOP_AGENT_LOG"
   if [ "${pass:-1}" = "2" ]; then
-    if printf '%s\n' "$prompt" | grep -q "# Devloop Review Round 1"; then
+    if printf '%s\n' "$prompt" | grep -q '<!-- devloop-review-status -->'; then
       printf '%s\n' "coder-pr-prior:yes" >> "$DEVLOOP_AGENT_LOG"
     else
       printf '%s\n' "coder-pr-prior:no" >> "$DEVLOOP_AGENT_LOG"
@@ -3351,36 +3726,26 @@ pr_body_footer="$(printf '%s\n' "$pr_body" | awk 'NF { line = $0 } END { print l
 equals "$pr_body_footer" "Generated by [devloop.sh](https://devloop.sh)" "created PR body footer"
 if printf '%s\n' "$pr_body" | grep -Eq '^[0-9a-f]{7,40}$'; then fail "created PR body leaked bare commit hash"; fi
 if printf '%s\n' "$pr_body" | grep -q '/Users/'; then fail "created PR body leaked absolute local path"; fi
-equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "one round PR comment"
-equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "one final PR comment"
-round_body="$(cat "$pr_state/comments/round-1.md")"
-contains "$round_body" "# Devloop Review Round 1" "round PR comment"
-contains "$round_body" "Verdict: ACCEPT" "round PR comment"
-contains "$round_body" "## Acceptance matrix" "round PR comment"
-contains "$round_body" "| AC1 | PASS |" "round PR comment"
-contains "$round_body" "## Engineering quality matrix" "round PR comment"
-contains "$round_body" "| Security | N/A |" "round PR comment"
-contains "$round_body" "## Review flags" "round PR comment"
-contains "$round_body" "## Findings" "round PR comment"
-contains "$round_body" "## Missing tests" "round PR comment"
-contains "$round_body" "## Fix instructions" "round PR comment"
-contains "$round_body" "## Notes" "round PR comment"
-final_body="$(cat "$pr_state/comments/final-1.md")"
-contains "$final_body" "# Devloop Final Report" "final PR comment"
-contains "$final_body" "Final status" "final PR comment"
-contains "$final_body" "Pass count" "final PR comment"
-contains "$final_body" "Final verdict" "final PR comment"
-contains "$final_body" "Acceptance Matrix Summary" "final PR comment"
-contains "$final_body" "Engineering Quality Summary" "final PR comment"
-contains "$final_body" "Implementation Summary" "final PR comment"
-contains "$final_body" "Tests Run" "final PR comment"
-contains "$final_body" "Residual Risk" "final PR comment"
-contains "$final_body" "PR URL" "final PR comment"
-contains "$final_body" "Branch" "final PR comment"
-contains "$final_body" "Commit References" "final PR comment"
-if printf '%s\n' "$final_body" | grep -q '/Users/'; then fail "final PR comment leaked absolute local path"; fi
-if printf '%s\n' "$round_body" | grep -q 'Local cache'; then fail "round PR comment leaked local cache path"; fi
-if printf '%s\n' "$final_body" | grep -Eq '<(html|script|style)'; then fail "final PR comment embedded standalone HTML"; fi
+[[ -s "$pr_state/status_comment" ]] || fail "living status comment missing"
+status_body="$(cat "$pr_state/status_comment")"
+contains "$status_body" "<!-- devloop-review-status -->" "status comment marker"
+contains "$status_body" "## Review status" "status comment heading"
+contains "$status_body" "### Quality gates" "status comment gates"
+contains "$status_body" "| Specification |" "status comment specification row"
+contains "$status_body" "| Engineering |" "status comment engineering row"
+contains "$status_body" "<summary>Review history:" "status comment history block"
+contains "$status_body" "<summary>Gate details</summary>" "status comment gate details block"
+contains "$status_body" "<summary>Latest review detail</summary>" "status comment review detail block"
+contains "$status_body" "<summary>Run details</summary>" "status comment run details block"
+contains "$status_body" "Verdict: ACCEPT" "status comment carries the verdict"
+contains "$status_body" "| AC1 | PASS |" "status comment carries the acceptance matrix"
+contains "$status_body" "| Security | N/A |" "status comment carries the quality matrix"
+not_contains "$status_body" "### Open findings" "accepted status comment omits findings"
+equals "$(printf '%s\n' "$status_body" | grep -c '<!-- devloop-review-status -->')" "1" "status comment marker appears once"
+if printf '%s\n' "$status_body" | grep -q '/Users/'; then fail "status comment leaked absolute local path"; fi
+if printf '%s\n' "$status_body" | grep -q 'Local cache'; then fail "status comment leaked local cache path"; fi
+if printf '%s\n' "$status_body" | grep -Eq '<(html|script|style)'; then fail "status comment embedded standalone HTML"; fi
+equals "$(cat "$pr_state/pr_ready" 2>/dev/null || printf 'draft')" "ready" "accepted PR is marked ready"
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed accept comments"
 
@@ -3400,9 +3765,9 @@ if pr_terminal_output="$(run_loop "$pr_repo" "e2e-pr-terminal" bad-ac 1 "--creat
   fail "PR terminal failure loop unexpectedly passed"
 fi
 contains "$pr_terminal_output" "unclear" "PR terminal failure"
-equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "terminal round PR comment"
-equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "terminal final PR comment"
-contains "$(cat "$pr_state/comments/final-1.md")" "| Final status | unclear |" "terminal final PR comment"
+[[ -s "$pr_state/status_comment" ]] || fail "terminal status comment missing"
+contains "$(cat "$pr_state/status_comment")" "Run status: unclear" "terminal status comment reports the run status"
+if [ -f "$pr_state/pr_ready" ]; then fail "unclear run marked the PR ready"; fi
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed terminal final comment"
 
@@ -3425,7 +3790,7 @@ fi
 contains "$pr_existing_output" "https://github.com/satyaborg/devloop/pull/456" "existing PR loop"
 if grep -q 'gh pr create' "$pr_log"; then fail "existing PR loop created a duplicate PR"; fi
 contains "$(cat "$pr_log")" "gh pr list" "existing PR lookup"
-equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "existing PR round comment"
+[[ -s "$pr_state/status_comment" ]] || fail "existing PR status comment missing"
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed existing PR reuse"
 
@@ -3446,7 +3811,12 @@ if ! pr_retry_output="$(run_loop "$pr_repo" "e2e-pr-retry" reject-then-accept 2 
 fi
 contains "$pr_retry_output" "accepted" "PR retry loop"
 contains "$(cat "$pr_log")" "coder-pr-prior:yes" "PR retry prior review"
-equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "2" "two round PR comments"
+equals "$(grep -c 'gh pr comment' "$pr_log")" "1" "two passes create exactly one PR comment"
+if ! grep -q 'gh api --method PATCH' "$pr_log"; then fail "later passes did not edit the living comment"; fi
+pr_retry_status="$(cat "$pr_state/status_comment")"
+contains "$pr_retry_status" "<summary>Review history: 2 passes</summary>" "living comment records both passes"
+equals "$(printf '%s\n' "$pr_retry_status" | grep -cE '^\| [12] \|')" "2" "living comment keeps one history row per pass"
+contains "$pr_retry_status" "REJECT" "living comment retains the earlier rejection"
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed retry uses durable PR review"
 
@@ -3467,7 +3837,7 @@ if pr_comment_fail_output="$(run_loop "$pr_repo" "e2e-pr-comment-fail" accept 1 
   fail "PR comment failure loop unexpectedly passed"
 fi
 contains "$pr_comment_fail_output" "pr-error" "PR comment failure"
-contains "$pr_comment_fail_output" "PR comment failed: gh comment exploded" "PR comment failure"
+contains "$pr_comment_fail_output" "PR status comment failed: gh comment exploded" "PR comment failure"
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG DEVLOOP_GH_COMMENT_FAIL
 ok "PR comment failure handling"
 

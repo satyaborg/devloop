@@ -40,8 +40,9 @@ Uninstall with `./scripts/uninstall.sh` (`--dry-run` to preview).
 | `devloop spec "..."` | Have an agent interview you and write a spec |
 | `devloop nightshift` | Survey configured repos, run selected specs headlessly, and write a morning digest |
 | `devloop <spec.md>` | Run a spec |
+| `devloop <spec-stack.md>` | Run a stack manifest, one PR per child, each based on the previous |
 | `devloop --no-tmux <spec.md>` | Run a spec in the current foreground terminal |
-| `devloop --create-pr <spec.md>` | Run a spec and maintain a draft PR (requires `gh`) |
+| `devloop --create-pr <spec.md>` | Run a spec and maintain a draft PR, then mark it ready once the accepted checkpoint verifies (requires `gh`) |
 | `devloop update` | Install the latest released Devloop |
 | `devloop continue` | Resume a tracked run |
 | `devloop status` | Show run status |
