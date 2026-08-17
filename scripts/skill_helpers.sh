@@ -214,6 +214,18 @@ EOF
   return "$status"
 }
 
+devloop_doctor_legacy_codex_skills() {
+  local skills_dir="$HOME/.codex/skills"
+  local name dest canonical
+
+  for name in devloop-spec devloop-review; do
+    dest="$skills_dir/$name"
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then continue; fi
+    canonical="$HOME/.agents/skills/$name"
+    printf '[warn] legacy Codex skill shadow: %s (remove it; canonical skill: %s)\n' "$dest" "$canonical"
+  done
+}
+
 devloop_doctor_skills_in_dir() {
   local root="$1"
   local skills_dir="$2"
@@ -356,6 +368,7 @@ devloop_doctor() {
   devloop_doctor_command tmux || status=1
   printf '\nSkills\n'
   devloop_doctor_skills "$root" || status=1
+  devloop_doctor_legacy_codex_skills
   devloop_doctor_github
 
   if [ "$status" -eq 0 ]; then

@@ -3156,6 +3156,16 @@ contains "$doctor_output" "$install_home/.agents/skills/devloop-spec" "doctor Co
 contains "$doctor_output" "$install_home/.claude/skills/devloop-spec" "doctor Claude skill"
 ok "doctor"
 
+mkdir -p "$install_home/.codex/skills/devloop-spec"
+ln -s "$install_home/.agents/skills/devloop-review" "$install_home/.codex/skills/devloop-review"
+doctor_legacy_codex_output="$(HOME="$install_home" PATH="$bin_dir:$tool_bin:$fake_bin:$PATH" "$bin_dir/devloop" doctor 2>&1)" || fail "doctor rejected legacy Codex skill shadows"
+contains "$doctor_legacy_codex_output" "[warn] legacy Codex skill shadow: $install_home/.codex/skills/devloop-spec" "doctor legacy Codex directory"
+contains "$doctor_legacy_codex_output" "[warn] legacy Codex skill shadow: $install_home/.codex/skills/devloop-review" "doctor legacy Codex symlink"
+contains "$doctor_legacy_codex_output" "canonical skill: $install_home/.agents/skills/devloop-spec" "doctor canonical Codex skill"
+contains "$doctor_legacy_codex_output" "devloop doctor: ready" "doctor legacy Codex shadows remain non-blocking"
+rm -rf "$install_home/.codex"
+ok "doctor detects legacy Codex skill shadows"
+
 no_gh_bin="$work/no-gh-bin"
 mkdir -p "$no_gh_bin"
 for tool in codex claude glow gum fzf tmux; do
