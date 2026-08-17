@@ -173,7 +173,7 @@ contains "$review_skill_text" "Do not flag work required solely by an invariant 
 ok "spec Mermaid diagram guidance"
 
 contains "$(cat "$REPO_ROOT/README.md")" "\`devloop --create-pr <spec.md>\`" "README PR mode"
-contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR (requires \`gh\`)" "README PR mode"
+contains "$(cat "$REPO_ROOT/README.md")" "maintain a draft PR, then mark it ready once the accepted checkpoint verifies (requires \`gh\`)" "README PR mode"
 ok "README PR guidance"
 
 for skill in "$REPO_ROOT"/skills/*/SKILL.md; do
@@ -1180,6 +1180,133 @@ READINESS=""
 READINESS_DETAIL=""
 PULL_REQUEST_ERROR=""
 ok "final verification gates"
+
+status_dir="$work/status-comment"
+mkdir -p "$status_dir"
+status_review="$status_dir/review.md"
+cat > "$status_review" <<'MARKDOWN'
+# Review 2
+
+Verdict: REJECT
+
+## Acceptance matrix
+
+| Obligation | Status | Implementation evidence | Test evidence |
+| --- | --- | --- | --- |
+| AC1 | PASS | handler wired | unit test |
+| AC2 | FAIL | not implemented | none |
+
+## Engineering quality matrix
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Correctness | PASS | traced |
+| Test quality | PASS | covered |
+| Maintainability | PASS | small diff |
+| Architecture boundaries | N/A | no boundary change |
+| Simplicity | PASS | direct |
+| Security | PASS | no new surface |
+| Operational safety | PASS | recoverable |
+
+## Findings
+
+1. [P0] lib/send.ts:14 - retry never fires. Root cause: guard inverted. Principle: fail closed.
+
+## Notes
+
+- None
+MARKDOWN
+
+equals "$(matrix_result "$status_review" "Acceptance matrix")" "Changes required" "matrix_result detects a failing obligation"
+equals "$(matrix_result "$status_review" "Engineering quality matrix")" "Passed" "matrix_result passes a clean quality matrix"
+equals "$(matrix_result "$status_dir/absent.md" "Acceptance matrix")" "Unavailable" "matrix_result handles a missing review"
+equals "$(matrix_evidence "$status_review" "Acceptance matrix")" "1 of 2 rows passed" "matrix_evidence counts obligations"
+equals "$(matrix_evidence "$status_review" "Engineering quality matrix")" "7 of 7 rows passed" "matrix_evidence counts quality rows"
+equals "$(matrix_evidence "$status_dir/absent.md" "Acceptance matrix")" "no review recorded" "matrix_evidence handles a missing review"
+
+equals "$(review_state_label accepted ready ACCEPT)" "Ready for human review" "review_state_label ready"
+equals "$(review_state_label accepted blocked ACCEPT)" "Final verification" "review_state_label pending verification"
+equals "$(review_state_label max-turns "" REJECT)" "Changes required" "review_state_label rejected"
+equals "$(review_state_label head-drift "" ACCEPT)" "Review pending" "review_state_label head drift"
+equals "$(review_state_label review-missing "" "")" "Review unavailable" "review_state_label unavailable"
+equals "$(review_state_label running "" "")" "Review pending" "review_state_label running"
+
+status_history="$status_dir/history.tsv"
+append_status_history "$status_history" 1 "Changes required" "Passed" "1111111111111111111111111111111111111111" "REJECT"
+append_status_history "$status_history" 2 "Passed" "Passed" "2222222222222222222222222222222222222222" "ACCEPT"
+equals "$(status_history_count "$status_history")" "2" "status_history_count"
+equals "$(status_history_count "$status_dir/absent.tsv")" "0" "status_history_count with no history"
+contains "$(render_status_history "$status_history")" "| 1 | Changes required | Passed | \`1111111\` | REJECT |" "render_status_history first row"
+contains "$(render_status_history "$status_history")" "| 2 | Passed | Passed | \`2222222\` | ACCEPT |" "render_status_history second row"
+equals "$(render_status_history "$status_dir/absent.tsv")" "" "render_status_history with no history"
+
+status_body="$(status_comment_body "$status_review" "$status_history" running "" "" "2222222222222222222222222222222222222222" "feat/chat-retry")"
+contains "$status_body" "<!-- devloop-review-status -->" "status comment marker"
+contains "$status_body" "**Review pending**" "status comment state"
+contains "$status_body" "| Specification | Changes required | 1 of 2 rows passed |" "status comment specification gate"
+contains "$status_body" "| Engineering | Passed | 7 of 7 rows passed |" "status comment engineering gate"
+contains "$status_body" "### Open findings" "status comment findings"
+contains "$status_body" "retry never fires" "status comment finding detail"
+contains "$status_body" "<summary>Review history: 2 passes</summary>" "status comment history summary"
+contains "$status_body" "<summary>Gate details</summary>" "status comment gate details"
+contains "$status_body" "<summary>Run details</summary>" "status comment run details"
+contains "$status_body" "feat/chat-retry" "status comment branch"
+
+status_accept_review="$status_dir/accepted.md"
+sed 's/^Verdict: REJECT/Verdict: ACCEPT/; s/| AC2 | FAIL |/| AC2 | PASS |/' "$status_review" > "$status_accept_review"
+status_ready_body="$(status_comment_body "$status_accept_review" "$status_history" accepted ready "checkpoint verified" "2222222222222222222222222222222222222222" "feat/chat-retry")"
+contains "$status_ready_body" "**Ready for human review**" "accepted status comment state"
+not_contains "$status_ready_body" "### Open findings" "accepted status comment omits findings"
+contains "$status_ready_body" "| Specification | Passed | 2 of 2 rows passed |" "accepted status comment specification gate"
+
+status_empty_body="$(status_comment_body "$status_dir/absent.md" "$status_dir/absent.tsv" running "" "" "" "feat/chat-retry")"
+contains "$status_empty_body" "<summary>Review history: 0 passes</summary>" "empty status comment history"
+contains "$status_empty_body" "No review recorded." "empty status comment review detail"
+
+status_comment_url="https://github.com/o/r/pull/5#issuecomment-98765"
+gh() {
+  case "$*" in
+    *"--json comments"*) printf '%s\n' "$GH_STUB_COMMENT" ;;
+    *"nameWithOwner"*) printf '%s\n' "o/r" ;;
+    *"--method PATCH"*) printf '%s\n' "patched" >> "$status_dir/calls.log" ;;
+    *"pr comment"*) printf '%s\n' "created" >> "$status_dir/calls.log" ;;
+  esac
+  return "$GH_STUB_CODE"
+}
+GH_STUB_CODE=0
+GH_STUB_COMMENT="$status_comment_url"
+find_status_comment "$status_dir" "https://pr/5" || fail "find_status_comment failed"
+equals "$STATUS_COMMENT_ID" "98765" "find_status_comment extracts the comment id"
+GH_STUB_COMMENT=""
+find_status_comment "$status_dir" "https://pr/5" || fail "find_status_comment failed on an absent comment"
+equals "$STATUS_COMMENT_ID" "" "find_status_comment with no existing comment"
+
+: > "$status_dir/calls.log"
+printf 'body\n' > "$status_dir/body.md"
+upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md" || fail "upsert_status_comment failed to create"
+contains "$(cat "$status_dir/calls.log")" "created" "upsert_status_comment creates when absent"
+: > "$status_dir/calls.log"
+GH_STUB_COMMENT="$status_comment_url"
+upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md" || fail "upsert_status_comment failed to update"
+contains "$(cat "$status_dir/calls.log")" "patched" "upsert_status_comment edits the existing comment"
+
+post_status_comment "$status_dir" "https://pr/5" "$status_review" "$status_history" running "$checkpoint_accepted" "feat/chat-retry" || fail "post_status_comment failed"
+contains "$(latest_pr_review_comment "$status_dir" "https://pr/5")" "issuecomment" "latest_pr_review_comment reads the living comment"
+
+GH_STUB_CODE=1
+if find_status_comment "$status_dir" "https://pr/5"; then fail "find_status_comment ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR status comment lookup failed" "find_status_comment error"
+if upsert_status_comment "$status_dir" "https://pr/5" "$status_dir/body.md"; then fail "upsert_status_comment ignored a lookup failure"; fi
+if post_status_comment "$status_dir" "https://pr/5" "$status_review" "$status_history" running "" "feat/chat-retry"; then fail "post_status_comment ignored a gh failure"; fi
+if latest_pr_review_comment "$status_dir" "https://pr/5" >/dev/null 2>&1; then fail "latest_pr_review_comment ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR review lookup failed" "latest_pr_review_comment error"
+GH_STUB_CODE=0
+unset -f gh
+PULL_REQUEST_ERROR=""
+STATUS_COMMENT_ID=""
+ok "living status comment"
+
+is_devloop_runtime_artifact_path ".devloop/status/slug-history.tsv" || fail "status history is not treated as a runtime artifact"
 
 : > "$work/empty-obligations.txt"
 contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Checkpoint: abc1234" "review prompt checkpoint"
