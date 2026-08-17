@@ -4911,10 +4911,10 @@ pull_request_checks_state() {
   local pr="$2"
   local query out
   CHECKS_STATE=""
-  query='[.statusCheckRollup[]?] as $all
-    | if ($all | length) == 0 then "none"
-      elif ($all | map(select((.conclusion // .state // "") | ascii_downcase | test("^(success|neutral|skipped)$"))) | length) == ($all | length) then "green"
-      elif ($all | map(select((.conclusion // .state // "") == "")) | length) > 0 then "pending"
+  query='[.statusCheckRollup[]?]
+    | if length == 0 then "none"
+      elif ([.[] | select((.conclusion // .state // "") | ascii_downcase | test("^(success|neutral|skipped)$"))] | length) == length then "green"
+      elif ([.[] | select((.conclusion // .state // "") == "")] | length) > 0 then "pending"
       else "failing" end'
   if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json statusCheckRollup --jq "$query" 2>&1)"; then
     PULL_REQUEST_ERROR="PR checks lookup failed: $(gh_error_detail "$out")"
