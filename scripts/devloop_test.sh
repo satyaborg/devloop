@@ -1080,6 +1080,111 @@ PULL_REQUEST_ERROR=""
 if create_pull_request "$branch_repo" "feat/chat-retry" "main" >/dev/null 2>&1; then fail "pull request creation unexpectedly passed without remote"; fi
 contains "$PULL_REQUEST_ERROR" "branch push failed" "pull request push failure"
 contains "$PULL_REQUEST_ERROR" "repository exists" "pull request push failure"
+
+checkpoint_repo="$work/checkpoint-repo"
+git init -q "$checkpoint_repo"
+git -C "$checkpoint_repo" config user.email devloop-test@example.com
+git -C "$checkpoint_repo" config user.name "devloop test"
+printf 'one\n' > "$checkpoint_repo/file.txt"
+git -C "$checkpoint_repo" add file.txt
+git -C "$checkpoint_repo" commit -q -m init
+checkpoint_head="$(head_sha "$checkpoint_repo")"
+equals "$checkpoint_head" "$(git -C "$checkpoint_repo" rev-parse HEAD)" "head_sha resolves full sha"
+equals "$(short_sha "$checkpoint_head")" "${checkpoint_head:0:7}" "short_sha truncates"
+
+if head_drifted "$checkpoint_repo" "$checkpoint_head"; then fail "head_drifted reported drift on an unchanged head"; fi
+if head_drifted "$checkpoint_repo" ""; then fail "head_drifted reported drift without a reviewed checkpoint"; fi
+printf 'two\n' >> "$checkpoint_repo/file.txt"
+git -C "$checkpoint_repo" commit -q -am "second"
+head_drifted "$checkpoint_repo" "$checkpoint_head" || fail "head_drifted missed a new commit"
+ok "checkpoint drift detection"
+
+checkpoint_dirty="$work/checkpoint-dirty.txt"
+: > "$checkpoint_dirty"
+worktree_clean "$checkpoint_repo" "$checkpoint_dirty" || fail "worktree_clean rejected a clean worktree"
+printf 'scratch\n' > "$checkpoint_repo/extra.txt"
+if worktree_clean "$checkpoint_repo" "$checkpoint_dirty"; then fail "worktree_clean accepted an uncommitted change"; fi
+printf 'extra.txt\n' > "$checkpoint_dirty"
+worktree_clean "$checkpoint_repo" "$checkpoint_dirty" || fail "worktree_clean did not preserve pre-existing changes"
+rm -f "$checkpoint_repo/extra.txt"
+: > "$checkpoint_dirty"
+ok "worktree_clean preserves pre-existing changes"
+
+checkpoint_accepted="$(head_sha "$checkpoint_repo")"
+gh() {
+  case "$*" in
+    *"--json headRefOid"*) printf '%s\n' "$GH_STUB_HEAD" ;;
+    *"--json statusCheckRollup"*) printf '%s\n' "$GH_STUB_CHECKS" ;;
+    *"pr ready"*) [ "$GH_STUB_READY" = "ok" ] || { printf 'gh: not a draft\n'; return 1; }; printf 'marked ready\n' ;;
+    *) return "$GH_STUB_CODE" ;;
+  esac
+  return "$GH_STUB_CODE"
+}
+GH_STUB_CODE=0
+GH_STUB_HEAD="$checkpoint_accepted"
+GH_STUB_CHECKS="green"
+GH_STUB_READY="ok"
+
+remote_pull_request_head "$checkpoint_repo" "https://pr/1" || fail "remote_pull_request_head failed"
+equals "$REMOTE_HEAD" "$checkpoint_accepted" "remote_pull_request_head"
+pull_request_checks_state "$checkpoint_repo" "https://pr/1" || fail "pull_request_checks_state failed"
+equals "$CHECKS_STATE" "green" "pull_request_checks_state"
+mark_pull_request_ready "$checkpoint_repo" "https://pr/1" || fail "mark_pull_request_ready failed on a draft PR"
+
+final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty" || fail "final_verification blocked a verified checkpoint"
+equals "$READINESS" "ready" "final_verification ready"
+contains "$READINESS_DETAIL" "$(short_sha "$checkpoint_accepted")" "final_verification detail names the checkpoint"
+
+if final_verification "$checkpoint_repo" "https://pr/1" "" "$checkpoint_dirty"; then fail "final_verification accepted an empty checkpoint"; fi
+contains "$READINESS_DETAIL" "no accepted checkpoint" "final_verification empty checkpoint detail"
+equals "$READINESS" "blocked" "final_verification blocked state"
+
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_head" "$checkpoint_dirty"; then fail "final_verification accepted a stale local head"; fi
+contains "$READINESS_DETAIL" "moved off accepted checkpoint" "final_verification stale local head detail"
+
+GH_STUB_HEAD="0000000000000000000000000000000000000000"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a mismatched remote head"; fi
+contains "$READINESS_DETAIL" "remote PR head" "final_verification remote head detail"
+GH_STUB_HEAD="$checkpoint_accepted"
+
+GH_STUB_CHECKS="pending"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted pending checks"; fi
+contains "$READINESS_DETAIL" "required checks are pending" "final_verification pending checks detail"
+
+GH_STUB_CHECKS="none"
+final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty" || fail "final_verification blocked a PR with no checks"
+equals "$READINESS" "ready" "final_verification treats absent checks as ready"
+GH_STUB_CHECKS="green"
+
+printf 'dirty\n' > "$checkpoint_repo/uncommitted.txt"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a dirty worktree"; fi
+contains "$READINESS_DETAIL" "uncommitted task changes" "final_verification dirty worktree detail"
+rm -f "$checkpoint_repo/uncommitted.txt"
+
+GH_STUB_CODE=1
+if remote_pull_request_head "$checkpoint_repo" "https://pr/1"; then fail "remote_pull_request_head ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR head lookup failed" "remote_pull_request_head error"
+equals "$REMOTE_HEAD" "" "remote_pull_request_head clears its result on failure"
+if pull_request_checks_state "$checkpoint_repo" "https://pr/1"; then fail "pull_request_checks_state ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR checks lookup failed" "pull_request_checks_state error"
+if final_verification "$checkpoint_repo" "https://pr/1" "$checkpoint_accepted" "$checkpoint_dirty"; then fail "final_verification accepted a gh lookup failure"; fi
+contains "$READINESS_DETAIL" "PR head lookup failed" "final_verification propagates lookup failure"
+GH_STUB_CODE=0
+
+GH_STUB_READY="fail"
+if mark_pull_request_ready "$checkpoint_repo" "https://pr/1"; then fail "mark_pull_request_ready ignored a gh failure"; fi
+contains "$PULL_REQUEST_ERROR" "PR ready failed" "mark_pull_request_ready error"
+GH_STUB_READY="ok"
+unset -f gh
+READINESS=""
+READINESS_DETAIL=""
+PULL_REQUEST_ERROR=""
+ok "final verification gates"
+
+: > "$work/empty-obligations.txt"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Checkpoint: abc1234" "review prompt checkpoint"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Do not commit, amend, or push" "review prompt checkpoint rule"
+contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false)" "Checkpoint: unknown" "review prompt missing checkpoint"
 mkdir -p "$branch_repo/.devloop/reports" "$branch_repo/.devloop/tracks" "$branch_repo/.devloop/reviews"
 printf '%s\n' "# Report" > "$branch_repo/.devloop/reports/chat-retry.md"
 branch_repo_real="$(cd "$branch_repo" && pwd -P)"

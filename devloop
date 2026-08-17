@@ -72,6 +72,12 @@ CODER_SESSION_ID=""
 REVIEWER_SESSION_ID=""
 PULL_REQUEST=""
 PULL_REQUEST_ERROR=""
+REVIEWED_HEAD=""
+ACCEPTED_HEAD=""
+REMOTE_HEAD=""
+CHECKS_STATE=""
+READINESS=""
+READINESS_DETAIL=""
 RUN_START_PASS=1
 VERIFY_LOG=""
 VERIFY_DETAIL=""
@@ -3060,6 +3066,10 @@ run_devloop() {
   FINAL_COMMIT_MESSAGE=""
   PULL_REQUEST=""
   PULL_REQUEST_ERROR=""
+  REVIEWED_HEAD=""
+  ACCEPTED_HEAD=""
+  READINESS=""
+  READINESS_DETAIL=""
   COMMIT_PASSES=()
   COMMIT_HASHES=()
   COMMIT_MESSAGES=()
@@ -3281,8 +3291,9 @@ run_devloop() {
     local review=".devloop/reviews/$slug-r$pass.md"
     local reviewer_log=".devloop/logs/$slug-r$pass-reviewer.log"
     local reviewer_id="reviewer-$pass"
+    REVIEWED_HEAD="$(head_sha "$repo")"
     event_step "$reviewer_id" "pass $pass/$max: $(agent_label "$reviewer") reviewing"
-    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict")" "$reviewer_id"; then
+    if run_agent "$reviewer" "$repo" "$repo/$reviewer_session" "$repo/$reviewer_log" "$(review_prompt "$coder" "$run_spec" "$TRACK" "$base" "$pass" "$review" "$slug" "$max" "$obligations_file" "$strict" "$REVIEWED_HEAD")" "$reviewer_id"; then
       event_done "$reviewer_id" true "done"
     else
       if [ "$RUN_TIMED_OUT" = true ]; then STATUS="timeout"; else STATUS="reviewer-error"; fi
@@ -3311,11 +3322,15 @@ run_devloop() {
     verdict="$(parse_verdict "$repo/$review")"
     if [ "$verdict" = "ACCEPT" ]; then
       event_gate "pass $pass review verdict" 1 "$verdict"
-      if [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
+      if head_drifted "$repo" "$REVIEWED_HEAD"; then
+        event_gate "pass $pass checkpoint" 0 "head moved off reviewed $(short_sha "$REVIEWED_HEAD")"
+        STATUS="head-drift"
+      elif [ "$strict" = true ] && ! has_passing_matrix "$repo/$review" "$obligations_file"; then
         STATUS="unclear"
       elif [ "$strict" = true ] && ! has_passing_quality_matrix "$repo/$review"; then
         STATUS="unclear"
       else
+        ACCEPTED_HEAD="$REVIEWED_HEAD"
         STATUS="accepted"
       fi
       break
@@ -3352,6 +3367,23 @@ run_devloop() {
     else
       STATUS="pr-error"
       event_done "pr-final-report" false "$PULL_REQUEST_ERROR"
+    fi
+  fi
+
+  if [ "$create_pr" = true ] && [ -n "$PULL_REQUEST" ] && [ "$STATUS" = "accepted" ]; then
+    event_step "final-verification" "verifying accepted checkpoint"
+    if final_verification "$repo" "$PULL_REQUEST" "$ACCEPTED_HEAD" "$initial_dirty"; then
+      event_done "final-verification" true "$READINESS_DETAIL"
+      event_step "pr-ready" "marking pull request ready for review"
+      if mark_pull_request_ready "$repo" "$PULL_REQUEST"; then
+        event_done "pr-ready" true "ready for human review"
+      else
+        READINESS="blocked"
+        READINESS_DETAIL="$PULL_REQUEST_ERROR"
+        event_done "pr-ready" false "$PULL_REQUEST_ERROR"
+      fi
+    else
+      event_done "final-verification" false "$READINESS_DETAIL"
     fi
   fi
 
@@ -4483,6 +4515,7 @@ review_prompt() {
   local max="$8"
   local obligations_file="$9"
   local strict="${10}"
+  local checkpoint="${11:-}"
   local obligations priors review_skill strict_rule
   obligations="$(cat "$obligations_file")"
   priors="$(list_reviews "$slug" "$pass" "$max")"
@@ -4499,6 +4532,8 @@ Spec: $spec
 Track: $track
 Base: $base
 Pass: $pass
+Checkpoint: ${checkpoint:-unknown}
+Review exactly this checkpoint. Do not commit, amend, or push. Any new commit invalidates the verdict.
 Prior reviews:
 $priors
 Spec obligations (acceptance criteria, invariants, and failure modes):
@@ -4710,6 +4745,118 @@ paste_join() {
 parse_verdict() {
   local file="$1"
   sed -nE 's/^Verdict:[[:space:]]+(ACCEPT|REJECT|UNCLEAR).*/\1/p' "$file" | head -n 1
+}
+
+head_sha() {
+  local repo="$1"
+  git -C "$repo" rev-parse HEAD 2>/dev/null
+}
+
+short_sha() {
+  local sha="$1"
+  printf '%s\n' "${sha:0:7}"
+}
+
+head_drifted() {
+  local repo="$1"
+  local reviewed="$2"
+  local current
+  [ -n "$reviewed" ] || return 1
+  current="$(head_sha "$repo")" || return 1
+  [ "$current" != "$reviewed" ]
+}
+
+worktree_clean() {
+  local repo="$1"
+  local initial_dirty="$2"
+  local pending
+  pending="$(committable_paths "$repo" "$initial_dirty")"
+  [ -z "$pending" ]
+}
+
+remote_pull_request_head() {
+  local repo="$1"
+  local pr="$2"
+  local out
+  REMOTE_HEAD=""
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json headRefOid --jq '.headRefOid // ""' 2>&1)"; then
+    PULL_REQUEST_ERROR="PR head lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  REMOTE_HEAD="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+}
+
+pull_request_checks_state() {
+  local repo="$1"
+  local pr="$2"
+  local query out
+  CHECKS_STATE=""
+  query='[.statusCheckRollup[]?] as $all
+    | if ($all | length) == 0 then "none"
+      elif ($all | map(select((.conclusion // .state // "") | ascii_downcase | test("^(success|neutral|skipped)$"))) | length) == ($all | length) then "green"
+      elif ($all | map(select((.conclusion // .state // "") == "")) | length) > 0 then "pending"
+      else "failing" end'
+  if ! out="$(cd "$repo" >/dev/null 2>&1 && gh pr view "$pr" --json statusCheckRollup --jq "$query" 2>&1)"; then
+    PULL_REQUEST_ERROR="PR checks lookup failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+  CHECKS_STATE="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | head -n 1)"
+}
+
+mark_pull_request_ready() {
+  local repo="$1"
+  local pr="$2"
+  local out
+  if ! run_compact_command "$repo" "mark pull request ready" gh pr ready "$pr"; then
+    out="$RUN_OUTPUT"
+    PULL_REQUEST_ERROR="PR ready failed: $(gh_error_detail "$out")"
+    return 1
+  fi
+}
+
+final_verification() {
+  local repo="$1"
+  local pr="$2"
+  local accepted="$3"
+  local initial_dirty="$4"
+  local local_head
+  READINESS="blocked"
+  READINESS_DETAIL=""
+  if [ -z "$accepted" ]; then
+    READINESS_DETAIL="no accepted checkpoint recorded"
+    return 1
+  fi
+  local_head="$(head_sha "$repo")"
+  if [ "$local_head" != "$accepted" ]; then
+    READINESS_DETAIL="local head $(short_sha "$local_head") moved off accepted checkpoint $(short_sha "$accepted")"
+    return 1
+  fi
+  if ! worktree_clean "$repo" "$initial_dirty"; then
+    READINESS_DETAIL="worktree has uncommitted task changes"
+    return 1
+  fi
+  if ! remote_pull_request_head "$repo" "$pr"; then
+    READINESS_DETAIL="$PULL_REQUEST_ERROR"
+    return 1
+  fi
+  if [ "$REMOTE_HEAD" != "$accepted" ]; then
+    READINESS_DETAIL="remote PR head $(short_sha "$REMOTE_HEAD") differs from accepted checkpoint $(short_sha "$accepted")"
+    return 1
+  fi
+  if ! pull_request_checks_state "$repo" "$pr"; then
+    READINESS_DETAIL="$PULL_REQUEST_ERROR"
+    return 1
+  fi
+  case "$CHECKS_STATE" in
+    green|none)
+      READINESS="ready"
+      READINESS_DETAIL="accepted checkpoint $(short_sha "$accepted") verified"
+      ;;
+    *)
+      READINESS_DETAIL="required checks are $CHECKS_STATE for $(short_sha "$accepted")"
+      return 1
+      ;;
+  esac
 }
 
 has_passing_matrix() {
@@ -5295,6 +5442,8 @@ print_result() {
   result_line "Branch" "$FINAL_BRANCH"
   result_line "Commit" "${FINAL_COMMIT:-none}"
   if [ "$WORKTREE_REPO" != "$SOURCE_REPO" ]; then result_line "Worktree" "$WORKTREE_REPO"; fi
+  if [ -n "$ACCEPTED_HEAD" ]; then result_line "Accepted" "$(short_sha "$ACCEPTED_HEAD")"; fi
+  if [ -n "$READINESS" ]; then result_line "Readiness" "$READINESS${READINESS_DETAIL:+ ($READINESS_DETAIL)}"; fi
   printf '\nOpen Next\n'
   if [ -n "$PULL_REQUEST" ]; then result_line "PR" "$PULL_REQUEST"; fi
   result_line "Report" "$(display_path "$REPORT")"
