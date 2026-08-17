@@ -24,6 +24,31 @@ Write exactly one spec sized for one worktree and one PR. Push back before draft
 
 When interactive, name the overflow, propose the smallest useful slice, and ask the user to confirm before writing. When non-interactive and the source is otherwise implementation-ready, spec the first foundational slice and list deferred work in Notes as follow-up specs.
 
+When the work genuinely needs more than one pull request and the slices are already clear, write a stack instead of refusing. See Stack Manifests.
+
+## Stack Manifests
+
+A stack is one manifest plus one child spec per pull request. `devloop <manifest>` runs the children in order, branching each from the previous child's branch and targeting it as the PR base.
+
+Name the manifest `YYYY-MM-DD-<slug>-stack.md` and the children `YYYY-MM-DD-<slug>-01-<child>.md`, continuing in dependency order. Each child is a complete, standard spec that must stand on its own: independently understandable, independently verifiable, and independently revertible.
+
+The manifest needs an H1, a `## Stack` section listing the children in dependency order, and any cross-cutting notes:
+
+````markdown
+# <Problem the whole stack solves>
+
+## Stack
+
+1. [<Child problem>](./YYYY-MM-DD-<slug>-01-<child>.md) - branch <branch>, base <base branch>
+2. [<Child problem>](./YYYY-MM-DD-<slug>-02-<child>.md) - branch <branch>, base <previous branch>
+
+## Notes
+
+- <why this order, and what each child depends on>
+````
+
+Slice by incremental problem resolution, not by architecture label. Do not create a stack when one coherent pull request can carry the change.
+
 ## Interview Gate
 
 Before drafting, decide whether the source is implementation-ready. Start or continue an interview when any of these are true:

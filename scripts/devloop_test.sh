@@ -1308,6 +1308,95 @@ ok "living status comment"
 
 is_devloop_runtime_artifact_path ".devloop/status/slug-history.tsv" || fail "status history is not treated as a runtime artifact"
 
+stack_dir="$work/stack-specs"
+mkdir -p "$stack_dir"
+cat > "$stack_dir/2026-08-17-retry-stack.md" <<'MARKDOWN'
+# Retry delivery end to end
+
+## Stack
+
+1. [Persist the outbox](./2026-08-17-retry-01-outbox.md) - branch feat/retry-outbox, base main
+2. [Retry from the outbox](./2026-08-17-retry-02-sender.md) - branch feat/retry-sender, base feat/retry-outbox
+
+## Notes
+
+- The sender depends on the outbox table.
+MARKDOWN
+printf '# Outbox\n' > "$stack_dir/2026-08-17-retry-01-outbox.md"
+printf '# Sender\n' > "$stack_dir/2026-08-17-retry-02-sender.md"
+
+stack_dir_real="$(cd "$stack_dir" && pwd -P)"
+stack_children="$(parse_stack_children "$stack_dir/2026-08-17-retry-stack.md")"
+equals "$(printf '%s\n' "$stack_children" | wc -l | tr -d ' ')" "2" "parse_stack_children count"
+equals "$(printf '%s\n' "$stack_children" | head -n 1)" "$stack_dir_real/2026-08-17-retry-01-outbox.md" "parse_stack_children resolves the first child"
+equals "$(printf '%s\n' "$stack_children" | tail -n 1)" "$stack_dir_real/2026-08-17-retry-02-sender.md" "parse_stack_children preserves order"
+is_stack_manifest "$stack_dir/2026-08-17-retry-stack.md" || fail "is_stack_manifest missed a manifest"
+if is_stack_manifest "$stack_dir/2026-08-17-retry-01-outbox.md"; then fail "is_stack_manifest matched a plain spec"; fi
+if is_stack_manifest "$stack_dir/absent.md"; then fail "is_stack_manifest matched a missing file"; fi
+
+cat > "$stack_dir/bare-stack.md" <<'MARKDOWN'
+# Bare stack
+
+## Stack
+
+- 2026-08-17-retry-01-outbox.md
+- 2026-08-17-retry-02-sender.md
+MARKDOWN
+equals "$(parse_stack_children "$stack_dir/bare-stack.md" | head -n 1)" "$stack_dir_real/2026-08-17-retry-01-outbox.md" "parse_stack_children accepts bare paths"
+
+if stack_child_missing "$stack_children" >/dev/null; then fail "stack_child_missing flagged present children"; fi
+equals "$(stack_child_missing "$stack_dir/gone.md")" "$stack_dir/gone.md" "stack_child_missing reports the first absent child"
+
+cat > "$stack_dir/empty-stack.md" <<'MARKDOWN'
+# Empty stack
+
+## Stack
+
+- None yet
+MARKDOWN
+if is_stack_manifest "$stack_dir/empty-stack.md"; then fail "is_stack_manifest matched a stack with no child specs"; fi
+if run_stack "$stack_dir/empty-stack.md" 1 markdown false false codex claude false 5 >/dev/null 2>&1; then fail "run_stack accepted a manifest with no children"; fi
+
+cat > "$stack_dir/missing-child-stack.md" <<'MARKDOWN'
+# Missing child
+
+## Stack
+
+1. [Gone](./gone.md)
+MARKDOWN
+if run_stack "$stack_dir/missing-child-stack.md" 1 markdown false false codex claude false 5 >/dev/null 2>&1; then fail "run_stack accepted a missing child spec"; fi
+
+STACK_SPECS=("$stack_dir/2026-08-17-retry-01-outbox.md" "$stack_dir/2026-08-17-retry-02-sender.md")
+STACK_STATUSES=("accepted" "max-turns")
+STACK_BRANCHES=("feat/retry-outbox" "feat/retry-sender")
+STACK_PULL_REQUESTS=("https://pr/1" "")
+stack_summary_text="$(print_stack_summary)"
+contains "$stack_summary_text" "1. 2026-08-17-retry-01-outbox.md" "stack summary first entry"
+contains "$stack_summary_text" "accepted | feat/retry-outbox | https://pr/1" "stack summary accepted child"
+contains "$stack_summary_text" "max-turns | feat/retry-sender" "stack summary stopped child"
+STACK_SPECS=()
+STACK_STATUSES=()
+STACK_BRANCHES=()
+STACK_PULL_REQUESTS=()
+ok "stack manifests"
+
+stack_worktree_repo="$work/stack-worktree-repo"
+git init -q "$stack_worktree_repo"
+git -C "$stack_worktree_repo" config user.email devloop-test@example.com
+git -C "$stack_worktree_repo" config user.name "devloop test"
+printf 'base\n' > "$stack_worktree_repo/file.txt"
+git -C "$stack_worktree_repo" add file.txt
+git -C "$stack_worktree_repo" commit -q -m init
+git -C "$stack_worktree_repo" branch feat/parent-layer
+git -C "$stack_worktree_repo" switch -q feat/parent-layer
+printf 'parent\n' >> "$stack_worktree_repo/file.txt"
+git -C "$stack_worktree_repo" commit -q -am "parent layer"
+git -C "$stack_worktree_repo" switch -q -
+stack_child_worktree="$(create_worktree "$stack_worktree_repo" feat false child-layer feat/parent-layer)"
+contains "$(cat "$stack_child_worktree/file.txt")" "parent" "create_worktree branches from the requested start point"
+git -C "$stack_worktree_repo" worktree remove --force "$stack_child_worktree"
+ok "stacked worktree start point"
+
 : > "$work/empty-obligations.txt"
 contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Checkpoint: abc1234" "review prompt checkpoint"
 contains "$(review_prompt codex spec.md track.md main 2 out.md slug 5 "$work/empty-obligations.txt" false abc1234)" "Do not commit, amend, or push" "review prompt checkpoint rule"

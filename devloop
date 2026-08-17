@@ -77,6 +77,10 @@ ACCEPTED_HEAD=""
 REMOTE_HEAD=""
 CHECKS_STATE=""
 STATUS_COMMENT_ID=""
+STACK_SPECS=()
+STACK_BRANCHES=()
+STACK_PULL_REQUESTS=()
+STACK_STATUSES=()
 READINESS=""
 READINESS_DETAIL=""
 RUN_START_PASS=1
@@ -208,6 +212,7 @@ Common commands:
   devloop nightshift
   devloop nightshift --install-schedule 02:00
   devloop .devloop/specs/change.md
+  devloop .devloop/specs/change-stack.md
   devloop --tui .devloop/specs/change.md
   devloop --plain .devloop/specs/change.md
   devloop --report-format markdown .devloop/specs/change.md 3
@@ -3025,6 +3030,13 @@ run_command() {
   if [ "$max" -lt 1 ]; then max=1; fi
   if [ "$max" -gt 10 ]; then max=10; fi
 
+  local resolved_spec
+  resolved_spec="$(absolute_existing_file "$spec" 2>/dev/null || printf '%s\n' "$spec")"
+  if is_stack_manifest "$resolved_spec"; then
+    run_stack "$resolved_spec" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes"
+    return $?
+  fi
+
   if [ "$no_tmux" = false ] && devloop_tmux_interactive; then
     local validated_spec repo
     validated_spec="$(validate_spec_for_tmux "$spec" "$strict")" || return $?
@@ -3043,6 +3055,102 @@ run_command() {
   return "$(final_exit_code "$code")"
 }
 
+parse_stack_children() {
+  local manifest="$1"
+  local dir line child
+  [ -f "$manifest" ] || return 1
+  dir="$(cd "$(dirname "$manifest")" >/dev/null 2>&1 && pwd -P)" || return 1
+  spec_section "$manifest" "Stack" |
+    sed -nE 's/.*\]\(([^)]+\.md)\).*/\1/p; s/^[[:space:]]*[-*0-9.]+[[:space:]]+([^[:space:]]+\.md)[[:space:]]*$/\1/p' |
+    while IFS= read -r line; do
+      child="$line"
+      case "$child" in
+        /*) ;;
+        *) child="$dir/${child#./}" ;;
+      esac
+      printf '%s\n' "$child"
+    done
+}
+
+is_stack_manifest() {
+  local spec="$1"
+  local children
+  [ -f "$spec" ] || return 1
+  children="$(parse_stack_children "$spec")" || return 1
+  [ -n "$children" ]
+}
+
+stack_child_missing() {
+  local children="$1"
+  local child
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    if [ ! -f "$child" ]; then printf '%s\n' "$child"; return 0; fi
+  done <<< "$children"
+  return 1
+}
+
+run_stack() {
+  local manifest="$1"
+  local max="$2"
+  local report_format="$3"
+  local strict="$4"
+  local use_worktree="$5"
+  local coder="$6"
+  local reviewer="$7"
+  local create_pr="$8"
+  local timeout_minutes="$9"
+  local children child missing base index total code
+  children="$(parse_stack_children "$manifest")"
+  if [ -z "$children" ]; then
+    printf 'stack manifest lists no child specs: %s\n' "$manifest" >&2
+    return 2
+  fi
+  if missing="$(stack_child_missing "$children")"; then
+    printf 'stack child spec not found: %s\n' "$missing" >&2
+    return 2
+  fi
+  total="$(printf '%s\n' "$children" | grep -c .)"
+  STACK_BRANCHES=()
+  STACK_PULL_REQUESTS=()
+  STACK_STATUSES=()
+  STACK_SPECS=()
+  base=""
+  index=0
+  code=0
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    index=$((index + 1))
+    ui_print_notice "stack $index/$total: $(basename "$child")"
+    run_devloop "$child" "$max" "$report_format" "$strict" "$use_worktree" "$coder" "$reviewer" "$create_pr" "$timeout_minutes" "$base"
+    code=$?
+    STACK_SPECS+=("$child")
+    STACK_BRANCHES+=("$FINAL_BRANCH")
+    STACK_PULL_REQUESTS+=("$PULL_REQUEST")
+    STACK_STATUSES+=("$STATUS")
+    if [ "$STATUS" != "accepted" ]; then
+      printf 'stack stopped at %s (%s)\n' "$(basename "$child")" "$STATUS" >&2
+      print_stack_summary
+      return "$(final_exit_code "$code")"
+    fi
+    base="$FINAL_BRANCH"
+  done <<< "$children"
+  print_stack_summary
+  return "$(final_exit_code "$code")"
+}
+
+print_stack_summary() {
+  local index total
+  total="${#STACK_SPECS[@]}"
+  printf '\ndevloop stack\n\n'
+  index=0
+  while [ "$index" -lt "$total" ]; do
+    result_line "$((index + 1)). $(basename "${STACK_SPECS[$index]}")" \
+      "${STACK_STATUSES[$index]} | ${STACK_BRANCHES[$index]}${STACK_PULL_REQUESTS[$index]:+ | ${STACK_PULL_REQUESTS[$index]}}"
+    index=$((index + 1))
+  done
+}
+
 run_devloop() {
   local spec_arg="$1"
   local max="$2"
@@ -3053,6 +3161,7 @@ run_devloop() {
   local reviewer="$7"
   local create_pr="$8"
   local timeout_minutes="${9:-$DEFAULT_TIMEOUT_MINUTES}"
+  local base_override="${10:-}"
 
   MAX="$max"
   CODER="$coder"
@@ -3108,7 +3217,11 @@ run_devloop() {
   local source_branch
   source_branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
   local base
-  base="$(base_branch "$SOURCE_REPO")"
+  if [ -n "$base_override" ]; then
+    base="$base_override"
+  else
+    base="$(base_branch "$SOURCE_REPO")"
+  fi
 
   event_step "preflight" "running preflight checks"
   if preflight_run "$SOURCE_REPO" "$coder" "$reviewer" "$create_pr"; then
@@ -3140,7 +3253,7 @@ run_devloop() {
   local repo="$SOURCE_REPO"
   if [ "$use_worktree" = true ]; then
     event_step "worktree" "creating worktree"
-    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG")" || {
+    repo="$(create_worktree "$SOURCE_REPO" "$WORK_TYPE" "$WORK_BREAKING" "$WORK_SLUG" "${base_override:-HEAD}")" || {
       rm -f "$criteria_file" "$obligations_file"
       return 2
     }
@@ -4179,12 +4292,13 @@ create_worktree() {
   local type="$2"
   local breaking="$3"
   local slug="$4"
+  local start_point="${5:-HEAD}"
   local current branch worktree leaf
   current=""
   branch="$(next_branch "$repo" "$type" "$breaking" "$slug" "$current")"
   leaf="$(branch_leaf "$branch")"
   worktree="$(next_worktree_path "$repo" "$leaf")"
-  if ! git -C "$repo" worktree add -b "$branch" "$worktree" HEAD >/dev/null 2>&1; then
+  if ! git -C "$repo" worktree add -b "$branch" "$worktree" "$start_point" >/dev/null 2>&1; then
     printf 'failed to create worktree\n' >&2
     return 1
   fi
