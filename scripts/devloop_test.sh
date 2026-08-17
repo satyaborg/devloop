@@ -2807,12 +2807,34 @@ case "${1:-}" in
         fi
         printf '%s\n' "commented"
         ;;
+      ready)
+        if [ "${DEVLOOP_GH_READY_FAIL:-0}" = "1" ]; then
+          printf '%s\n' "gh pr ready exploded" >&2
+          exit 1
+        fi
+        printf '%s\n' "ready" > "$state/pr_ready"
+        printf '%s\n' "marked ready"
+        ;;
       view)
         if [ "${DEVLOOP_GH_VIEW_FAIL:-0}" = "1" ]; then
           printf '%s\n' "gh pr view exploded" >&2
           exit 1
         fi
-        if [ -f "$state/latest_round_comment" ]; then cat "$state/latest_round_comment"; fi
+        case "$*" in
+          *headRefOid*)
+            if [ "${DEVLOOP_GH_REMOTE_HEAD:-}" = "drift" ]; then
+              printf '%s\n' "0000000000000000000000000000000000000000"
+            else
+              git rev-parse HEAD 2>/dev/null
+            fi
+            ;;
+          *statusCheckRollup*)
+            printf '%s\n' "${DEVLOOP_GH_CHECKS:-none}"
+            ;;
+          *)
+            if [ -f "$state/latest_round_comment" ]; then cat "$state/latest_round_comment"; fi
+            ;;
+        esac
         ;;
       *)
         exit 1
@@ -3486,6 +3508,7 @@ contains "$final_body" "Commit References" "final PR comment"
 if printf '%s\n' "$final_body" | grep -q '/Users/'; then fail "final PR comment leaked absolute local path"; fi
 if printf '%s\n' "$round_body" | grep -q 'Local cache'; then fail "round PR comment leaked local cache path"; fi
 if printf '%s\n' "$final_body" | grep -Eq '<(html|script|style)'; then fail "final PR comment embedded standalone HTML"; fi
+equals "$(cat "$pr_state/pr_ready" 2>/dev/null || printf 'draft')" "ready" "accepted PR is marked ready"
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed accept comments"
 
@@ -3508,6 +3531,7 @@ contains "$pr_terminal_output" "unclear" "PR terminal failure"
 equals "$(find "$pr_state/comments" -name 'round-*.md' | wc -l | tr -d ' ')" "1" "terminal round PR comment"
 equals "$(find "$pr_state/comments" -name 'final-*.md' | wc -l | tr -d ' ')" "1" "terminal final PR comment"
 contains "$(cat "$pr_state/comments/final-1.md")" "| Final status | unclear |" "terminal final PR comment"
+if [ -f "$pr_state/pr_ready" ]; then fail "unclear run marked the PR ready"; fi
 unset DEVLOOP_GH_STATE DEVLOOP_GH_LOG DEVLOOP_AGENT_LOG
 ok "PR-backed terminal final comment"
 
